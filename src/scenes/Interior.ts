@@ -3,54 +3,59 @@ import { COLORS } from '../colors'
 import { BUILDINGS, state, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
+import { WORLD_STRUCTURES, type WorldStructureType } from '../world/structures'
 import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
 import type { UI } from './UI'
 import type { SlotBinding } from '../ui/SlotBinding'
+import type { SlotVisual } from './InteriorTypes'
+import { registerGrabbable } from '../ui/hover'
+import { buildProducerInterior } from './ProducerInterior'
+import { buildCrafterInterior } from './CrafterInterior'
+import { buildModifierRack } from './ModifierRack'
+import { buildShopInterior } from './ShopInterior'
 
-export interface InteriorData {
-  buildingType: BuiltType
-  plotIndex: number
-}
+// InteriorData. `source` distinguishes plot buildings (mill/well/crafter,
+// owned by the player) from world structures (shop, church, etc., part of
+// the world). Each source has a different index field.
+export type InteriorData =
+  | { source: 'plot'; buildingType: BuiltType; plotIndex: number }
+  | { source: 'world'; buildingType: WorldStructureType; structureIndex: number }
 
-// Per-building background image keys. Buildings without an entry fall back to a plain cream backdrop.
+// Per-building background image keys + paths. Buildings without an entry fall
+// back to a plain cream backdrop.
 export const INTERIOR_BGS: Partial<Record<BuiltType, string>> = {
   mill: 'millbg',
   well: 'wellbg',
   crafter: 'crafterbg',
 }
-
-// path used by both Interior and Overworld preloads
 export const INTERIOR_BG_PATHS: Record<string, string> = {
   millbg: '/millbg.png',
   wellbg: '/wellbg.png',
   crafterbg: '/crafterbg.png',
 }
 
-export class Interior extends Phaser.Scene {
-  private buildingType!: BuiltType
-  private plotIndex!: number
-  // bindings we registered with the UI's DragController, so we can unregister on shutdown
-  private bindings: SlotBinding[] = []
-  // per-slot visuals so we can redraw on take/place
-  private slotVisuals: {
-    x: number
-    y: number
-    getStack: () => ItemStack | null
-    icon: Phaser.GameObjects.Sprite | null
-    count: Phaser.GameObjects.BitmapText | null
-  }[] = []
-  // producer panel: arrow sprite we tint each frame to show progress
-  private producerArrow: Phaser.GameObjects.Sprite | null = null
+// ---------------------------------------------------------------------------
+// Interior — thin router scene. Loads background, title, back button, and
+// dispatches to a building-specific module. Plot buildings (mill, well,
+// crafter) get a modifier rack; world structures (shop) don't.
+// ---------------------------------------------------------------------------
 
-  constructor() {
-    super('Interior')
-  }
+export class Interior extends Phaser.Scene {
+  private data!: InteriorData
+
+  private bindings: SlotBinding[] = []
+  private slotVisuals: SlotVisual[] = []
+  private moduleUpdates: (() => void)[] = []
+  private moduleCleanups: (() => void)[] = []
+
+  constructor() { super('Interior') }
 
   init(data: InteriorData) {
-    this.buildingType = data.buildingType
-    this.plotIndex = data.plotIndex
+    this.data = data
     this.bindings = []
     this.slotVisuals = []
+    this.moduleUpdates = []
+    this.moduleCleanups = []
   }
 
   preload() {
@@ -60,11 +65,9 @@ export class Interior extends Phaser.Scene {
     if (!this.cache.bitmapFont.exists('mainSmall')) {
       this.load.bitmapFont('mainSmall', '/minecraftbmsmall.png', '/minecraftbmsmall.xml')
     }
-    // backgrounds are normally preloaded by Overworld; this is a fallback safety net
     for (const [key, path] of Object.entries(INTERIOR_BG_PATHS)) {
       if (!this.textures.exists(key)) this.load.image(key, path)
     }
-    // shared menu UI assets
     if (!this.textures.exists('menu-bg')) this.load.image('menu-bg', '/menu.png')
     if (!this.textures.exists('menu-slot')) this.load.image('menu-slot', '/slot.png')
   }
@@ -72,10 +75,14 @@ export class Interior extends Phaser.Scene {
   create() {
     const w = this.cameras.main.width
     const h = this.cameras.main.height
-    const def = BUILDINGS[this.buildingType]
 
-    // background
-    const bgKey = INTERIOR_BGS[this.buildingType]
+    // ---- title text + background — different sources, same surface ----
+    const title = this.data.source === 'plot'
+      ? BUILDINGS[this.data.buildingType].name
+      : WORLD_STRUCTURES[this.data.buildingType].name
+
+    // ---- background ----
+    const bgKey = this.data.source === 'plot' ? INTERIOR_BGS[this.data.buildingType] : undefined
     if (bgKey && this.textures.exists(bgKey)) {
       const playArea = h - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT
       const img = this.add.image(w / 2, UI_BAR_HEIGHT + playArea / 2, bgKey)
@@ -85,289 +92,117 @@ export class Interior extends Phaser.Scene {
       this.add.rectangle(0, 0, w, h, COLORS.worldBg).setOrigin(0, 0)
     }
 
-    // building name + back
-    this.add.bitmapText(w / 2, UI_BAR_HEIGHT + 30, 'main', def.name, 24)
+    // ---- title + back button ----
+    this.add.bitmapText(w / 2, UI_BAR_HEIGHT + 30, 'main', title, 24)
       .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-    const back = this.add.rectangle(60, UI_BAR_HEIGHT + 30, 80, 32, COLORS.uiBarBg)
-      .setInteractive({ useHandCursor: true })
-    this.add.bitmapText(60, UI_BAR_HEIGHT + 30, 'main', 'Back', 16)
+    // "Level 1" is for plot buildings only — world structures don't level up
+    if (this.data.source === 'plot') {
+      this.add.bitmapText(w / 2, UI_BAR_HEIGHT + 52, 'mainSmall', 'Level 1', 14)
+        .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
+    }
+    const back = this.add.rectangle(50, UI_BAR_HEIGHT + 30, 80, 32, COLORS.uiBarBg)
+      .setInteractive()
+    registerGrabbable(back)
+    this.add.bitmapText(50, UI_BAR_HEIGHT + 30, 'main', 'Back', 16)
       .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
     back.on('pointerdown', () => this.exit())
     this.input.keyboard!.on('keydown-ESC', () => this.exit())
     this.input.keyboard!.on('keydown-E', () => this.exit())
 
-    if (this.buildingType === 'crafter') {
-      this.buildCrafterPanel(w, h)
-    } else if (this.buildingType === 'mill' || this.buildingType === 'well') {
-      this.buildProducerPanel(w, h)
+    // ---- building-specific module ----
+    const onSlotShiftClick = (b: SlotBinding) => this.shiftTakeToInventory(b)
+    const onCraftAllShiftClick = () => this.craftAllToInventory()
+
+    if (this.data.source === 'plot') {
+      const plotIndex = this.data.plotIndex
+      if (this.data.buildingType === 'crafter') {
+        const handle = buildCrafterInterior(this, plotIndex, onSlotShiftClick, onCraftAllShiftClick)
+        this.bindings.push(...handle.bindings)
+        this.slotVisuals.push(...handle.slotVisuals)
+        this.moduleCleanups.push(handle.onCleanup)
+      } else if (this.data.buildingType === 'mill' || this.data.buildingType === 'well') {
+        const handle = buildProducerInterior(this, this.data.buildingType, plotIndex, onSlotShiftClick)
+        this.bindings.push(...handle.bindings)
+        this.slotVisuals.push(...handle.slotVisuals)
+        this.moduleUpdates.push(handle.update)
+      }
+      // modifier rack — plot buildings only
+      const rack = buildModifierRack(this, plotIndex, onSlotShiftClick)
+      this.bindings.push(...rack.bindings)
+      this.slotVisuals.push(...rack.slotVisuals)
+    } else {
+      // world structures — shop, church, etc. Currently both use the shop's
+      // "COMING SOON" placeholder. Replace this branch with per-structure
+      // builders when you design the shop UI / church interior.
+      const handle = buildShopInterior(this, this.data.structureIndex)
+      this.moduleCleanups.push(handle.onCleanup)
     }
 
-    // unregister drag bindings when the scene shuts down (Back button, ESC)
     this.events.on('shutdown', () => this.cleanup())
   }
 
-  private buildCrafterPanel(w: number, h: number) {
-    const playAreaTop = UI_BAR_HEIGHT
-    const playAreaH = h - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT
-    const panelY = playAreaTop + playAreaH / 2
-
-    const SLOT = 48
-    const GAP = 16
-    const SYMBOL = 16
-    const PAD_X = 24
-    const PAD_Y = 28
-    const layoutW = SLOT * 3 + (GAP + SYMBOL + GAP) * 2
-
-    const panelW = layoutW + PAD_X * 2
-    const panelH = SLOT + PAD_Y * 2
-
-    this.add.nineslice(w / 2, panelY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16)
-
-    const startX = w / 2 - layoutW / 2
-    const slot1X = startX + SLOT / 2
-    const plusX = slot1X + SLOT / 2 + GAP + SYMBOL / 2
-    const slot2X = plusX + SYMBOL / 2 + GAP + SLOT / 2
-    const arrowX = slot2X + SLOT / 2 + GAP + SYMBOL / 2
-    const slot3X = arrowX + SYMBOL / 2 + GAP + SLOT / 2
-
-    this.add.bitmapText(plusX, panelY + 4, 'main', '+', 24).setOrigin(0.5, 0.5).setTint(COLORS.craftSymbol)
-    this.add.sprite(arrowX, panelY, 'arrow_right').setScale(2).setTint(COLORS.craftSymbol)
-
-    // 3 slot images + their drag bindings
-    this.makeCraftSlot(slot1X, panelY, 'input', 0)
-    this.makeCraftSlot(slot2X, panelY, 'input', 1)
-    this.makeCraftSlot(slot3X, panelY, 'output', 0)
-  }
-
-  private buildProducerPanel(w: number, h: number) {
-    const def = BUILDINGS[this.buildingType]
-    if (!def.producesItem) return
-
-    const playAreaTop = UI_BAR_HEIGHT
-    const playAreaH = h - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT
-    const panelY = playAreaTop + playAreaH / 2
-
-    const SLOT = 48
-    const GAP = 16
-    const SYMBOL = 16
-    const PAD_X = 24
-    const PAD_Y = 28
-    const layoutW = SLOT * 2 + GAP * 2 + SYMBOL
-    const panelW = layoutW + PAD_X * 2
-    const panelH = SLOT + PAD_Y * 2
-
-    this.add.nineslice(w / 2, panelY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16)
-
-    const startX = w / 2 - layoutW / 2
-    const buildingX = startX + SLOT / 2
-    const arrowX = buildingX + SLOT / 2 + GAP + SYMBOL / 2
-    const outputX = arrowX + SYMBOL / 2 + GAP + SLOT / 2
-
-    // building icon, framed in a slot
-    this.add.image(buildingX, panelY, 'menu-slot')
-    this.add.sprite(buildingX, panelY, this.buildingType).setScale(2)
-
-    // arrow — tinted each frame in update() to show item-tick progress
-    this.producerArrow = this.add.sprite(arrowX, panelY, 'arrow_right').setScale(2)
-
-    // output slot — read-only, drag-takeable
-    this.makeProducerOutputSlot(outputX, panelY)
-  }
-
-  private makeProducerOutputSlot(x: number, y: number) {
-    const slotImg = this.add.image(x, y, 'menu-slot').setInteractive({ useHandCursor: true })
-    const getStack = (): ItemStack | null => state.plots[this.plotIndex].output
-    this.slotVisuals.push({ x, y, getStack, icon: null, count: null })
-
-    const binding: SlotBinding = {
-      getScreenPos: () => ({ x, y }),
-      canTake: () => getStack() !== null,
-      // bounce-back only: accept the same item type (we don't allow the player to *initiate* a place here)
-      canPlace: (itemType) => {
-        const cur = getStack()
-        return cur !== null && cur.type === itemType
-      },
-      take: () => {
-        const s = getStack()
-        if (!s) return null
-        state.plots[this.plotIndex].output = null
-        this.redrawAllCraftSlots()
-        return s
-      },
-      place: (stack: ItemStack) => {
-        // restore the stack to plot.output (bounce-back path)
-        const cur = getStack()
-        if (!cur) {
-          state.plots[this.plotIndex].output = { type: stack.type, count: stack.count }
-          stack.count = 0
-          this.redrawAllCraftSlots()
-          return true
-        }
-        if (cur.type !== stack.type) return false
-        cur.count += stack.count
-        stack.count = 0
-        this.redrawAllCraftSlots()
-        return true
-      },
-    }
-    this.bindings.push(binding)
-    const ui = this.scene.get('UI') as UI
-    ui.getDragController().register(binding)
-
-    slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if ((p.event as MouseEvent).shiftKey) {
-        this.shiftTakeToInventory(binding)
-        return
-      }
-      if (!binding.canTake()) return
-      ui.getDragController().startDrag(binding, p)
-    })
-
-    this.redrawAllCraftSlots()
-  }
-
-  // Called by UI scene on inventory shift-click. Try to place the stack into
-  // this building's slots (input slots, output if applicable). Mutates the
-  // stack's count down as it's consumed; caller bounces any leftover back.
+  // Inventory dispatch from UI scene's shift-click on an inventory slot.
   placeFromInventory(stack: ItemStack) {
     for (const b of this.bindings) {
       if (stack.count <= 0) break
-      if (!b.canPlace(stack.type)) continue
-      b.place(stack)
+      if (!b.accepts(stack.type)) continue
+      const accepted = b.offer(stack)
+      stack.count -= accepted
     }
-    this.redrawAllCraftSlots()
   }
 
-  // Shift-click handler: take from this slot and push as much as possible into inventory.
-  // Whatever doesn't fit is bounced back to the source.
   private shiftTakeToInventory(binding: SlotBinding) {
-    if (!binding.canTake()) return
-    const stack = binding.take()
+    const peek = binding.peek()
+    if (!peek) return
+    const stack = binding.take(peek.count)
     if (!stack) return
     state.inventoryAddAnywhere(stack)
-    if (stack.count > 0) binding.place(stack)  // bounce leftover
-    this.redrawAllCraftSlots()
+    if (stack.count > 0) binding.restore(stack)
     this.registry.events.emit('inventory-changed')
   }
 
-  // Shift-click handler for the crafter output: repeat consume → inventory until full or empty.
   private craftAllToInventory() {
+    if (this.data.source !== 'plot') return
     let madeAny = false
     while (true) {
-      const preview = previewCraft(this.plotIndex)
+      const preview = previewCraft(this.data.plotIndex)
       if (!preview) break
       const tentative: ItemStack = { type: preview.type, count: preview.count }
       const added = state.inventoryAddAnywhere(tentative)
       if (added <= 0) break
-      consumeCraft(this.plotIndex)
+      consumeCraft(this.data.plotIndex)
       madeAny = true
     }
     if (madeAny) {
-      this.redrawAllCraftSlots()
       this.registry.events.emit('inventory-changed')
+      this.events.emit('bread-crafted')
     }
-  }
-  private makeCraftSlot(x: number, y: number, role: 'input' | 'output', inputIndex: number) {
-    const slotImg = this.add.image(x, y, 'menu-slot').setInteractive({ useHandCursor: true })
-
-    const getStack = (): ItemStack | null => {
-      const plot = state.plots[this.plotIndex]
-      if (role === 'input') return plot.craftInputs?.[inputIndex] ?? null
-      // output slot shows the live recipe preview, not stored state
-      return previewCraft(this.plotIndex)
-    }
-    const setStack = (s: ItemStack | null) => {
-      const plot = state.plots[this.plotIndex]
-      if (role === 'input') {
-        if (!plot.craftInputs) plot.craftInputs = [null, null]
-        plot.craftInputs[inputIndex] = s
-      } else {
-        plot.craftOutput = s
-      }
-    }
-    this.slotVisuals.push({ x, y, getStack, icon: null, count: null })
-
-    const binding: SlotBinding = {
-      getScreenPos: () => ({ x, y }),
-      canTake: () => {
-        if (role === 'output') return previewCraft(this.plotIndex) !== null
-        return getStack() !== null
-      },
-      // outputs never accept placement.
-      // inputs accept if empty OR if same type (merge up to maxStack).
-      canPlace: (itemType) => {
-        if (role !== 'input') return false
-        const cur = getStack()
-        if (!cur) return true
-        return cur.type === itemType
-      },
-      take: () => {
-        if (role === 'output') {
-          const stack = consumeCraft(this.plotIndex)
-          if (stack) this.redrawAllCraftSlots()
-          return stack
-        }
-        const s = getStack()
-        if (!s) return null
-        setStack(null)
-        this.redrawAllCraftSlots()
-        return s
-      },
-      place: (stack: ItemStack) => {
-        if (role !== 'input') return false
-        const cur = getStack()
-        if (!cur) {
-          // consume the incoming stack into a new owned stack on this slot
-          setStack({ type: stack.type, count: stack.count })
-          stack.count = 0
-          this.redrawAllCraftSlots()
-          return true
-        }
-        if (cur.type !== stack.type) return false
-        const cap = ITEMS[cur.type].maxStack
-        const room = cap - cur.count
-        if (room <= 0) return false
-        const moved = Math.min(room, stack.count)
-        cur.count += moved
-        stack.count -= moved
-        this.redrawAllCraftSlots()
-        return stack.count === 0
-      },
-    }
-    this.bindings.push(binding)
-    const ui = this.scene.get('UI') as UI
-    ui.getDragController().register(binding)
-
-    slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      // shift-click on the crafter output: craft as many as inputs + inventory allow
-      if (role === 'output' && (p.event as MouseEvent).shiftKey) {
-        this.craftAllToInventory()
-        return
-      }
-      // shift-click on a crafter input: move it to inventory
-      if (role === 'input' && (p.event as MouseEvent).shiftKey) {
-        this.shiftTakeToInventory(binding)
-        return
-      }
-      if (!binding.canTake()) return
-      ui.getDragController().startDrag(binding, p)
-    })
-
-    this.redrawAllCraftSlots()
   }
 
   private redrawAllCraftSlots() {
     for (const v of this.slotVisuals) {
+      const stack = v.getStack()
+      const curType = stack?.type ?? null
+      const curCount = stack?.count ?? 0
+      if (curType === v.lastType && curCount === v.lastCount) continue
+
       v.icon?.destroy(); v.count?.destroy()
       v.icon = null; v.count = null
-      const stack = v.getStack()
+      v.lastType = curType
+      v.lastCount = curCount
+
       if (!stack) continue
-      v.icon = this.add.sprite(v.x, v.y, ITEMS[stack.type].sprite).setScale(2)
+      v.icon = this.add.sprite(v.x, v.y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale)
       if (stack.count > 1) {
         v.count = this.add.bitmapText(v.x + 23, v.y + 23, 'main', String(stack.count), 20)
           .setOrigin(1, 1).setTint(COLORS.uiText)
       }
     }
+  }
+
+  update() {
+    this.redrawAllCraftSlots()
+    for (const fn of this.moduleUpdates) fn()
   }
 
   private cleanup() {
@@ -376,29 +211,13 @@ export class Interior extends Phaser.Scene {
     for (const b of this.bindings) dc.unregister(b)
     this.bindings = []
     this.slotVisuals = []
-  }
-
-  update() {
-    // continuously refresh visible slot contents (Overworld ticks may add items while we're in here)
-    this.redrawAllCraftSlots()
-
-    // tint the producer arrow based on item-tick progress
-    if (this.producerArrow) {
-      const def = BUILDINGS[this.buildingType]
-      if (def.itemTickMs) {
-        const plot = state.plots[this.plotIndex]
-        const frac = ((Date.now() - plot.lastItemTickAt) % def.itemTickMs) / def.itemTickMs
-        // lerp each channel from dim (0x55,0x4a,0x3e) to bright (0xFF,0xD7,0x00)
-        const r = Math.floor(Phaser.Math.Linear(0x55, 0xFF, frac))
-        const g = Math.floor(Phaser.Math.Linear(0x4a, 0xD7, frac))
-        const b = Math.floor(Phaser.Math.Linear(0x3e, 0x00, frac))
-        this.producerArrow.setTint((r << 16) | (g << 8) | b)
-      }
-    }
+    for (const fn of this.moduleCleanups) fn()
+    this.moduleCleanups = []
+    this.moduleUpdates = []
   }
 
   private exit() {
-    this.registry.events.emit('interior-exited', this.plotIndex)
+    this.registry.events.emit('interior-exited')
     this.scene.stop('Interior')
   }
 }

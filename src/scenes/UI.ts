@@ -3,7 +3,9 @@ import { COLORS } from '../colors'
 import { BUILDINGS, BUILDING_LIST, INVENTORY_SIZE, state, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { DragController } from '../ui/DragController'
+import { CursorController } from '../ui/CursorController'
 import type { SlotBinding } from '../ui/SlotBinding'
+import { attachSlotHover } from '../ui/hover'
 import type { Interior } from './Interior'
 
 const BAR_HEIGHT = 40
@@ -11,11 +13,14 @@ const BAR_HEIGHT = 40
 export class UI extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.BitmapText
   private dragController!: DragController
+  private cursorController!: CursorController
 
   // inventory visuals — one entry per slot, with refs we redraw on change
   private invIcons: (Phaser.GameObjects.Sprite | null)[] = []
   private invCounts: (Phaser.GameObjects.BitmapText | null)[] = []
   private invSlotPos: { x: number; y: number }[] = []
+  // persistent hotbar selection indicator
+  private selectionIndicator!: Phaser.GameObjects.Rectangle
 
   // build menu (hidden by default)
   private menuContainer!: Phaser.GameObjects.Container
@@ -46,6 +51,8 @@ export class UI extends Phaser.Scene {
 
     // drag controller — must exist before any slot registers with it
     this.dragController = new DragController(this)
+    // cursor controller — pixel-art cursor that follows the pointer
+    this.cursorController = new CursorController(this)
 
     // top bar
     this.add.rectangle(0, 0, w, BAR_HEIGHT, COLORS.uiBarBg).setOrigin(0, 0)
@@ -83,7 +90,27 @@ export class UI extends Phaser.Scene {
     this.input.keyboard!.on('keydown-E', () => { if (this.menuContainer.visible) this.closeMenu() })
 
     this.menuContainer = this.add.container(w / 2, h / 2).setVisible(false)
-    this.menuContainer.add(this.add.image(0, 0, 'menu-bg'))
+    // Sized to fit the title (~32px) + row stack + padding. Width matches the
+    // original menu.png by hugging the row content tightly.
+    const rowW = 48 + 4 + 330 + 4 + 48   // ICON_W + GAP + NAME_W + GAP + COST_W
+    const MENU_PAD_X = 24
+    const MENU_PAD_Y = 24
+    const TITLE_BAND = 36
+    const rowStackH = 3 * 48 + 2 * 8
+    const MENU_W = rowW + MENU_PAD_X * 2
+    const MENU_H = TITLE_BAND + rowStackH + MENU_PAD_Y * 2
+    this.menuContainer.add(
+      this.add.nineslice(0, 0, 'menu-bg', undefined, MENU_W, MENU_H, 16, 16, 16, 16),
+    )
+
+    // Title above the row list
+    const ROW_H_TITLE = 48
+    const ROW_GAP_TITLE = 8
+    const topRowY = -((BUILDING_LIST.length - 1) / 2) * (ROW_H_TITLE + ROW_GAP_TITLE)
+    const title = this.add.bitmapText(0, topRowY - ROW_H_TITLE / 2 - 18, 'main', 'Build', 20)
+      .setOrigin(0.5, 0.5)
+      .setTint(0xFFFFFF)
+    this.menuContainer.add(title)
 
     // Row layout: [icon slot 48] [gap] [longslot 330] [gap] [cost slot 48]
     const ICON_W = 48
@@ -102,9 +129,12 @@ export class UI extends Phaser.Scene {
       const def = BUILDINGS[type]
       const rowY = -((BUILDING_LIST.length - 1) / 2) * (ROW_H + ROW_GAP) + i * (ROW_H + ROW_GAP)
 
-      const iconSlot = this.add.image(iconX, rowY, 'menu-slot').setInteractive({ useHandCursor: true })
-      const nameSlot = this.add.image(nameX, rowY, 'menu-longslot').setInteractive({ useHandCursor: true })
-      const costSlot = this.add.image(costX, rowY, 'menu-slot').setInteractive({ useHandCursor: true })
+      const iconSlot = this.add.image(iconX, rowY, 'menu-slot').setInteractive()
+      const nameSlot = this.add.image(nameX, rowY, 'menu-longslot').setInteractive()
+      const costSlot = this.add.image(costX, rowY, 'menu-slot').setInteractive()
+      const iconHover = attachSlotHover(this, iconSlot, iconX, rowY, ICON_W, ROW_H)
+      const nameHover = attachSlotHover(this, nameSlot, nameX, rowY, NAME_W, ROW_H)
+      const costHover = attachSlotHover(this, costSlot, costX, rowY, COST_W, ROW_H)
 
       // building icon centered in its slot
       const icon = this.add.sprite(iconX, rowY, type).setScale(2)
@@ -123,7 +153,7 @@ export class UI extends Phaser.Scene {
       const coin = this.add.sprite(costX + 12, rowY, 'gold_coin').setScale(2)
 
       this.menuRowTexts[type] = [label, desc, cost]
-      this.menuContainer.add([iconSlot, nameSlot, costSlot, icon, label, desc, cost, coin])
+      this.menuContainer.add([iconSlot, nameSlot, costSlot, icon, label, desc, cost, coin, iconHover, nameHover, costHover])
 
       const onClick = (_p: any, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
         ev.stopPropagation()
@@ -188,7 +218,8 @@ export class UI extends Phaser.Scene {
     for (let i = 0; i < INVENTORY_SIZE; i++) {
       const slotIndex = i
       const x = startX + i * (SLOT + GAP)
-      const slotImg = this.add.image(x, barY, 'menu-slot').setInteractive({ useHandCursor: true })
+      const slotImg = this.add.image(x, barY, 'menu-slot').setInteractive()
+      attachSlotHover(this, slotImg, x, barY)
 
       this.invIcons[slotIndex] = null
       this.invCounts[slotIndex] = null
@@ -197,38 +228,75 @@ export class UI extends Phaser.Scene {
       // register as a drag-and-drop slot
       const binding: SlotBinding = {
         getScreenPos: () => ({ x, y: barY }),
-        canTake: () => state.inventory[slotIndex] !== null,
-        canPlace: () => {
+        peek: () => state.inventory[slotIndex],
+        accepts: (itemType) => {
           const cur = state.inventory[slotIndex]
-          return cur === null
-            ? true
-            : true  // for now allow any place; stack-merging handled in inventoryPlace
+          return cur === null || cur.type === itemType
         },
-        take: () => {
-          const s = state.inventoryTake(slotIndex)
-          if (s) this.redrawInventorySlot(slotIndex, x, barY)
-          return s
-        },
-        place: (stack: ItemStack) => {
-          const ok = state.inventoryPlace(slotIndex, stack)
+        take: (count: number) => {
+          const cur = state.inventory[slotIndex]
+          if (!cur) return null
+          const n = Math.min(count, cur.count)
+          if (n <= 0) return null
+          const taken: ItemStack = { type: cur.type, count: n }
+          cur.count -= n
+          if (cur.count <= 0) state.inventory[slotIndex] = null
           this.redrawInventorySlot(slotIndex, x, barY)
-          return ok
+          return taken
+        },
+        offer: (stack) => {
+          const accepted = state.inventoryOffer(slotIndex, stack)
+          if (accepted > 0) this.redrawInventorySlot(slotIndex, x, barY)
+          return accepted
+        },
+        restore: (stack) => {
+          const accepted = state.inventoryOffer(slotIndex, stack)
+          if (accepted > 0) this.redrawInventorySlot(slotIndex, x, barY)
+          return accepted
         },
       }
       this.dragController.register(binding)
 
       slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
-        if (!state.inventory[slotIndex]) return
         if ((p.event as MouseEvent).shiftKey) {
+          if (!state.inventory[slotIndex]) return
           this.shiftSendFromInventory(slotIndex, binding)
           return
         }
-        this.dragController.startDrag(binding, p)
+        this.dragController.handleSlotClick(binding, p)
       })
 
       // initial render in case state was pre-seeded
       this.redrawInventorySlot(slotIndex, x, barY)
     }
+
+    // persistent hotbar selection indicator — hollow square over the selected slot
+    const SELECTION_SIZE = 56
+    const SELECTION_STROKE = 3
+    const SELECTION_COLOR = 0xffffff
+    const SELECTION_DEPTH = 9999
+    const first = this.invSlotPos[state.selectedInventorySlot]
+    this.selectionIndicator = this.add.rectangle(first.x, first.y, SELECTION_SIZE, SELECTION_SIZE)
+      .setStrokeStyle(SELECTION_STROKE, SELECTION_COLOR)
+      .setFillStyle()
+      .setDepth(SELECTION_DEPTH)
+
+    // mouse wheel cycles selected slot (Minecraft hotbar)
+    this.input.on('wheel', (_p: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
+      const dir = dy > 0 ? 1 : -1
+      const next = (state.selectedInventorySlot + dir + INVENTORY_SIZE) % INVENTORY_SIZE
+      this.setSelectedSlot(next)
+    })
+  }
+
+  private setSelectedSlot(i: number) {
+    state.selectedInventorySlot = i
+    const pos = this.invSlotPos[i]
+    this.selectionIndicator.setPosition(pos.x, pos.y)
+  }
+
+  update() {
+    this.cursorController.refresh()
   }
 
   private redrawInventorySlot(i: number, x: number, y: number) {
@@ -239,7 +307,7 @@ export class UI extends Phaser.Scene {
     this.invIcons[i] = null
     this.invCounts[i] = null
     if (!stack) return
-    this.invIcons[i] = this.add.sprite(x, y, ITEMS[stack.type].sprite).setScale(2)
+    this.invIcons[i] = this.add.sprite(x, y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale)
     if (stack.count > 1) {
       this.invCounts[i] = this.add.bitmapText(x + 23, y + 23, 'main', String(stack.count), 20)
         .setOrigin(1, 1)

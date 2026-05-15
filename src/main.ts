@@ -4,7 +4,7 @@ import { Overworld } from './scenes/Overworld'
 import { UI } from './scenes/UI'
 import { Interior } from './scenes/Interior'
 
-new Phaser.Game({
+const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   width: 576,
@@ -17,3 +17,5 @@ new Phaser.Game({
   },
   scene: [Overworld, UI, Interior],
 })
+// right-click is used to pick up half a stack — suppress the browser menu
+game.input.mouse?.disableContextMenu()

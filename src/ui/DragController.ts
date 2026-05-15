@@ -2,26 +2,29 @@ import Phaser from 'phaser'
 import { ITEMS, type ItemStack } from '../items/types'
 import type { SlotBinding } from './SlotBinding'
 
-// One DragController lives in the UI scene. Every slot in the game registers
-// with it. The controller renders the held item following the cursor and
-// resolves drops by hit-testing against registered slots.
+// One DragController lives in the UI scene. Slots route their pointerdown to
+// handleSlotClick(); the controller owns the held-state machine.
 //
-// Slots from different scenes can all register with this single controller —
-// they just have to translate their local coords into screen coords in
-// getScreenPos().
+// Click model matches Minecraft:
+//   cursor empty + left   = take whole stack
+//   cursor empty + right  = take ceil(half), leave floor(half)
+//   cursor full  + left   = drop all / merge / swap
+//   cursor full  + right  = drop 1, keep holding the rest
+//   click in empty space = nothing. The held item stays on the cursor until
+//   you click it onto a slot.
+
+const HELD_DEPTH = 10000
+
 export class DragController {
   private scene: Phaser.Scene
   private slots: SlotBinding[] = []
   private held: { stack: ItemStack; source: SlotBinding } | null = null
+  private heldContainer: Phaser.GameObjects.Container | null = null
   private heldSprite: Phaser.GameObjects.Sprite | null = null
   private heldCount: Phaser.GameObjects.BitmapText | null = null
-  // hit-test radius around a slot center (slots are 48x48 by default)
-  private hitRadius = 24
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene
-    // global pointer listeners on the controller's scene (UI scene = always on top)
-    scene.input.on('pointerup', (p: Phaser.Input.Pointer) => this.resolveDrop(p))
     scene.input.on('pointermove', (p: Phaser.Input.Pointer) => this.updateHeldPos(p))
   }
 
@@ -29,74 +32,117 @@ export class DragController {
   unregister(slot: SlotBinding) {
     const i = this.slots.indexOf(slot)
     if (i >= 0) this.slots.splice(i, 1)
+    if (this.held && this.held.source === slot) this.clearHeld()
   }
 
-  // Start a drag from the given slot. Called by a slot when it receives
-  // pointerdown.
-  startDrag(slot: SlotBinding, pointer: Phaser.Input.Pointer) {
-    if (this.held) return  // already holding something — ignore
-    if (!slot.canTake()) return
-    const stack = slot.take()
+  isHolding(): boolean { return this.held !== null }
+
+  // Called by a slot's own pointerdown handler. Shift-clicks are intercepted
+  // by the slot first; this method handles non-shift left or right click.
+  handleSlotClick(slot: SlotBinding, p: Phaser.Input.Pointer) {
+    const isRight = p.rightButtonDown()
+
+    if (!this.held) {
+      if (isRight) this.pickUpHalf(slot)
+      else this.pickUpAll(slot)
+      return
+    }
+
+    if (isRight) this.placeOne(slot)
+    else this.placeOrSwap(slot)
+  }
+
+  private pickUpAll(slot: SlotBinding) {
+    const peek = slot.peek()
+    if (!peek) return
+    const stack = slot.take(peek.count)
     if (!stack) return
     this.held = { stack, source: slot }
-    this.renderHeld(pointer.x, pointer.y)
+    this.renderHeld()
   }
 
-  // Internal: build/update the held visual.
-  private renderHeld(x: number, y: number) {
+  private pickUpHalf(slot: SlotBinding) {
+    const peek = slot.peek()
+    if (!peek) return
+    const halfUp = Math.ceil(peek.count / 2)
+    const stack = slot.take(halfUp)
+    if (!stack) return
+    this.held = { stack, source: slot }
+    this.renderHeld()
+  }
+
+  private placeOrSwap(slot: SlotBinding) {
+    if (!this.held) return
+    const stack = this.held.stack
+
+    // same-type merge (or empty slot accepting)
+    if (slot.accepts(stack.type)) {
+      const accepted = slot.offer(stack)
+      stack.count -= accepted
+      if (stack.count <= 0) this.clearHeld()
+      else this.renderHeld()
+      return
+    }
+
+    // different type — swap, but only if the slot has something to lift
+    // AND can accept everything we're holding (no item loss)
+    const existing = slot.peek()
+    if (!existing) return
+    const lifted = slot.take(existing.count)
+    if (!lifted) return
+    const accepted = slot.offer(stack)
+    if (accepted < stack.count) {
+      // swap would lose items — undo and bail
+      slot.restore(lifted)
+      return
+    }
+    stack.count -= accepted
+    this.held = { stack: lifted, source: slot }
+    this.renderHeld()
+  }
+
+  private placeOne(slot: SlotBinding) {
+    if (!this.held) return
+    const stack = this.held.stack
+    if (!slot.accepts(stack.type)) return
+    const one: ItemStack = { type: stack.type, count: 1 }
+    const accepted = slot.offer(one)
+    if (accepted <= 0) return
+    stack.count -= accepted
+    if (stack.count <= 0) this.clearHeld()
+    else this.renderHeld()
+  }
+
+  private renderHeld() {
     if (!this.held) return
     const def = ITEMS[this.held.stack.type]
-    if (!this.heldSprite) {
-      this.heldSprite = this.scene.add.sprite(x, y, def.sprite).setScale(2).setDepth(10000)
+    const p = this.scene.input.activePointer
+
+    if (!this.heldContainer) {
+      this.heldSprite = this.scene.add.sprite(0, 0, def.sprite).setScale(def.scale)
+      this.heldCount = this.scene.add.bitmapText(23, 23, 'main', '', 20)
+        .setOrigin(1, 1)
+      this.heldContainer = this.scene.add.container(p.x, p.y, [this.heldSprite, this.heldCount])
+        .setDepth(HELD_DEPTH)
     } else {
-      this.heldSprite.setTexture(def.sprite).setPosition(x, y).setVisible(true)
+      this.heldSprite!.setTexture(def.sprite).setScale(def.scale)
+      this.heldContainer.setPosition(p.x, p.y).setVisible(true)
     }
+
     if (this.held.stack.count > 1) {
-      const txt = String(this.held.stack.count)
-      if (!this.heldCount) {
-        this.heldCount = this.scene.add.bitmapText(x + 10, y + 10, 'mainSmall', txt, 12)
-          .setOrigin(1, 1).setDepth(10001)
-      } else {
-        this.heldCount.setText(txt).setPosition(x + 10, y + 10).setVisible(true)
-      }
-    } else if (this.heldCount) {
-      this.heldCount.setVisible(false)
+      this.heldCount!.setText(String(this.held.stack.count)).setVisible(true)
+    } else {
+      this.heldCount!.setVisible(false)
     }
   }
 
   private updateHeldPos(p: Phaser.Input.Pointer) {
-    if (!this.held || !this.heldSprite) return
-    this.heldSprite.setPosition(p.x, p.y)
-    if (this.heldCount) this.heldCount.setPosition(p.x + 10, p.y + 10)
-  }
-
-  private resolveDrop(p: Phaser.Input.Pointer) {
-    if (!this.held) return
-    const stack = this.held.stack
-    const source = this.held.source
-
-    // find a slot under the pointer that can accept this item
-    let target: SlotBinding | null = null
-    for (const s of this.slots) {
-      if (s === source) continue
-      const { x, y } = s.getScreenPos()
-      if (Math.abs(p.x - x) <= this.hitRadius && Math.abs(p.y - y) <= this.hitRadius) {
-        if (s.canPlace(stack.type)) { target = s; break }
-      }
-    }
-
-    let accepted = false
-    if (target) accepted = target.place(stack)
-    if (!accepted) source.place(stack)  // bounce back to source
-
-    this.clearHeld()
+    if (!this.held || !this.heldContainer) return
+    this.heldContainer.setPosition(p.x, p.y)
   }
 
   private clearHeld() {
     this.held = null
-    if (this.heldSprite) this.heldSprite.setVisible(false)
-    if (this.heldCount) this.heldCount.setVisible(false)
+    if (this.heldContainer) this.heldContainer.setVisible(false)
   }
-
-  isHolding(): boolean { return this.held !== null }
 }

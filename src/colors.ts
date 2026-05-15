@@ -22,4 +22,12 @@ export const COLORS = {
 
   // menu — disabled (unaffordable) row text
   menuDisabled: 0xD8D2C0,   // cool light gray-cream
+
+  // slot hover — applied as a tint (multiply) to brighten the slot + its
+  // contents when the pointer is over it. Slightly above white-tint to keep
+  // a faint warm cast.
+  slotHover: 0xFFFFE8,
+
+  // interior panel tint — applied to 9-slice backgrounds inside buildings
+  interiorPanel: 0x8A8690,
 }

@@ -48,5 +48,7 @@ export function consumeCraft(plotIndex: number): ItemStack | null {
   b.count--
   if (a.count <= 0) inputs[0] = null
   if (b.count <= 0) inputs[1] = null
+  // dialogue flag — the crafter NPC reacts the first time bread is made
+  if (preview.type === 'bread') state.hasMadeBread = true
   return preview
 }
