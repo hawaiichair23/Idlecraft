@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { COLORS } from '../colors'
 import { ITEMS, type ItemStack, type ItemType } from '../items/types'
 import { type SlotBinding } from './SlotBinding'
-import { attachSlotHover } from './hover'
+import { attachSlotHover, attachSlotTooltip } from './hover'
 
 // ---------------------------------------------------------------------------
 // slotFactory — shared helpers for building drag-and-drop slots.
@@ -24,6 +24,10 @@ export interface SlotImageOptions {
   y: number
   // Defaults to the standard menu-slot tint used inside building interiors.
   tint?: number
+  // If provided, a tooltip showing the item name appears on hover.
+  peek?: () => ItemStack | null
+  // Override the tooltip's vertical offset (negative = above slot).
+  tooltipOffsetY?: number
 }
 
 // Adds the slot frame + hover overlay + interactive flag, returns the image.
@@ -32,6 +36,7 @@ export function makeSlotImage(scene: Phaser.Scene, opts: SlotImageOptions): Phas
     .setTint(opts.tint ?? COLORS.interiorPanel)
     .setInteractive()
   attachSlotHover(scene, slotImg, opts.x, opts.y)
+  if (opts.peek) attachSlotTooltip(scene, slotImg, opts.x, opts.y, opts.peek, opts.tooltipOffsetY)
   return slotImg
 }
 

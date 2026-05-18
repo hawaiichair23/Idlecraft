@@ -1,17 +1,17 @@
 import Phaser from 'phaser'
 import { loadSprites } from '../sprites/loader'
 import { COLORS } from '../colors'
-import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
-import { INTERIOR_BG_PATHS } from './Interior'
-import { state, BUILDINGS, type BuiltType } from '../game/state'
-import { ITEMS } from '../items/types'
+import { UI_BAR_HEIGHT, UI } from './UI'
+import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, type BuiltType } from '../game/state'
+import { ITEMS, type ItemStack, type ItemDef } from '../items/types'
 import { generateWorld } from '../world/gen'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { registerGrabbable } from '../ui/hover'
 
 const WORLD_PX = 576 * 8    // 8x canvas size, so player can wander
-// For non testing gameplay: const PLAYER_SPEED = 120
-const PLAYER_SPEED = 310
+// For non testing gameplay: const PLAYER_SPEED = 130
+const PLAYER_SPEED = 330
+const FOOD_BUFF_MS = 60000
 
 const PLOT_COLS = 4
 const PLOT_ROWS = 4
@@ -43,10 +43,18 @@ export class Overworld extends Phaser.Scene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
   private arrows!: Phaser.Types.Input.Keyboard.CursorKeys
   private plotViews: PlotView[] = []
+  // Solid obstacles the player can't walk through. World-space AABBs.
+  private obstacles: { x: number; y: number; w: number; h: number }[] = []
   private worldBg!: Phaser.GameObjects.Rectangle
   // sprite for each currently-revealed buried coin, keyed by `x,y` so we can
   // destroy it on pickup. Parallel to state.revealedItems.
   private revealedSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // dirt patches left by digging, keyed by `x,y` so we can destroy on undo.
+  private dugSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Player-dropped items in the world. Index in state.droppedItems → sprite.
+  private droppedSprites: (Phaser.GameObjects.Sprite | null)[] = []
+  // Planted trees/saplings in the world, keyed by `x,y` so we can destroy on dig-up.
+  private plantedTreeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
 
   constructor() {
     super('Overworld')
@@ -59,10 +67,6 @@ export class Overworld extends Phaser.Scene {
     // (loadSprites in create() skips keys that already exist)
     this.load.image('item_flour', '/flour.png')
     this.load.image('item_water', '/water.png')
-    // preload all interior backgrounds up front so transitions are instant
-    for (const [key, path] of Object.entries(INTERIOR_BG_PATHS)) {
-      this.load.image(key, path)
-    }
   }
 
   create() {
@@ -75,12 +79,53 @@ export class Overworld extends Phaser.Scene {
       .setStrokeStyle(2, COLORS.worldBorder)
       .setInteractive()
     this.worldBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      const ui = this.scene.get('UI') as UI
+      const drag = ui.getDragController()
+      const isRight = p.rightButtonDown()
+
+      // right-click: eat from held cursor, or from selected hotbar slot
+      if (isRight) {
+        const heldDef = drag.isHolding() ? drag.peekEdibleDef() : undefined
+        if (heldDef && drag.tryEatHeld()) {
+          this.spawnCrumbs(this.player.x, this.player.y, heldDef.crumbColor!)
+          state.speedBuffEndsAt = Date.now() + FOOD_BUFF_MS
+          state.speedBuffAmount = heldDef.speedBuff!
+          return
+        }
+        const selectedDef = this.peekSelectedEdibleDef()
+        if (selectedDef && this.tryEatSelected()) {
+          this.spawnCrumbs(this.player.x, this.player.y, selectedDef.crumbColor!)
+          state.speedBuffEndsAt = Date.now() + FOOD_BUFF_MS
+          state.speedBuffAmount = selectedDef.speedBuff!
+          return
+        }
+        return  // right-click with non-food does nothing on the world
+      }
+
+      // left-click — existing behavior
+      // if the player is holding a stack (drag-and-drop):
+      //   - if it's a sapling and dropped on a dirt patch → plant it
+      //   - otherwise drop the stack on the ground
+      if (drag.isHolding()) {
+        const heldStack = drag.peekHeldStack()
+        if (heldStack && heldStack.type === 'cottonwood_sapling') {
+          if (this.tryPlantFromStack(p.worldX, p.worldY, heldStack)) {
+            // sapling count decremented; if empty, clear held
+            if (heldStack.count <= 0) drag.takeHeld()
+            else drag.refreshHeldVisual()
+            return
+          }
+        }
+        const stack = drag.takeHeld()
+        if (stack) this.dropStack(p.worldX, p.worldY, stack)
+        return
+      }
       if (state.isShovelSelected()) {
         this.tryDig(p.worldX, p.worldY)
         return
       }
-      state.addGold(1, this.registry)
-      this.spawnGoldFloat(p.worldX, p.worldY, 1)
+      // sapling selected? try to plant on a nearby dirt patch
+      if (this.trySaplingPlant(p.worldX, p.worldY)) return
     })
 
     // 16 plots, evenly spaced, centered on the world
@@ -142,7 +187,19 @@ export class Overworld extends Phaser.Scene {
     }
     // restore any dirt patches already in state (e.g. after HMR)
     for (const d of state.dugSpots) {
-      this.add.sprite(d.x, d.y, 'dirt_patch').setScale(2).setDepth(1)
+      const sprite = this.add.sprite(d.x, d.y, 'dirt_patch').setScale(2).setDepth(1)
+      this.dugSprites.set(`${d.x},${d.y}`, sprite)
+    }
+    // restore any dropped items already in state (e.g. after HMR)
+    this.droppedSprites = state.droppedItems.map(d =>
+      this.add.sprite(d.x, d.y, ITEMS[d.stack.type].sprite)
+        .setScale(ITEMS[d.stack.type].scale)
+        .setDepth(2)
+    )
+    // restore any planted trees already in state (e.g. after HMR)
+    for (const t of state.plantedTrees) {
+      const sprite = this.add.sprite(t.x, t.y, 'planted_cottonwood_sapling').setScale(2).setDepth(2)
+      this.plantedTreeSprites.set(`${t.x},${t.y}`, sprite)
     }
     // restore any revealed-but-uncollected coins
     for (const r of state.revealedItems) {
@@ -152,23 +209,79 @@ export class Overworld extends Phaser.Scene {
     // fixed world structures (shop, church, ...) — render at their hardcoded positions
     for (const s of state.worldStructures) {
       const def = WORLD_STRUCTURES[s.type]
-      this.add.sprite(s.x, s.y, def.sprite).setScale(def.scale)
+      // y-sort depth uses the building's bottom edge (sprite is 16px @ scale 3)
+      const bottomY = s.y + 24
+      this.add.sprite(s.x, s.y, def.sprite).setScale(def.scale).setDepth(bottomY)
       // shops get a mirrored copy at the same position so the building reads wider
-      if (s.type === 'shop') {
+      if (s.type === 'shop' || s.type === 'general_store') {
         // mirror to the right, snug against the original. Sprite's right side
         // has 4px of native padding, so offset by content width not full width.
-        this.add.sprite(s.x + 24, s.y, def.sprite).setScale(def.scale).setFlipX(true)
+        this.add.sprite(s.x + 24, s.y, def.sprite).setScale(def.scale).setFlipX(true).setDepth(bottomY)
       }
     }
 
-    // player at world center, always on the top layer of the overworld
-    this.player = this.add.sprite(cx, cy, 'player').setScale(PLAYER_SCALE).setDepth(1000)
+    // ---- TEST ROCK FORMATION ---- horizontal ridge with a bump in the middle.
+    {
+      const TILE = 24
+      const rockX = cx - 240
+      const rockY = cy + 280
+      const rockBottomY = rockY + TILE / 2   // y-sort depth (same for every tile)
+      const rockTiles = ['rock_tl', 'rock_bump', 'rock_tr']
+      for (let c = 0; c < rockTiles.length; c++) {
+        const x = rockX + c * TILE
+        const isBump = rockTiles[c] === 'rock_bump'
+        const sprite = this.add.sprite(x, rockY, rockTiles[c]).setScale(3)
+        if (isBump) sprite.setOrigin(0.5, 1).setY(rockBottomY)
+        sprite.setDepth(rockBottomY)
+      }
+      // collision rect covering the full formation footprint
+      this.obstacles.push({
+        x: rockX - TILE / 2,
+        y: rockY - TILE / 2,
+        w: TILE * rockTiles.length,
+        h: TILE,
+      })
+    }
 
-    // camera — viewport sits between the top bar and the inventory bar
+    // ---- TREES ABOVE ABANDONED HOUSE ---- 12px sprite at scale 3 = 36px tall.
+    // House center is at (2100, 3400); two trees stacked vertically above it.
+    {
+      const treePositions: [number, number][] = [
+        [2080, 3340],
+        [2120, 3290],
+      ]
+      for (const [tx, ty] of treePositions) {
+        // y-sort by tree base (sprite is 12px at scale 3 = 36px, so bottom is ~y+18)
+        this.add.sprite(tx, ty, 'cottonwood').setScale(3).setDepth(ty + 18)
+      }
+    }
+
+    // ---- DECOR NEAR LAND OFFICE / NURSERY ---- yuccas grouped next to the Nursery
+    // like potted stock for sale. Cottonwood to the side.
+    // Land Office at (2930, 104), Nursery at (3000, 104).
+    {
+      const yuccaPositions: [number, number][] = [
+        [3120, 210],
+        [3136, 208],
+        [3128, 224],
+        [3144, 222],
+      ]
+      for (const [yx, yy] of yuccaPositions) {
+        this.add.sprite(yx, yy, 'yucca').setScale(2).setDepth(yy)
+      }
+      this.add.sprite(3220, 160, 'cottonwood').setScale(3).setDepth(160 + 18)
+    }
+
+    // player at world center. Depth = y, so sprites south of the player render
+    // in front and sprites north render behind (standard overhead y-sort).
+    this.player = this.add.sprite(cx, cy, 'player').setScale(PLAYER_SCALE).setDepth(cy)
+
+    // camera — viewport starts below the top bar, extends to bottom of canvas
     const cam = this.cameras.main
-    cam.setViewport(0, UI_BAR_HEIGHT, cam.width, cam.height - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT)
+    cam.setViewport(0, UI_BAR_HEIGHT, cam.width, cam.height - UI_BAR_HEIGHT)
     cam.startFollow(this.player)
     cam.setBounds(0, 0, WORLD_PX, WORLD_PX)
+    cam.setZoom(1.07)
 
     // launch the UI scene on top
     this.scene.launch('UI')
@@ -205,6 +318,7 @@ export class Overworld extends Phaser.Scene {
   private enterPlotInterior(plotIndex: number, type: BuiltType) {
     this.preInteriorPos = { x: this.player.x, y: this.player.y }
     this.cameras.main.setVisible(false)
+    this.registry.events.emit('interior-entered')
     this.scene.run('Interior', { source: 'plot', buildingType: type, plotIndex })
     this.scene.bringToTop('UI')
   }
@@ -212,6 +326,7 @@ export class Overworld extends Phaser.Scene {
   private enterWorldStructure(structureIndex: number, type: WorldStructureType) {
     this.preInteriorPos = { x: this.player.x, y: this.player.y }
     this.cameras.main.setVisible(false)
+    this.registry.events.emit('interior-entered')
     this.scene.run('Interior', { source: 'world', buildingType: type, structureIndex })
     this.scene.bringToTop('UI')
   }
@@ -221,7 +336,7 @@ export class Overworld extends Phaser.Scene {
     if (!ok) return
     const view = this.plotViews[plotIndex]
     view.priceTag.destroy()
-    view.building = this.add.sprite(view.x, view.y, type).setScale(SPRITE_SCALE)
+    view.building = this.add.sprite(view.x, view.y, type).setScale(SPRITE_SCALE).setDepth(view.y + 24)
 
     const def = BUILDINGS[type]
     // name label above the plot
@@ -241,6 +356,10 @@ export class Overworld extends Phaser.Scene {
 
   // dig spacing: refuse if click is within this many pixels of an existing dig
   private static DIG_MIN_SPACING = 12
+  // plant hit radius: dropping/clicking a sapling within this distance of a
+  // dirt patch will plant on it. More generous than DIG_MIN_SPACING so
+  // dropping doesn't require pixel-perfect aim.
+  private static PLANT_HIT_RADIUS = 28
   // dig offset: the shovel cursor's tip is at (0,0) but the blade is lower-left.
   // Offset the dirt patch so it appears at the blade, not the cursor tip.
   private static DIG_OFFSET_X = 0
@@ -255,10 +374,164 @@ export class Overworld extends Phaser.Scene {
   // true while a dig is in progress — blocks new dig clicks until resolved.
   private digInProgress = false
 
+  // Drop a stack at world position (x, y). Spawns a sprite and adds to state.
+  private dropStack(x: number, y: number, stack: ItemStack) {
+    state.droppedItems.push({ x, y, stack })
+    const sprite = this.add.sprite(x, y, ITEMS[stack.type].sprite)
+      .setScale(ITEMS[stack.type].scale)
+      .setDepth(2)
+    this.droppedSprites.push(sprite)
+  }
+
+  // Consume 1 of the selected hotbar item if it's edible. Returns true if eaten.
+  private tryEatSelected(): boolean {
+    const slot = state.selectedInventorySlot
+    const stack = state.inventory[slot]
+    if (!stack) return false
+    if (!ITEMS[stack.type].edible) return false
+    stack.count -= 1
+    if (stack.count <= 0) state.inventory[slot] = null
+    this.registry.events.emit('inventory-changed')
+    return true
+  }
+
+  // Returns the ItemDef of the selected hotbar item if edible, else undefined.
+  private peekSelectedEdibleDef(): ItemDef | undefined {
+    const stack = state.inventory[state.selectedInventorySlot]
+    if (!stack) return undefined
+    const def = ITEMS[stack.type]
+    if (!def.edible) return undefined
+    return def
+  }
+
+  // Four waves of food-colored crumbs spraying from the player. Pixel-art friendly:
+  // no fade, just arc-and-snap-and-vanish like spawnDirtParticles.
+  private spawnCrumbs(x: number, y: number, color: number) {
+    this.spawnCrumbWave(x, y, color)
+    this.time.delayedCall(150, () => this.spawnCrumbWave(x, y, color))
+    this.time.delayedCall(300, () => this.spawnCrumbWave(x, y, color))
+    this.time.delayedCall(450, () => this.spawnCrumbWave(x, y, color))
+  }
+
+  private spawnCrumbWave(x: number, y: number, color: number) {
+    const COUNT = 6
+    for (let i = 0; i < COUNT; i++) {
+      const angle = (Math.PI / 6) + Math.random() * (Math.PI * 2 / 3)
+      const speed = 8 + Math.random() * 8
+      const dx = Math.cos(angle) * speed
+      const dy = -Math.sin(angle) * speed
+      const p = this.add.rectangle(x, y - 2, 2, 2, color).setDepth(1001)
+      const landX = Math.floor(x + dx)
+      const landY = Math.floor(y + dy + 10)   // small gravity arc
+      this.tweens.add({
+        targets: p,
+        x: landX,
+        y: landY,
+        duration: 300 + Math.random() * 80,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          p.setPosition(landX, landY)
+          this.time.delayedCall(200, () => p.destroy())
+        },
+      })
+    }
+  }
+
+  // Try to plant a sapling at click position. The selected hotbar slot must be
+  // a sapling, and the click must be near a dirt patch. Returns true if planted.
+  private trySaplingPlant(clickX: number, clickY: number): boolean {
+    const slotIdx = state.selectedInventorySlot
+    const stack = state.inventory[slotIdx]
+    if (!stack || stack.type !== 'cottonwood_sapling') return false
+    const planted = this.tryPlantFromStack(clickX, clickY, stack)
+    if (planted) {
+      if (stack.count <= 0) state.inventory[slotIdx] = null
+      this.registry.events.emit('inventory-changed')
+    }
+    return planted
+  }
+
+  // Lower-level: given a sapling stack, try planting one near (clickX, clickY).
+  // Mutates the stack (count -= 1) on success but does NOT clear empty slots
+  // or emit events — callers handle cleanup since the stack may live in
+  // inventory or on the cursor (drag held).
+  tryPlantFromStack(clickX: number, clickY: number, stack: ItemStack): boolean {
+    if (stack.type !== 'cottonwood_sapling') return false
+    if (stack.count <= 0) return false
+
+    // dirt patches use the dig offset, so compare in offset-applied coords
+    const x = clickX + Overworld.DIG_OFFSET_X
+    const y = clickY + Overworld.DIG_OFFSET_Y
+    const radiusSq = Overworld.PLANT_HIT_RADIUS * Overworld.PLANT_HIT_RADIUS
+
+    for (let i = state.dugSpots.length - 1; i >= 0; i--) {
+      const d = state.dugSpots[i]
+      const dx = x - d.x
+      const dy = y - d.y
+      if (dx * dx + dy * dy >= radiusSq) continue
+
+      const key = `${d.x},${d.y}`
+      const dirtSprite = this.dugSprites.get(key)
+      if (dirtSprite) { dirtSprite.destroy(); this.dugSprites.delete(key) }
+      state.dugSpots.splice(i, 1)
+
+      state.plantedTrees.push({ x: d.x, y: d.y, kind: 'cottonwood' })
+      const treeSprite = this.add.sprite(d.x, d.y, 'planted_cottonwood_sapling').setScale(2).setDepth(2)
+      this.plantedTreeSprites.set(key, treeSprite)
+
+      stack.count -= 1
+      return true
+    }
+    return false
+  }
+
   private tryDig(clickX: number, clickY: number) {
     if (this.digInProgress) return   // one dig at a time
     const x = clickX + Overworld.DIG_OFFSET_X
     const y = clickY + Overworld.DIG_OFFSET_Y
+
+    // dig up a planted tree: remove tree, leave dirt patch + sapling as a
+    // revealed item that the player can walk over to claim.
+    const undoSq = Overworld.DIG_MIN_SPACING * Overworld.DIG_MIN_SPACING
+    for (let i = state.plantedTrees.length - 1; i >= 0; i--) {
+      const t = state.plantedTrees[i]
+      const dx = x - t.x
+      const dy = y - t.y
+      if (dx * dx + dy * dy >= undoSq) continue
+
+      const key = `${t.x},${t.y}`
+      const treeSprite = this.plantedTreeSprites.get(key)
+      if (treeSprite) { treeSprite.destroy(); this.plantedTreeSprites.delete(key) }
+      state.plantedTrees.splice(i, 1)
+
+      // dirt patch back at the spot
+      state.dugSpots.push({ x: t.x, y: t.y })
+      const dirtSprite = this.add.sprite(t.x, t.y, 'dirt_patch').setScale(2).setDepth(1)
+      this.dugSprites.set(key, dirtSprite)
+
+      // sapling appears as a dropped item on top, walk over to pick up
+      const sapStack: ItemStack = { type: 'cottonwood_sapling', count: 1 }
+      state.droppedItems.push({ x: t.x, y: t.y, stack: sapStack })
+      const sapSprite = this.add.sprite(t.x, t.y, ITEMS.cottonwood_sapling.sprite)
+        .setScale(ITEMS.cottonwood_sapling.scale)
+        .setDepth(2)
+      this.droppedSprites.push(sapSprite)
+      return
+    }
+
+    // undo: if clicking near an existing dirt patch, remove it instead of digging
+    for (let i = state.dugSpots.length - 1; i >= 0; i--) {
+      const d = state.dugSpots[i]
+      const dx = x - d.x
+      const dy = y - d.y
+      if (dx * dx + dy * dy < undoSq) {
+        const key = `${d.x},${d.y}`
+        const sprite = this.dugSprites.get(key)
+        if (sprite) { sprite.destroy(); this.dugSprites.delete(key) }
+        state.dugSpots.splice(i, 1)
+        return
+      }
+    }
     // refuse if inside any plot footprint
     for (const v of this.plotViews) {
       if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) return
@@ -294,7 +567,8 @@ export class Overworld extends Phaser.Scene {
       particleTimer.remove(false)
       planted.destroy()
       state.dugSpots.push({ x, y })
-      this.add.sprite(x, y, 'dirt_patch').setScale(2).setDepth(1)
+      const patchSprite = this.add.sprite(x, y, 'dirt_patch').setScale(2).setDepth(1)
+      this.dugSprites.set(`${x},${y}`, patchSprite)
 
       // reveal AT MOST one buried item within reveal radius
       const revSq = Overworld.DIG_REVEAL_RADIUS * Overworld.DIG_REVEAL_RADIUS
@@ -367,7 +641,9 @@ export class Overworld extends Phaser.Scene {
 
     // movement only when overworld is the active view
     if (overworldVisible) {
-      const step = (PLAYER_SPEED * dt) / 1000
+      const buffed = Date.now() < state.speedBuffEndsAt
+      const speed = PLAYER_SPEED + (buffed ? state.speedBuffAmount : 0)
+      const step = (speed * dt) / 1000
       let dx = 0
       let dy = 0
       if (this.wasd.A.isDown || this.arrows.left!.isDown) dx -= 1
@@ -375,8 +651,22 @@ export class Overworld extends Phaser.Scene {
       if (this.wasd.W.isDown || this.arrows.up!.isDown) dy -= 1
       if (this.wasd.S.isDown || this.arrows.down!.isDown) dy += 1
       if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2 }
-      this.player.x = Phaser.Math.Clamp(this.player.x + dx * step, 8, WORLD_PX - 8)
-      this.player.y = Phaser.Math.Clamp(this.player.y + dy * step, 8, WORLD_PX - 8)
+      // axis-separated movement so the player can slide along obstacle edges
+      const PLAYER_HALF = 5
+      const collidesAt = (px: number, py: number): boolean => {
+        for (const o of this.obstacles) {
+          if (px + PLAYER_HALF > o.x &&
+              px - PLAYER_HALF < o.x + o.w &&
+              py + PLAYER_HALF > o.y &&
+              py - PLAYER_HALF < o.y + o.h) return true
+        }
+        return false
+      }
+      const nextX = Phaser.Math.Clamp(this.player.x + dx * step, 8, WORLD_PX - 8)
+      if (!collidesAt(nextX, this.player.y)) this.player.x = nextX
+      const nextY = Phaser.Math.Clamp(this.player.y + dy * step, 8, WORLD_PX - 8)
+      if (!collidesAt(this.player.x, nextY)) this.player.y = nextY
+      this.player.setDepth(this.player.y)
     }
 
     const now = Date.now()
@@ -397,6 +687,28 @@ export class Overworld extends Phaser.Scene {
         if (sprite) { sprite.destroy(); this.revealedSprites.delete(key) }
         state.addGold(r.reward, this.registry)
         this.spawnGoldFloat(r.x, r.y, r.reward)
+      }
+    }
+
+    // pickup any dropped items the player has walked over
+    if (overworldVisible && state.droppedItems.length > 0) {
+      const pickSq = Overworld.PICKUP_RADIUS * Overworld.PICKUP_RADIUS
+      for (let i = state.droppedItems.length - 1; i >= 0; i--) {
+        const d = state.droppedItems[i]
+        const dx = d.x - px
+        const dy = d.y - py
+        if (dx * dx + dy * dy > pickSq) continue
+        const added = state.inventoryAddAnywhere(d.stack)
+        if (added > 0) {
+          this.registry.events.emit('inventory-changed')
+        }
+        if (d.stack.count <= 0) {
+          // fully picked up — destroy sprite and remove from world
+          state.droppedItems.splice(i, 1)
+          this.droppedSprites[i]?.destroy()
+          this.droppedSprites.splice(i, 1)
+        }
+        // if d.stack.count > 0, inventory full — leave on ground, will retry next frame
       }
     }
 
@@ -422,7 +734,7 @@ export class Overworld extends Phaser.Scene {
     for (let i = 0; i < state.worldStructures.length; i++) {
       const s = state.worldStructures[i]
       const inZone = overworldVisible && (
-        s.type === 'shop'
+        (s.type === 'shop' || s.type === 'general_store')
           ? (px - s.x) >= -16 && (px - s.x) <= 52 && Math.abs(py - s.y) < 16
           : Math.abs(px - s.x) < 16 && Math.abs(py - s.y) < 16
       )
@@ -457,25 +769,31 @@ export class Overworld extends Phaser.Scene {
 
       if (def.goldPerTick > 0) {
         // time-based ticking: how many full ticks have elapsed since lastTickAt?
+        const goldTickMs = getEffectiveTickMs(def.tickMs, plot.level)
+        const levelGold = def.goldPerTick * Math.pow(2, plot.level - 1)
+        // keep bar label in sync with current level
+        if (view.barLabel) view.barLabel.setText(`${levelGold} gold`)
         const elapsed = now - plot.lastTickAt
-        const fullTicks = Math.floor(elapsed / def.tickMs)
+        const fullTicks = Math.floor(elapsed / goldTickMs)
         if (fullTicks > 0) {
-          state.addGold(def.goldPerTick * fullTicks, this.registry)
-          plot.lastTickAt += fullTicks * def.tickMs
+          const gold = levelGold * fullTicks
+          state.addGold(gold, this.registry)
+          plot.lastTickAt += fullTicks * goldTickMs
           if (overworldVisible) {
-            this.spawnGoldFloat(view.x, view.y - PLOT_SIZE / 2, def.goldPerTick * fullTicks)
+            this.spawnGoldFloat(view.x, view.y - PLOT_SIZE / 2, gold)
           }
         }
         // progress bar: fraction of the current tick (always update so it stays right)
         if (view.barFill) {
-          const frac = ((now - plot.lastTickAt) % def.tickMs) / def.tickMs
+          const frac = ((now - plot.lastTickAt) % goldTickMs) / goldTickMs
           view.barFill.width = BAR_W * frac
         }
       }
 
       // item production (mill→flour, well→water) — separate cadence from gold
       if (def.producesItem && def.itemTickMs) {
-        const cap = ITEMS[def.producesItem].maxStack
+        const itemTick = getEffectiveTickMs(def.itemTickMs, plot.level)
+        const cap = getStorageCap(plot.level)
         // "blocked" means we can't add to this slot: full of our own item,
         // or holding a different item the player put there.
         const blockedSameType = plot.output !== null && plot.output.type === def.producesItem && plot.output.count >= cap
@@ -486,7 +804,7 @@ export class Overworld extends Phaser.Scene {
           plot.lastItemTickAt = now
         } else {
           const elapsedI = now - plot.lastItemTickAt
-          const fullItemTicks = Math.floor(elapsedI / def.itemTickMs)
+          const fullItemTicks = Math.floor(elapsedI / itemTick)
           if (fullItemTicks > 0) {
             const have = plot.output?.count ?? 0
             const room = cap - have
@@ -498,7 +816,7 @@ export class Overworld extends Phaser.Scene {
                 plot.output = { type: def.producesItem, count: add }
               }
             }
-            plot.lastItemTickAt += fullItemTicks * def.itemTickMs
+            plot.lastItemTickAt += fullItemTicks * itemTick
           }
         }
       }

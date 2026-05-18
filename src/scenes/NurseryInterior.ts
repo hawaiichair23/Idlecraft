@@ -1,3 +1,6 @@
+// NurseryInterior.ts — buy menu for seeds. Same layout as the Tool Shop.
+// Sells hemp seed for now. Future seed types added to NURSERY_ITEMS.
+
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
 import { state } from '../game/state'
@@ -6,29 +9,21 @@ import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
 import { attachSlotHover } from '../ui/hover'
 import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
 
-// ---------------------------------------------------------------------------
-// ShopInterior — buy menu. Same row layout as the build menu in UI.ts but
-// for inventory items. One row per item: icon | name+description | cost+coin.
-// ---------------------------------------------------------------------------
-
-export interface ShopInteriorHandle {
+export interface NurseryInteriorHandle {
   onCleanup: () => void
 }
 
-// Items the shop sells, with their buy prices and descriptions.
-// (Sell prices live on the items themselves in items/types.ts.)
-interface ShopEntry {
+interface NurseryEntry {
   type: ItemType
   buyPrice: number
   description: string
 }
-const SHOP_ITEMS: ShopEntry[] = [
-  { type: 'shovel', buyPrice: 100, description: 'For digging and burying.' },
+const NURSERY_ITEMS: NurseryEntry[] = [
+  { type: 'hemp_seed', buyPrice: 20, description: 'Plant in a field. Grows hemp.' },
 ]
 
-export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number): ShopInteriorHandle {
-  // ---- backdrop (wall, windows, floor, side walls) ----
-  buildInteriorBackdrop(scene, INTERIOR_PALETTES.toolShop)
+export function buildNurseryInterior(scene: Phaser.Scene): NurseryInteriorHandle {
+  buildInteriorBackdrop(scene, INTERIOR_PALETTES.nursery)
 
   const w = scene.cameras.main.width
   const h = scene.cameras.main.height
@@ -47,30 +42,26 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
   const TITLE_BAND = 36
 
   const ROW_W = ICON_W + GAP + NAME_W + GAP + COST_W
-  const rowStackH = SHOP_ITEMS.length * ROW_H + Math.max(0, SHOP_ITEMS.length - 1) * ROW_GAP
+  const rowStackH = NURSERY_ITEMS.length * ROW_H + Math.max(0, NURSERY_ITEMS.length - 1) * ROW_GAP
   const PANEL_W = ROW_W + PANEL_PAD_X * 2
   const PANEL_H = TITLE_BAND + rowStackH + PANEL_PAD_Y * 2
 
   const panelX = w / 2
   const panelY = playAreaTop + playAreaH / 2
 
-  // ---- panel background ----
   scene.add.nineslice(panelX, panelY, 'menu-bg', undefined, PANEL_W, PANEL_H, 16, 16, 16, 16)
     .setTint(COLORS.interiorPanel)
 
-  // ---- title ----
   const topRowY = panelY - rowStackH / 2 + ROW_H / 2
-  const title = scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Tool Shop', 24)
+  scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Nursery', 24)
     .setOrigin(0.5, 0.5)
     .setTint(COLORS.uiText)
 
-  // ---- rows ----
   const iconX = panelX - ROW_W / 2 + ICON_W / 2
   const nameX = iconX + ICON_W / 2 + GAP + NAME_W / 2
   const costX = nameX + NAME_W / 2 + GAP + COST_W / 2
 
-  // text refs for affordability re-tint
-  const rowTexts: { entry: ShopEntry; texts: Phaser.GameObjects.BitmapText[] }[] = []
+  const rowTexts: { entry: NurseryEntry; texts: Phaser.GameObjects.BitmapText[] }[] = []
 
   const refreshAffordability = () => {
     const gold = (scene.registry.get('gold') as number | undefined) ?? 0
@@ -81,7 +72,7 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
     }
   }
 
-  SHOP_ITEMS.forEach((entry, i) => {
+  NURSERY_ITEMS.forEach((entry, i) => {
     const def = ITEMS[entry.type]
     const rowY = topRowY + i * (ROW_H + ROW_GAP)
 
@@ -92,10 +83,8 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
     attachSlotHover(scene, nameSlot, nameX, rowY, NAME_W, ROW_H)
     attachSlotHover(scene, costSlot, costX, rowY, COST_W, ROW_H)
 
-    // item icon centered in its slot
     scene.add.sprite(iconX, rowY, def.sprite).setScale(def.scale)
 
-    // name + description, left-aligned in long slot
     const labelX = nameX - NAME_W / 2 + 12
     const label = scene.add.bitmapText(labelX, rowY - 8, 'main', def.name, 18)
       .setOrigin(0, 0.5)
@@ -104,7 +93,6 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
 
-    // cost number + coin
     const cost = scene.add.bitmapText(costX - 6, rowY + 3, 'main', `${entry.buyPrice}`, 16)
       .setOrigin(0.5, 0.5)
       .setTint(COLORS.uiText)
@@ -120,7 +108,6 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
       const stack: ItemStack = { type: entry.type, count: 1 }
       const added = state.inventoryAddAnywhere(stack)
       if (added <= 0) {
-        // refund — no room in inventory
         state.addGold(entry.buyPrice, scene.registry)
         return
       }
@@ -134,7 +121,6 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
 
   refreshAffordability()
 
-  // re-tint rows when gold changes (e.g. from selling at general store)
   const onGoldChange = () => refreshAffordability()
   scene.registry.events.on('changedata-gold', onGoldChange)
 

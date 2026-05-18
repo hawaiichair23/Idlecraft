@@ -51,9 +51,9 @@ export function buildModifierRack(
   const topSlotY = rackY - (MODIFIER_SLOTS_PER_PLOT - 1) * (SLOT + GAP) / 2
   for (let i = 0; i < MODIFIER_SLOTS_PER_PLOT; i++) {
     const slotY = topSlotY + i * (SLOT + GAP)
-    const slotImg = makeSlotImage(scene, { x: rackX, y: slotY })
-
     const getStack = () => state.plots[plotIndex].modifiers[i]
+    const slotImg = makeSlotImage(scene, { x: rackX, y: slotY, peek: getStack, tooltipOffsetY: -44 })
+
     const setStack = (s: ItemStack | null) => { state.plots[plotIndex].modifiers[i] = s }
     slotVisuals.push({ x: rackX, y: slotY, getStack, icon: null, count: null, lastType: null, lastCount: 0 })
 

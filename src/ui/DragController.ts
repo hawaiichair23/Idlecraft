@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { ITEMS, type ItemStack } from '../items/types'
+import { ITEMS, type ItemStack, type ItemDef } from '../items/types'
 import type { SlotBinding } from './SlotBinding'
 
 // One DragController lives in the UI scene. Slots route their pointerdown to
@@ -36,6 +36,46 @@ export class DragController {
   }
 
   isHolding(): boolean { return this.held !== null }
+
+  // Take the held stack and clear the held state. Returns null if not holding.
+  // Used when dropping the held stack outside the slot system (e.g. into the world).
+  takeHeld(): ItemStack | null {
+    if (!this.held) return null
+    const stack = this.held.stack
+    this.clearHeld()
+    return stack
+  }
+
+  // Consume 1 of the held stack if it's edible. Returns true if eaten.
+  tryEatHeld(): boolean {
+    if (!this.held) return false
+    const stack = this.held.stack
+    if (!ITEMS[stack.type].edible) return false
+    stack.count -= 1
+    if (stack.count <= 0) this.clearHeld()
+    else this.renderHeld()
+    return true
+  }
+
+  // Returns the held stack itself (NOT a copy) so callers can read its type
+  // and mutate its count. Use sparingly — most callers should use peekEdibleDef.
+  peekHeldStack(): ItemStack | null {
+    return this.held ? this.held.stack : null
+  }
+
+  // Re-render the held visual after the stack count was mutated externally.
+  // Caller is responsible for clearing held if count hit 0.
+  refreshHeldVisual() {
+    this.renderHeld()
+  }
+
+  // Returns the ItemDef of the held stack if edible, else undefined.
+  peekEdibleDef(): ItemDef | undefined {
+    if (!this.held) return undefined
+    const def = ITEMS[this.held.stack.type]
+    if (!def.edible) return undefined
+    return def
+  }
 
   // Called by a slot's own pointerdown handler. Shift-clicks are intercepted
   // by the slot first; this method handles non-shift left or right click.
@@ -84,9 +124,22 @@ export class DragController {
       return
     }
 
+    // read-only output slot (e.g. crafter preview): if it has the same type
+    // we're already holding, take from it and merge into the held stack.
+    const existing = slot.peek()
+    if (existing && existing.type === stack.type) {
+      const cap = ITEMS[stack.type].maxStack
+      const room = cap - stack.count
+      if (room <= 0) return
+      const lifted = slot.take(Math.min(room, existing.count))
+      if (!lifted) return
+      stack.count += lifted.count
+      this.renderHeld()
+      return
+    }
+
     // different type — swap, but only if the slot has something to lift
     // AND can accept everything we're holding (no item loss)
-    const existing = slot.peek()
     if (!existing) return
     const lifted = slot.take(existing.count)
     if (!lifted) return

@@ -7,12 +7,12 @@ import { Interior } from './scenes/Interior'
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  width: 576,
-  height: 576,
+  width: 1920,
+  height: 1080,
   pixelArt: true,
   backgroundColor: '#2A2520',
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   scene: [Overworld, UI, Interior],

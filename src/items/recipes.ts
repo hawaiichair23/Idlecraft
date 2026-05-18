@@ -4,10 +4,16 @@ import { type ItemType, type ItemStack } from './types'
 export interface Recipe {
   inputs: [ItemType, ItemType]  // order-agnostic
   output: ItemType
+  outputCount?: number          // defaults to 1
 }
 
 export const RECIPES: Recipe[] = [
   { inputs: ['flour', 'water'], output: 'bread' },
+  { inputs: ['bread', 'sausage'], output: 'kolache' },
+  { inputs: ['leather', 'twine'], output: 'bag' },
+  { inputs: ['sugar_cane', 'sugar_cane'], output: 'sugar', outputCount: 2 },
+  { inputs: ['sugar', 'bread'], output: 'pastry' },
+  { inputs: ['hemp', 'hemp'], output: 'twine' },
 ]
 
 // Returns the matching recipe for the given two inputs (order doesn't matter),
@@ -32,7 +38,7 @@ export function previewCraft(plotIndex: number): ItemStack | null {
   if (!a || !b) return null
   const recipe = findRecipe(a.type, b.type)
   if (!recipe) return null
-  return { type: recipe.output, count: 1 }
+  return { type: recipe.output, count: recipe.outputCount ?? 1 }
 }
 
 // Destructive: consume one of each input, return the output stack.

@@ -298,7 +298,157 @@ export const SHOP: Sprite = [
   [_,spS,spS,spS,spS,spS,spS,spS,spS,spS,spS,spS,_,_,_,_],
 ]
 
-// Shovel: wooden handle, gray metal scoop. 8x8.
+// ---- GENERAL STORE ---- Same shape as SHOP, different palette. Cooler/greener
+// to read distinct at a glance. Used for the early-game "sell goods" building.
+const gsP = '#6E7A4A'   // plank wood (sage green)
+const gsD = '#3F4828'   // dark plank / shadow
+const gsR = '#566338'   // roof
+const gsS = '#2A2E1A'   // sign frame / deep shadow
+const gsA = '#0F1408'   // door / window deep
+export const GENERAL_STORE: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,_,_,_,_],
+  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
+  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
+  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
+  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
+  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
+  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
+  [_,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,_,_,_,_],
+  [_,gsP,gsD,gsP,gsA,gsA,gsP,gsD,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsD,gsP,gsA,gsA,gsP,gsD,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsD,gsP,gsA,gsA,gsP,gsD,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,_,_,_,_],
+]
+
+// ---- ABANDONED HOUSE ---- Same shape as SHOP, but desaturated and weathered.
+// Sagging roofline (missing pixels), boarded-over windows, dark hollow door.
+// Used as a discoverable structure off-screen with items inside.
+const ahP = '#6E665C'   // weathered plank
+const ahD = '#3A332C'   // dark plank shadow
+const ahR = '#4A4138'   // washed-out roof
+const ahS = '#1F1A14'   // deep shadow / sign frame
+const ahA = '#0A0805'   // doorway hollow
+const ahB = '#4D3520'   // board-up plank (warm brown, contrasts grays)
+export const ABANDONED_HOUSE: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,ahR,ahR,ahR,_,ahR,ahR,ahR,ahR,_,ahR,_,_,_,_],
+  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
+  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
+  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_,_],
+  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
+  [_,_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
+  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
+  [_,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahP,_,_,_,_],
+  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahP,ahP,ahD,ahB,ahB,ahP,ahP,ahA,ahA,ahD,ahP,_,_,_,_],
+  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahA,ahA,ahP,ahD,_,_,_,_],
+  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_],
+]
+
+// ---- LAND OFFICE ---- 16x16. Warm honey-toned frontier office with a porch
+// overhang on the front. Sits in the northern town. Sells plot-type unlocks.
+const loP = '#B07A45'   // plank wood (warm honey)
+const loD = '#7A4F25'   // dark plank / shadow
+const loR = '#955A2A'   // roof (reddish brown)
+const loS = '#3A1F10'   // sign frame / deep shadow
+const loA = '#1A0D05'   // door / window deep
+const loC = '#8B5A2B'   // porch post (slightly darker than wall)
+export const LAND_OFFICE: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,_,_,_,_],
+  [_,loR,loS,loS,loS,loS,loS,loS,loS,loS,loS,loR,_,_,_,_],
+  [_,loR,loS,loS,loS,loS,loS,loS,loS,loS,loS,loR,_,_,_,_],
+  [_,loR,loS,loS,loS,loS,loS,loS,loS,loS,loS,loR,_,_,_,_],
+  [_,loR,loS,loS,loS,loS,loS,loS,loS,loS,loS,loR,_,_,_,_],
+  [_,loR,loS,loS,loS,loS,loS,loS,loS,loS,loS,loR,_,_,_,_],
+  [_,loP,loP,loP,loP,loP,loP,loP,loP,loP,loP,loP,_,_,_,_],
+  [_,loP,loD,loP,loA,loA,loP,loD,loA,loA,loP,loP,_,_,_,_],
+  [_,loP,loP,loP,loA,loA,loP,loP,loA,loA,loP,loP,_,_,_,_],
+  [_,loP,loD,loP,loA,loA,loP,loD,loA,loA,loP,loP,_,_,_,_],
+  [_,loP,loP,loP,loA,loA,loP,loP,loA,loA,loP,loP,_,_,_,_],
+  [loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,_,_,_],
+  [_,loC,_,_,_,_,_,_,_,_,_,_,loC,_,_,_],
+  [_,loC,_,_,_,_,_,_,_,_,_,_,loC,_,_,_],
+  [_,loS,loS,loS,loS,loS,loS,loS,loS,loS,loS,loS,loS,_,_,_],
+]
+
+
+// ---- FIELD ---- 16x16. Tilled plot — rows of furrows in brown dirt, a few
+// small green sprouts poking up. Plot-type building, like the Mill.
+const fdD = '#5A3D1F'   // dark furrow
+const fdM = '#7A5230'   // mid soil
+const fdL = '#9B6E40'   // raised soil ridge
+const fdG = '#7BAA3C'   // sprout green
+const fdGd = '#3F5828'  // sprout shadow
+export const FIELD: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,_,_,_,_],
+  [_,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,_,_,_,_],
+  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
+  [_,fdL,fdL,fdG,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,_,_,_,_],
+  [_,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,_,_,_,_],
+  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
+  [_,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,fdL,fdL,fdL,_,_,_,_],
+  [_,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,fdM,fdM,_,_,_,_],
+  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
+  [_,fdL,fdL,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,fdL,_,_,_,_],
+  [_,fdM,fdM,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,_,_,_,_],
+  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
+  [_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+
+// Sits next to the Land Office. Sells seeds.
+const nuP = '#A89476'   // plank wood (pale weathered)
+const nuD = '#6E5E45'   // dark plank / shadow
+const nuR = '#7A6650'   // roof (muted brown)
+const nuS = '#2E2618'   // sign frame / deep shadow
+const nuA = '#120D06'   // door / window deep
+export const NURSERY: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,nuR,nuR,nuR,nuR,nuR,nuR,nuR,nuR,nuR,nuR,_,_,_,_],
+  [_,nuR,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuR,_,_,_,_],
+  [_,nuR,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuR,_,_,_,_],
+  [_,nuR,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuR,_,_,_,_],
+  [_,nuR,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuR,_,_,_,_],
+  [_,nuR,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuR,_,_,_,_],
+  [_,nuR,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuR,_,_,_,_],
+  [_,nuP,nuP,nuP,nuP,nuP,nuP,nuP,nuP,nuP,nuP,nuP,_,_,_,_],
+  [_,nuP,nuD,nuP,nuA,nuA,nuP,nuD,nuA,nuA,nuP,nuP,_,_,_,_],
+  [_,nuP,nuP,nuP,nuA,nuA,nuP,nuP,nuA,nuA,nuP,nuP,_,_,_,_],
+  [_,nuP,nuD,nuP,nuA,nuA,nuP,nuD,nuA,nuA,nuP,nuP,_,_,_,_],
+  [_,nuP,nuP,nuP,nuA,nuA,nuP,nuP,nuA,nuA,nuP,nuP,_,_,_,_],
+  [_,nuP,nuD,nuP,nuA,nuA,nuP,nuD,nuA,nuA,nuP,nuP,_,_,_,_],
+  [_,nuP,nuP,nuP,nuA,nuA,nuP,nuP,nuA,nuA,nuP,nuP,_,_,_,_],
+  [_,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,nuS,_,_,_,_],
+]
+
+
+// center. Pale dusty green. Decorative groundcover, used outside the nursery.
+const yL = '#A8B878'   // leaf light (pale dusty green)
+const yM = '#6B8048'   // leaf mid
+const yD = '#3F5028'   // leaf dark (center where leaves overlap)
+export const YUCCA: Sprite = [
+  [_,yL,_,_,yL,_,_,yL],
+  [_,_,yM,yM,yM,_,yL,_],
+  [yL,yM,yM,yD,yM,yM,_,_],
+  [_,yM,yD,yD,yD,yM,yM,yL],
+  [yL,yM,yD,yD,yD,yM,_,_],
+  [_,yM,yM,yM,yM,_,yL,_],
+  [yL,_,_,yM,_,yL,_,_],
+  [_,yL,_,_,_,_,_,yL],
+]
+
+
 const svH = '#8B5A2B'   // handle wood
 const svM = '#777777'   // metal scoop
 const svD = '#444444'   // metal shadow
@@ -363,6 +513,137 @@ export const SHOVEL_DIG: Sprite = [
   [_,_,svM,svD,_,_],
 ]
 
+// ---- ROCK TILES ---- 8x8. Tilemap pieces for rock formations. 3x3 grid:
+// corners (TL/TR/BL/BR), edges (T/L/R/B), and center (C). World gen composes
+// these into multi-tile rock heaps the player can mine with a pickaxe.
+const rkL = '#9E9A93'   // light stone (highlight)
+const rkM = '#6F6B65'   // mid stone (main)
+const rkD = '#3F3C38'   // dark stone (shadow)
+
+// top-left corner
+export const ROCK_TL: Sprite = [
+  [_,_,rkM,rkM,rkM,rkM,rkM,rkM],
+  [_,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkL,rkL,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkL,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// top edge
+export const ROCK_T: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkL,rkM,rkM,rkM,rkM,rkL,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkD,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// top-right corner
+export const ROCK_TR: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,_,_],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,_],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// left edge
+export const ROCK_L: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkL,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkD,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// center
+export const ROCK_C: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkL,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkD,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkL],
+  [rkM,rkM,rkD,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// right edge
+export const ROCK_R: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkD,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkL,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// bottom-left corner
+export const ROCK_BL: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// bottom edge
+export const ROCK_B: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkD,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// bottom-right corner
+export const ROCK_BR: Sprite = [
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
+// bump tile: 8 wide × 11 tall. Rises 3 pixels above a normal top edge.
+// Render with origin (0.5, 1) so its bottom aligns with neighbor T tiles.
+export const ROCK_BUMP: Sprite = [
+  [_,_,rkM,rkM,rkM,rkM,_,_],
+  [_,rkM,rkM,rkM,rkM,rkM,rkM,_],
+  [rkM,rkM,rkM,rkL,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkD,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
+]
+
 export const ITEM_SHOVEL: Sprite = [
   [_,_,_,_,_,_,svH,_],
   [_,_,_,_,_,svH,_,_],
@@ -374,17 +655,253 @@ export const ITEM_SHOVEL: Sprite = [
   [_,svM,svD,_,_,_,_,_],
 ]
 
+// Bag: brown leather pouch with drawstring. 8x8.
+const bgL = '#A07040'   // leather light
+const bgD = '#6B4422'   // leather dark
+const bgS = '#8B5A2B'   // leather shadow
+const bgT = '#5A3D26'   // drawstring tie
+export const ITEM_BAG: Sprite = [
+  [_,_,bgT,bgT,bgT,bgT,_,_],
+  [_,bgT,bgL,bgL,bgL,bgL,bgT,_],
+  [_,bgS,bgL,bgL,bgL,bgL,bgS,_],
+  [bgS,bgL,bgL,bgL,bgL,bgL,bgL,bgS],
+  [bgS,bgL,bgL,bgD,bgD,bgL,bgL,bgS],
+  [bgS,bgL,bgD,bgD,bgD,bgD,bgL,bgS],
+  [_,bgS,bgD,bgD,bgD,bgD,bgS,_],
+  [_,_,bgS,bgS,bgS,bgS,_,_],
+]
+
+// Medium Bag: larger version of the bag with a slight green tint and a metal
+// buckle on the front. 12x12. Mid-game upgrade — holds 2x3 = 6 slots.
+const bbL = '#8E8550'   // green-tinted leather light
+const bbD = '#574D2A'   // green-tinted leather dark
+const bbS = '#73683E'   // shadow
+const bbT = '#3F3820'   // drawstring
+const bbB = '#C9C2A8'   // metal buckle highlight
+const bbM = '#9C9685'   // metal buckle mid
+export const ITEM_MEDIUM_BAG: Sprite = [
+  [_,_,_,bbT,bbT,bbT,bbT,bbT,bbT,_,_,_],
+  [_,_,bbT,bbL,bbL,bbL,bbL,bbL,bbL,bbT,_,_],
+  [_,bbT,bbS,bbL,bbL,bbL,bbL,bbL,bbL,bbS,bbT,_],
+  [_,bbS,bbL,bbL,bbL,bbL,bbL,bbL,bbL,bbL,bbS,_],
+  [bbS,bbL,bbL,bbL,bbB,bbM,bbM,bbB,bbL,bbL,bbL,bbS],
+  [bbS,bbL,bbL,bbL,bbM,bbD,bbD,bbM,bbL,bbL,bbL,bbS],
+  [bbS,bbL,bbL,bbD,bbD,bbD,bbD,bbD,bbD,bbL,bbL,bbS],
+  [bbS,bbL,bbD,bbD,bbD,bbD,bbD,bbD,bbD,bbD,bbL,bbS],
+  [bbS,bbL,bbD,bbD,bbD,bbD,bbD,bbD,bbD,bbD,bbL,bbS],
+  [_,bbS,bbD,bbD,bbD,bbD,bbD,bbD,bbD,bbD,bbS,_],
+  [_,_,bbS,bbD,bbD,bbD,bbD,bbD,bbD,bbS,_,_],
+  [_,_,_,bbS,bbS,bbS,bbS,bbS,bbS,_,_,_],
+]
+
+// Sausage: reddish-brown link with highlight and tied ends. 8x8.
+const sgM = '#A03828'   // sausage mid
+const sgD = '#6B2418'   // sausage dark
+const sgL = '#C44838'   // sausage highlight
+const sgT = '#3D1A0E'   // tied ends
+export const ITEM_SAUSAGE: Sprite = [
+  [_,_,sgT,_,_,_,_,sgT],
+  [_,sgT,sgD,sgM,sgM,sgD,sgT,sgD],
+  [sgT,sgD,sgM,sgL,sgL,sgM,sgD,sgT],
+  [_,sgT,sgD,sgM,sgM,sgD,sgT,_],
+  [_,_,sgT,sgD,sgD,sgT,_,_],
+  [_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_],
+]
+
+// Kolache: golden pastry round with sausage centered in the middle. 8x8.
+const kP = '#E8B860'   // pastry light
+const kPm = '#C49043'  // pastry mid
+const kPd = '#8B6028'  // pastry dark crust
+export const ITEM_KOLACHE: Sprite = [
+  [_,kPd,kP,kP,kP,kP,kPd,_],
+  [kPd,kP,kPm,kPm,kPm,kPm,kP,kPd],
+  [kP,kPm,sgD,sgM,sgM,sgD,kPm,kP],
+  [kP,kPm,sgM,sgL,sgL,sgM,kPm,kP],
+  [kP,kPm,sgM,sgL,sgL,sgM,kPm,kP],
+  [kP,kPm,sgD,sgM,sgM,sgD,kPm,kP],
+  [kPd,kP,kPm,kPm,kPm,kPm,kP,kPd],
+  [_,kPd,kP,kP,kP,kP,kPd,_],
+]
+
+// Leather: tan rectangular hide with darker edges. 8x8.
+const ltL = '#B68957'   // hide light
+const ltM = '#8B5A2B'   // hide mid
+const ltD = '#5A3D1F'   // hide dark edge
+export const ITEM_LEATHER: Sprite = [
+  [_,ltD,ltD,ltD,ltD,ltD,ltD,_],
+  [ltD,ltM,ltL,ltL,ltL,ltL,ltM,ltD],
+  [ltD,ltL,ltL,ltL,ltL,ltL,ltL,ltD],
+  [ltD,ltL,ltM,ltL,ltL,ltM,ltL,ltD],
+  [ltD,ltL,ltL,ltL,ltL,ltL,ltL,ltD],
+  [ltD,ltM,ltL,ltL,ltL,ltL,ltM,ltD],
+  [ltD,ltM,ltM,ltM,ltM,ltM,ltM,ltD],
+  [_,ltD,ltD,ltD,ltD,ltD,ltD,_],
+]
+
+// Twine: small bundle of twisted fibers, tied in the middle. 8x8.
+const twL = '#D6B97A'   // fiber light
+const twM = '#A0855B'   // fiber mid
+const twD = '#5A3D26'   // tie/shadow
+export const ITEM_TWINE: Sprite = [
+  [_,twM,twL,twM,twL,twM,twL,_],
+  [_,twL,twM,twL,twM,twL,twM,_],
+  [_,twM,twL,twM,twL,twM,twL,_],
+  [twD,twD,twD,twD,twD,twD,twD,twD],
+  [twD,twD,twD,twD,twD,twD,twD,twD],
+  [_,twL,twM,twL,twM,twL,twM,_],
+  [_,twM,twL,twM,twL,twM,twL,_],
+  [_,twL,twM,twL,twM,twL,twM,_],
+]
+
+// Sugar cane: tall green stalk with segmented joints. 8x8.
+const scL = '#7BAA3C'   // leaf light green
+const scM = '#5A8024'   // stalk mid green
+const scD = '#3E5818'   // joint dark
+export const ITEM_SUGAR_CANE: Sprite = [
+  [_,_,scL,_,_,scL,_,_],
+  [_,scL,scM,scL,_,_,_,_],
+  [_,_,scM,scM,scM,_,_,_],
+  [_,_,scD,scM,scM,_,_,_],
+  [_,_,scM,scD,scM,_,_,_],
+  [_,_,scM,scM,scM,_,_,_],
+  [_,_,scD,scM,scM,_,_,_],
+  [_,_,scM,scM,scM,_,_,_],
+  [_,_,scM,scM,scM,_,_,_],
+]
+
+// Sugar: white granules piled up. 8x8.
+const sugW = '#FFFFFF'
+const sugG = '#D8D8D8'
+const sugK = '#A8A8A8'
+export const ITEM_SUGAR: Sprite = [
+  [_,_,_,sugW,sugW,_,_,_],
+  [_,_,sugW,sugG,sugG,sugW,_,_],
+  [_,sugW,sugG,sugW,sugW,sugG,sugW,_],
+  [sugW,sugG,sugW,sugW,sugW,sugW,sugG,sugW],
+  [sugW,sugG,sugG,sugW,sugW,sugG,sugG,sugW],
+  [sugG,sugG,sugK,sugG,sugG,sugK,sugG,sugG],
+  [sugG,sugK,sugK,sugG,sugG,sugK,sugK,sugG],
+  [sugK,sugK,sugK,sugK,sugK,sugK,sugK,sugK],
+]
+
+// Pastry: golden flaky bun, swirled sugar glaze on top. 8x8.
+const pasL = '#F4D17E'   // dough light
+const pasM = '#D8A848'   // dough mid
+const pasD = '#9C6E20'   // crust dark
+const pasG = '#FFFFFF'   // sugar glaze
+export const ITEM_PASTRY: Sprite = [
+  [_,pasD,pasM,pasM,pasM,pasM,pasD,_],
+  [pasD,pasM,pasL,pasG,pasG,pasL,pasM,pasD],
+  [pasM,pasL,pasG,pasL,pasL,pasG,pasL,pasM],
+  [pasM,pasG,pasL,pasL,pasL,pasL,pasG,pasM],
+  [pasM,pasG,pasL,pasL,pasL,pasL,pasG,pasM],
+  [pasM,pasL,pasG,pasL,pasL,pasG,pasL,pasM],
+  [pasD,pasM,pasL,pasG,pasG,pasL,pasM,pasD],
+  [_,pasD,pasM,pasM,pasM,pasM,pasD,_],
+]
+
+// Cottonwood: tall western tree. Trunk centered, canopy on top. 12x16,
+// matched to the scale of other in-game buildings.
+const cotBk = '#7A5C36'   // bark mid
+const cotBkD = '#4A3520'  // bark shadow
+const cotLfL = '#8C9A6E'  // leaves light (grey-green)
+const cotLfM = '#5F6B48'  // leaves mid (muted green)
+const cotLfD = '#3F4A2E'  // leaves dark (deep muted green)
+export const COTTONWOOD: Sprite = [
+  [_,_,_,cotLfM,cotLfL,cotLfL,cotLfM,cotLfM,_,_,_,_],
+  [_,_,cotLfM,cotLfL,cotLfL,cotLfL,cotLfL,cotLfM,cotLfM,_,_,_],
+  [_,cotLfM,cotLfL,cotLfM,cotLfL,cotLfL,cotLfM,cotLfL,cotLfM,cotLfM,_,_],
+  [_,cotLfL,cotLfM,cotLfM,cotLfD,cotLfM,cotLfM,cotLfL,cotLfL,cotLfM,_,_],
+  [cotLfM,cotLfL,cotLfM,cotLfD,cotLfD,cotLfD,cotLfM,cotLfM,cotLfL,cotLfM,cotLfM,_],
+  [cotLfL,cotLfM,cotLfD,cotLfD,cotLfD,cotLfD,cotLfD,cotLfM,cotLfM,cotLfL,cotLfM,_],
+  [cotLfM,cotLfM,cotLfD,cotLfD,cotLfM,cotLfM,cotLfD,cotLfD,cotLfM,cotLfM,cotLfM,_],
+  [cotLfM,cotLfL,cotLfM,cotLfM,cotLfL,cotLfL,cotLfM,cotLfM,cotLfL,cotLfM,cotLfM,_],
+  [_,cotLfM,cotLfM,cotLfL,cotLfL,cotLfL,cotLfL,cotLfL,cotLfM,cotLfM,_,_],
+  [_,_,cotLfM,cotLfM,cotLfM,cotBkD,cotLfM,cotLfM,cotLfM,_,_,_],
+  [_,_,_,_,_,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,_,_,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,_,_,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,_,cotBk,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,cotBk,cotBk,cotBk,cotBkD,cotBkD,_,_,_,_],
+  [_,_,cotBk,cotBk,cotBk,cotBkD,cotBkD,cotBkD,cotBkD,_,_,_],
+]
+
+// Cottonwood sapling: thin trunk with a small leafy tuft. 8x8.
+// Reuses the cottonwood palette (cotBk, cotBkD, cotLfL, cotLfM).
+export const ITEM_COTTONWOOD_SAPLING: Sprite = [
+  [_,_,cotLfM,cotLfL,cotLfM,_,_,_],
+  [_,cotLfM,cotLfL,cotLfL,cotLfL,cotLfM,_,_],
+  [_,cotLfL,cotLfM,cotLfL,cotLfM,cotLfL,_,_],
+  [_,_,cotLfM,cotLfL,cotLfM,_,_,_],
+  [_,_,_,cotBk,_,_,_,_],
+  [_,_,_,cotBk,_,_,_,_],
+  [_,_,_,cotBk,cotBkD,_,_,_],
+  [_,_,cotBk,cotBk,cotBkD,_,_,_],
+]
+
+// Planted cottonwood sapling: same sapling, but with a ring of loose dirt
+// around the base to show it was freshly planted. The dirt fades visually
+// as the tree matures (future growth stages will lose this ring).
+export const PLANTED_COTTONWOOD_SAPLING: Sprite = [
+  [_,_,cotLfM,cotLfL,cotLfM,_,_,_],
+  [_,cotLfM,cotLfL,cotLfL,cotLfL,cotLfM,_,_],
+  [_,cotLfL,cotLfM,cotLfL,cotLfM,cotLfL,_,_],
+  [_,_,cotLfM,cotLfL,cotLfM,_,_,_],
+  [_,_,_,cotBk,_,_,_,_],
+  [_,_,_,cotBk,_,_,_,_],
+  [_,dtM,dtL,cotBk,cotBkD,dtL,dtM,_],
+  [dtM,dtL,dtL,cotBk,cotBkD,dtL,dtL,dtM],
+]
+
+// Hemp: rough fibrous stalks, tan-green. 8x8.
+const hpL = '#B8A878'   // fiber light (tan)
+const hpM = '#7A8048'   // stalk mid (olive green)
+const hpD = '#4A5028'   // stalk dark
+export const ITEM_HEMP: Sprite = [
+  [_,_,hpM,_,_,hpM,_,_],
+  [_,hpM,hpL,hpM,_,hpM,hpL,_],
+  [_,hpM,hpM,hpL,_,hpL,hpM,_],
+  [_,_,hpD,hpM,_,hpM,hpD,_],
+  [_,_,hpM,hpM,_,hpM,hpM,_],
+  [_,_,hpD,hpM,_,hpM,hpD,_],
+  [_,_,hpM,hpD,_,hpD,hpM,_],
+  [_,_,hpD,hpD,_,hpD,hpD,_],
+]
+
+// Hemp seed: small cluster of dark teardrop-shaped seeds. 8x8.
+const hsD = '#3A2818'   // seed dark
+const hsM = '#5C402A'   // seed mid (highlight)
+const hsL = '#7E5E40'   // seed light edge
+export const ITEM_HEMP_SEED: Sprite = [
+  [_,_,_,_,_,_,_,_],
+  [_,hsL,hsD,_,_,hsL,hsD,_],
+  [_,hsM,hsD,_,_,hsM,hsD,_],
+  [_,_,hsD,_,_,_,hsD,_],
+  [_,_,_,_,hsL,hsD,_,_],
+  [_,_,_,_,hsM,hsD,_,_],
+  [_,_,_,_,_,hsD,_,_],
+  [_,_,_,_,_,_,_,_],
+]
+
 export const ALL_SPRITES: Record<string, Sprite> = {
   mill: MILL,
   well: WELL,
   crafter: CRAFTER,
+  field: FIELD,
   shop: SHOP,
+  general_store: GENERAL_STORE,
+  abandoned_house: ABANDONED_HOUSE,
+  land_office: LAND_OFFICE,
+  nursery: NURSERY,
   church: CHURCH,
   player: PLAYER,
   npc_crafter: NPC_CRAFTER,
   gold_coin: GOLD_COIN,
   arrow_right: ARROW_RIGHT,
   cow_skull: COW_SKULL,
+  yucca: YUCCA,
   pebbles: PEBBLES,
   grass: GRASS,
   item_flour: ITEM_FLOUR,
@@ -393,6 +910,30 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_shovel: ITEM_SHOVEL,
   shovel_dig: SHOVEL_DIG,
   dirt_patch: DIRT_PATCH,
+  rock_tl: ROCK_TL,
+  rock_t:  ROCK_T,
+  rock_tr: ROCK_TR,
+  rock_l:  ROCK_L,
+  rock_c:  ROCK_C,
+  rock_r:  ROCK_R,
+  rock_bl: ROCK_BL,
+  rock_b:  ROCK_B,
+  rock_br: ROCK_BR,
+  rock_bump: ROCK_BUMP,
   cursor: CURSOR,
   cursor_grab: CURSOR_GRAB,
+  item_bag: ITEM_BAG,
+  item_medium_bag: ITEM_MEDIUM_BAG,
+  item_sausage: ITEM_SAUSAGE,
+  item_kolache: ITEM_KOLACHE,
+  item_leather: ITEM_LEATHER,
+  item_twine: ITEM_TWINE,
+  item_sugar_cane: ITEM_SUGAR_CANE,
+  item_sugar: ITEM_SUGAR,
+  item_pastry: ITEM_PASTRY,
+  cottonwood: COTTONWOOD,
+  item_cottonwood_sapling: ITEM_COTTONWOOD_SAPLING,
+  planted_cottonwood_sapling: PLANTED_COTTONWOOD_SAPLING,
+  item_hemp: ITEM_HEMP,
+  item_hemp_seed: ITEM_HEMP_SEED,
 }

@@ -144,19 +144,23 @@ function scatter(
   }
 }
 
-// Gravel path from wilderness to shop town. Absolute world pixels.
-const PATH_START_X = 2400
-const PATH_START_Y = 1504
-const PATH_END_X   = 2390
-const PATH_END_Y   = 550
+// Gravel paths between named areas. Absolute world pixels.
+// Wilderness → northern town (south of town up to its center).
+const PATH_WILDERNESS_TO_TOWN = { sx: 2400, sy: 1504, ex: 2390, ey: 550 }
+
 const PATH_SNAKE_AMPLITUDE = 30    // how far it wobbles side-to-side
 const PATH_SNAKE_PERIOD = 600      // length of one wobble cycle
 const PATH_PEBBLE_SPACING = 6      // lower = denser
 const PATH_WIDTH = 14              // random scatter perpendicular to path
 
-function buildPath(decor: DecorItem[], rng: () => number) {
-  const dx = PATH_END_X - PATH_START_X
-  const dy = PATH_END_Y - PATH_START_Y
+function buildPath(
+  decor: DecorItem[],
+  rng: () => number,
+  startX: number, startY: number,
+  endX: number, endY: number,
+) {
+  const dx = endX - startX
+  const dy = endY - startY
   const len = Math.hypot(dx, dy)
   const tx = dx / len
   const ty = dy / len
@@ -165,8 +169,8 @@ function buildPath(decor: DecorItem[], rng: () => number) {
   const steps = Math.floor(len / PATH_PEBBLE_SPACING)
   for (let i = 0; i <= steps; i++) {
     const t = i / steps
-    const cx = PATH_START_X + dx * t
-    const cy = PATH_START_Y + dy * t
+    const cx = startX + dx * t
+    const cy = startY + dy * t
     const snake = Math.sin((i * PATH_PEBBLE_SPACING) / PATH_SNAKE_PERIOD * Math.PI * 2) * PATH_SNAKE_AMPLITUDE
     const spread = (rng() - 0.5) * PATH_WIDTH
     const px = cx + nx * (snake + spread)
@@ -189,7 +193,7 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   scatter(decor, rng, opts, 'cow_skull', skullCount, opts.exclusions, SKULL_SPACING)
   scatter(decor, rng, opts, 'pebbles', pebbleCount, opts.tightExclusions, PEBBLE_SPACING)
   scatter(decor, rng, opts, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
-  buildPath(decor, rng)
+  buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
 
   return { decor, buried }

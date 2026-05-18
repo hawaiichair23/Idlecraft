@@ -42,7 +42,10 @@ export class CursorController {
       this.scene.game.canvas.style.cursor = 'none'
     }
     const sel = state.inventory[state.selectedInventorySlot]
-    if (sel && sel.type === 'shovel') {
+    // Tool cursor (shovel) only applies in the overworld — interiors are
+    // menu space where the player isn't using world tools.
+    const interiorOpen = this.scene.scene.manager.isActive('Interior')
+    if (!interiorOpen && sel && sel.type === 'shovel') {
       this.setTexture(ITEMS.shovel.sprite, ITEMS.shovel.scale)
       return
     }
