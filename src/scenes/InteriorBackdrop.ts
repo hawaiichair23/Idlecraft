@@ -38,7 +38,7 @@ export const INTERIOR_PALETTES = {
   church:         { floorColor: 0x2A2A2E, wallColor: 0x0E0E12, skyColor: 0xFF707F },
   mill:           { floorColor: 0x9A7B5A, wallColor: 0x3A2818 },
   well:           { floorColor: 0x5A6A6E, wallColor: 0x1A2228 },
-  crafter:        { floorColor: 0x7A6040, wallColor: 0x2E1E14 },
+  workshop:       { floorColor: 0x7A6040, wallColor: 0x2E1E14 },
 } as const
 
 // Defaults
@@ -64,7 +64,7 @@ export function buildInteriorBackdrop(
   const h = scene.cameras.main.height
 
   const playTop = UI_BAR_HEIGHT
-  const playH = h - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT
+const playH = h - UI_BAR_HEIGHT
   const skyColor = config.skyColor ?? DEFAULT_SKY
   const wallHeightFraction = config.wallHeightFraction ?? DEFAULT_WALL_HEIGHT
 

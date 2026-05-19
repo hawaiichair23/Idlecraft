@@ -9,8 +9,7 @@ import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/struc
 import { registerGrabbable } from '../ui/hover'
 
 const WORLD_PX = 576 * 8    // 8x canvas size, so player can wander
-// For non testing gameplay: const PLAYER_SPEED = 130
-const PLAYER_SPEED = 330
+const PLAYER_SPEED = 530
 const FOOD_BUFF_MS = 60000
 
 const PLOT_COLS = 4
@@ -67,6 +66,12 @@ export class Overworld extends Phaser.Scene {
     // (loadSprites in create() skips keys that already exist)
     this.load.image('item_flour', '/flour.png')
     this.load.image('item_water', '/water.png')
+    this.load.image('field_bg', '/field.png')
+    this.load.image('field_bg_patched', '/field_patched.png')
+    this.load.image('field_sprouts', '/field_sprouts.png')
+    this.load.image('field_growing', '/field_growing.png')
+    this.load.image('field_mature', '/field_mature.png')
+    this.load.image('field_patch', '/patch.png')
   }
 
   create() {
@@ -253,6 +258,7 @@ export class Overworld extends Phaser.Scene {
       for (const [tx, ty] of treePositions) {
         // y-sort by tree base (sprite is 12px at scale 3 = 36px, so bottom is ~y+18)
         this.add.sprite(tx, ty, 'cottonwood').setScale(3).setDepth(ty + 18)
+        this.obstacles.push(this.makeTreeTrunkObstacle(tx, ty))
       }
     }
 
@@ -270,6 +276,7 @@ export class Overworld extends Phaser.Scene {
         this.add.sprite(yx, yy, 'yucca').setScale(2).setDepth(yy)
       }
       this.add.sprite(3220, 160, 'cottonwood').setScale(3).setDepth(160 + 18)
+      this.obstacles.push(this.makeTreeTrunkObstacle(3220, 160))
     }
 
     // player at world center. Depth = y, so sprites south of the player render
@@ -281,7 +288,7 @@ export class Overworld extends Phaser.Scene {
     cam.setViewport(0, UI_BAR_HEIGHT, cam.width, cam.height - UI_BAR_HEIGHT)
     cam.startFollow(this.player)
     cam.setBounds(0, 0, WORLD_PX, WORLD_PX)
-    cam.setZoom(1.07)
+    cam.setZoom(1.08)
 
     // launch the UI scene on top
     this.scene.launch('UI')
@@ -301,9 +308,18 @@ export class Overworld extends Phaser.Scene {
     this.registry.events.on('interior-exited', () => {
       this.cameras.main.setVisible(true)
       if (this.preInteriorPos) {
-        this.player.x = this.preInteriorPos.x
-        this.player.y = this.preInteriorPos.y
+        const bx = this.preInteriorBuildingPos?.x ?? this.preInteriorPos.x
+        const by = this.preInteriorBuildingPos?.y ?? this.preInteriorPos.y
+        let dx = this.preInteriorPos.x - bx
+        let dy = this.preInteriorPos.y - by
+        const len = Math.sqrt(dx * dx + dy * dy)
+        if (len > 0) { dx /= len; dy /= len }
+        else { dy = 1 }  // default: push south
+        this.player.x = this.preInteriorPos.x + dx * 5
+        this.player.y = this.preInteriorPos.y + dy * 5
+        this.player.setDepth(this.player.y + 8)
         this.preInteriorPos = null
+        this.preInteriorBuildingPos = null
       }
       // ignore door detection until the player moves out of the current
       // door zone, so we don't immediately re-enter the building we just left.
@@ -312,11 +328,14 @@ export class Overworld extends Phaser.Scene {
   }
 
   private preInteriorPos: { x: number; y: number } | null = null
+  private preInteriorBuildingPos: { x: number; y: number } | null = null
   // true after exiting an interior; cleared once the player walks out of any door zone.
   private doorCheckBlocked = false
 
   private enterPlotInterior(plotIndex: number, type: BuiltType) {
     this.preInteriorPos = { x: this.player.x, y: this.player.y }
+    const view = this.plotViews[plotIndex]
+    this.preInteriorBuildingPos = { x: view.x, y: view.y }
     this.cameras.main.setVisible(false)
     this.registry.events.emit('interior-entered')
     this.scene.run('Interior', { source: 'plot', buildingType: type, plotIndex })
@@ -325,6 +344,8 @@ export class Overworld extends Phaser.Scene {
 
   private enterWorldStructure(structureIndex: number, type: WorldStructureType) {
     this.preInteriorPos = { x: this.player.x, y: this.player.y }
+    const s = state.worldStructures[structureIndex]
+    this.preInteriorBuildingPos = { x: s.x, y: s.y }
     this.cameras.main.setVisible(false)
     this.registry.events.emit('interior-entered')
     this.scene.run('Interior', { source: 'world', buildingType: type, structureIndex })
@@ -336,7 +357,7 @@ export class Overworld extends Phaser.Scene {
     if (!ok) return
     const view = this.plotViews[plotIndex]
     view.priceTag.destroy()
-    view.building = this.add.sprite(view.x, view.y, type).setScale(SPRITE_SCALE).setDepth(view.y + 24)
+    view.building = this.add.sprite(view.x, view.y, type).setScale(SPRITE_SCALE).setDepth(view.y + 12)
 
     const def = BUILDINGS[type]
     // name label above the plot
@@ -373,6 +394,22 @@ export class Overworld extends Phaser.Scene {
   private static DIG_DURATION_MS = 2000
   // true while a dig is in progress — blocks new dig clicks until resolved.
   private digInProgress = false
+
+  // Trunk footprint for a full-size cottonwood at (tx, ty). Sprite is 16px
+  // tall at scale 3 (48px on screen), trunk occupies the bottom ~18px center.
+  // Returns an AABB sized to the trunk only — canopy is non-blocking.
+  private makeTreeTrunkObstacle(tx: number, ty: number) {
+    const TRUNK_W = 12
+    const TRUNK_H = 16
+    // Sprite bottom edge sits at ty + 24 (16px sprite, scale 3, default origin)
+    const bottomY = ty + 24
+    return {
+      x: tx - TRUNK_W / 2,
+      y: bottomY - TRUNK_H,
+      w: TRUNK_W,
+      h: TRUNK_H,
+    }
+  }
 
   // Drop a stack at world position (x, y). Spawns a sprite and adds to state.
   private dropStack(x: number, y: number, stack: ItemStack) {
@@ -519,18 +556,50 @@ export class Overworld extends Phaser.Scene {
       return
     }
 
-    // undo: if clicking near an existing dirt patch, remove it instead of digging
+    // existing dirt patch nearby? Two cases, in order:
+    //   1. a dropped item is on/near it → bury that item, remove the patch
+    //   2. empty patch → undo the dig
     for (let i = state.dugSpots.length - 1; i >= 0; i--) {
       const d = state.dugSpots[i]
       const dx = x - d.x
       const dy = y - d.y
-      if (dx * dx + dy * dy < undoSq) {
+      if (dx * dx + dy * dy >= undoSq) continue
+
+      // case 1: bury — find the topmost dropped item near this patch.
+      // Move it into state.buriedStacks and remove the patch entirely; the
+      // ground looks clean again. Re-digging here will reveal it.
+      const burySq = Overworld.PLANT_HIT_RADIUS * Overworld.PLANT_HIT_RADIUS
+      let buriedSomething = false
+      for (let j = state.droppedItems.length - 1; j >= 0; j--) {
+        const drop = state.droppedItems[j]
+        const ddx = drop.x - d.x
+        const ddy = drop.y - d.y
+        if (ddx * ddx + ddy * ddy >= burySq) continue
+
+        // remove the dropped item from the world
+        state.droppedItems.splice(j, 1)
+        this.droppedSprites[j]?.destroy()
+        this.droppedSprites.splice(j, 1)
+
+        // remove the dirt patch
         const key = `${d.x},${d.y}`
-        const sprite = this.dugSprites.get(key)
-        if (sprite) { sprite.destroy(); this.dugSprites.delete(key) }
+        const patchSprite = this.dugSprites.get(key)
+        if (patchSprite) { patchSprite.destroy(); this.dugSprites.delete(key) }
         state.dugSpots.splice(i, 1)
-        return
+
+        // store the buried item for later digs to find
+        state.buriedStacks.push({ x: d.x, y: d.y, stack: drop.stack })
+        buriedSomething = true
+        break
       }
+      if (buriedSomething) return
+
+      // case 2: undo dig
+      const key = `${d.x},${d.y}`
+      const sprite = this.dugSprites.get(key)
+      if (sprite) { sprite.destroy(); this.dugSprites.delete(key) }
+      state.dugSpots.splice(i, 1)
+      return
     }
     // refuse if inside any plot footprint
     for (const v of this.plotViews) {
@@ -570,8 +639,9 @@ export class Overworld extends Phaser.Scene {
       const patchSprite = this.add.sprite(x, y, 'dirt_patch').setScale(2).setDepth(1)
       this.dugSprites.set(`${x},${y}`, patchSprite)
 
-      // reveal AT MOST one buried item within reveal radius
+      // reveal AT MOST one buried coin within reveal radius
       const revSq = Overworld.DIG_REVEAL_RADIUS * Overworld.DIG_REVEAL_RADIUS
+      let revealed = false
       for (let i = state.buriedItems.length - 1; i >= 0; i--) {
         const b = state.buriedItems[i]
         const dx = b.x - x
@@ -581,7 +651,25 @@ export class Overworld extends Phaser.Scene {
         const placed = { x, y, reward: b.reward }
         state.revealedItems.push(placed)
         this.spawnRevealedCoinSprite(placed.x, placed.y)
+        revealed = true
         break
+      }
+      // if no coin was revealed, try a player-buried stack instead.
+      // The stack drops on the ground at the dig site; walk over to pick up.
+      if (!revealed) {
+        for (let i = state.buriedStacks.length - 1; i >= 0; i--) {
+          const b = state.buriedStacks[i]
+          const dx = b.x - x
+          const dy = b.y - y
+          if (dx * dx + dy * dy > revSq) continue
+          state.buriedStacks.splice(i, 1)
+          state.droppedItems.push({ x, y, stack: b.stack })
+          const sprite = this.add.sprite(x, y, ITEMS[b.stack.type].sprite)
+            .setScale(ITEMS[b.stack.type].scale)
+            .setDepth(2)
+          this.droppedSprites.push(sprite)
+          break
+        }
       }
       this.digInProgress = false
     })
@@ -641,8 +729,9 @@ export class Overworld extends Phaser.Scene {
 
     // movement only when overworld is the active view
     if (overworldVisible) {
+      const baseSpeed = state.playerSpeedOverride ?? PLAYER_SPEED
       const buffed = Date.now() < state.speedBuffEndsAt
-      const speed = PLAYER_SPEED + (buffed ? state.speedBuffAmount : 0)
+      const speed = baseSpeed + (buffed ? state.speedBuffAmount : 0)
       const step = (speed * dt) / 1000
       let dx = 0
       let dy = 0
@@ -666,7 +755,9 @@ export class Overworld extends Phaser.Scene {
       if (!collidesAt(nextX, this.player.y)) this.player.x = nextX
       const nextY = Phaser.Math.Clamp(this.player.y + dy * step, 8, WORLD_PX - 8)
       if (!collidesAt(this.player.x, nextY)) this.player.y = nextY
-      this.player.setDepth(this.player.y)
+      // Y-sort by feet, not center, so player passes in front of buildings
+      // when their feet are below the building's bottom edge.
+      this.player.setDepth(this.player.y + 8)
     }
 
     const now = Date.now()

@@ -107,11 +107,11 @@ export const GOLD_COIN: Sprite = [
 ]
 
 // ---- PLAYER ----
-const SK = '#F5C6A0'
+const SK = '#D19766'
 const RD = '#CC2222'
 const GN = '#228822'
 const BT = '#553311'
-const HR = '#442200'
+const HR = '#1A0F08'
 
 export const PLAYER: Sprite = [
   [_,_,HR,HR,HR,HR,_,_],
@@ -124,12 +124,12 @@ export const PLAYER: Sprite = [
   [_,_,BT,_,_,BT,_,_],
 ]
 
-// ---- CRAFTER NPC ---- exact same shape as PLAYER, blue shirt, 1px black outline.
+// ---- WORKSHOP NPC ---- exact same shape as PLAYER, blue shirt, 1px black outline.
 // 10x10 grid: the original 8x8 sprite is positioned at columns 1..8, rows 0..7,
 // with OL pixels filling in any transparent cell that touches a filled cell.
 const NPC_SHIRT = '#5577BB'   // blue shirt
 const OL = '#000000'           // outline
-export const NPC_CRAFTER: Sprite = [
+export const NPC_WORKSHOP: Sprite = [
   [_,_,_,OL,OL,OL,OL,OL,OL,_],
   [_,_,OL,HR,SK,SK,SK,SK,HR,OL],
   [_,_,OL,HR,SK,SK,SK,SK,HR,OL],
@@ -168,7 +168,7 @@ export const WELL: Sprite = [
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
 ]
 
-// ---- CRAFTER (smithy) ----
+// ---- WORKSHOP (smithy) ----
 // 16x16, centered on cols 7-8 (even-art rule). Door at bottom-center, forge above.
 const rD = '#4A2F0F'  // roof dark
 const wL = '#8B5A2B'  // wall light brown
@@ -182,7 +182,7 @@ const sD = '#666666'  // stone dark
 const sM = '#AAAAAA'  // smoke
 const dD = '#3A2410'  // door deep
 
-export const CRAFTER: Sprite = [
+export const WORKSHOP: Sprite = [
   [_,_,_,_,_,_,_,_,_,_,_,sM,sM,_,_,_],
   [_,_,_,_,_,_,_,_,_,_,sM,sM,_,_,_,_],
   [_,_,_,_,_,_,_,_,_,_,sL,sL,_,_,_,_],
@@ -855,6 +855,20 @@ export const PLANTED_COTTONWOOD_SAPLING: Sprite = [
   [dtM,dtL,dtL,cotBk,cotBkD,dtL,dtL,dtM],
 ]
 
+// Rope: coiled loop of braided fiber. Same palette as twine so they read as
+// related, but thicker strokes and a hoop shape so it doesn't get confused
+// for twine at a glance. 8x8.
+export const ITEM_ROPE: Sprite = [
+  [_,_,twD,twM,twL,twD,_,_],
+  [_,twD,twM,twL,twM,twL,twD,_],
+  [twD,twM,twD,_,_,twD,twM,twD],
+  [twM,twL,_,_,_,_,twL,twM],
+  [twL,twM,_,_,_,_,twM,twL],
+  [twD,twM,twD,_,_,twD,twM,twD],
+  [_,twD,twL,twM,twL,twM,twD,_],
+  [_,_,twD,twM,twD,twL,_,_],
+]
+
 // Hemp: rough fibrous stalks, tan-green. 8x8.
 const hpL = '#B8A878'   // fiber light (tan)
 const hpM = '#7A8048'   // stalk mid (olive green)
@@ -888,7 +902,7 @@ export const ITEM_HEMP_SEED: Sprite = [
 export const ALL_SPRITES: Record<string, Sprite> = {
   mill: MILL,
   well: WELL,
-  crafter: CRAFTER,
+  workshop: WORKSHOP,
   field: FIELD,
   shop: SHOP,
   general_store: GENERAL_STORE,
@@ -897,7 +911,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   nursery: NURSERY,
   church: CHURCH,
   player: PLAYER,
-  npc_crafter: NPC_CRAFTER,
+  npc_workshop: NPC_WORKSHOP,
   gold_coin: GOLD_COIN,
   arrow_right: ARROW_RIGHT,
   cow_skull: COW_SKULL,
@@ -928,6 +942,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_kolache: ITEM_KOLACHE,
   item_leather: ITEM_LEATHER,
   item_twine: ITEM_TWINE,
+  item_rope: ITEM_ROPE,
   item_sugar_cane: ITEM_SUGAR_CANE,
   item_sugar: ITEM_SUGAR,
   item_pastry: ITEM_PASTRY,

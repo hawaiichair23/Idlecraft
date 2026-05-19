@@ -24,6 +24,7 @@ export function buildProducerInterior(
   centerX: number,
   centerY: number,
   onSlotShiftClick: (binding: SlotBinding) => void,
+  container?: Phaser.GameObjects.Container,
 ): ProducerInteriorHandle {
   const def = BUILDINGS[buildingType]
   if (!def.producesItem) {
@@ -40,17 +41,20 @@ export function buildProducerInterior(
   const arrowX = buildingX + SLOT / 2 + GAP + SYMBOL / 2
   const outputX = arrowX + SYMBOL / 2 + GAP + SLOT / 2
 
-  scene.add.image(buildingX, centerY, 'menu-slot').setTint(COLORS.interiorPanel)
-  scene.add.sprite(buildingX, centerY, buildingType).setScale(2)
+  const buildingSlotBg = scene.add.image(buildingX, centerY, 'menu-slot').setTint(COLORS.interiorPanel)
+  const buildingSprite = scene.add.sprite(buildingX, centerY, buildingType).setScale(2)
   const producerArrow = scene.add.sprite(arrowX, centerY, 'arrow_right').setScale(2)
+  container?.add([buildingSlotBg, buildingSprite, producerArrow])
 
   // output slot
   const getStack = () => state.plots[plotIndex].output
   const slotImg = makeSlotImage(scene, { x: outputX, y: centerY, peek: getStack, tooltipOffsetY: -38 })
+  container?.add(slotImg)
   const setStack = (s: typeof state.plots[number]['output']) => { state.plots[plotIndex].output = s }
   const slotVisual: SlotVisual = {
     x: outputX, y: centerY, getStack,
     icon: null, count: null, lastType: null, lastCount: 0,
+    container,
   }
 
   const binding = makeProducerOutputBinding(

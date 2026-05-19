@@ -2,11 +2,11 @@
 // Updates emit events on Phaser's global registry so the UI can react.
 
 import Phaser from 'phaser'
-import type { ItemStack, ItemType } from '../items/types'
+import type { ItemStack, ItemType, ItemDef } from '../items/types'
 import { ITEMS } from '../items/types'
 import type { WorldStructure } from '../world/structures'
 
-export type BuildingType = 'empty' | 'mill' | 'crafter' | 'well' | 'field'
+export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field'
 export type BuiltType = Exclude<BuildingType, 'empty'>
 
 export const MAX_GOLD = 999_999
@@ -16,18 +16,51 @@ export const MODIFIER_SLOTS_PER_PLOT = 8
 // General store sell-grid: 6 columns × 4 rows.
 export const GENERAL_STORE_SLOTS = 24
 
+// Field grid: 5×2 plantable cells per field plot.
+export const FIELD_COLS = 5
+export const FIELD_ROWS = 2
+export const FIELD_CELLS_PER_PLOT = FIELD_COLS * FIELD_ROWS
+
+// Per-cell state in a field plot.
+//   empty     — bare hole, ready to receive a seed
+//   planted   — seed in dirt, no visible growth yet
+//   sprouting — visible sprout sprite
+//   mature    — full plant, harvestable
+export type FieldCellState = 'empty' | 'planted' | 'sprouting' | 'growing' | 'mature'
+export interface FieldCell {
+  state: FieldCellState
+  plantedAt: number   // Date.now() when planted; 0 for empty cells
+}
+
+export function makeEmptyFieldCells(): FieldCell[] {
+  return Array.from({ length: FIELD_CELLS_PER_PLOT }, () => ({ state: 'empty' as FieldCellState, plantedAt: 0 }))
+}
+
+// One pickupable item inside a walkable interior (abandoned house, future barns).
+// Position is stored as 0..1 fractions of floor width/height so the same data
+// works regardless of screen size when the interior re-renders.
+export interface WalkableInteriorItemInstance {
+  x: number       // 0..1 fraction of floor width
+  y: number       // 0..1 fraction of floor height
+  type: ItemType
+  count: number
+}
+
 export interface PlotState {
   built: BuildingType
   level: number          // building upgrade level, starts at 1
   lastTickAt: number   // ms timestamp of the last completed gold tick
   lastItemTickAt: number  // ms timestamp of the last completed item tick (for producers)
   output: ItemStack | null   // producer output: mill→flour, well→water
-  // crafter-only: 2 input slots and 1 output slot. null for non-crafter plots.
+  // workshop-only: 2 input slots and 1 output slot. null for non-workshop plots.
   craftInputs?: (ItemStack | null)[]
   craftOutput?: ItemStack | null
   // modifier rack — every building has one; items here will eventually affect
   // production but right now just store anything the player drops in.
   modifiers: (ItemStack | null)[]
+  // field-only: per-cell state for the 5×5 planting grid. undefined for
+  // non-field plots; initialized when a field is built.
+  fieldCells?: FieldCell[]
 }
 
 export interface BuildingDef {
@@ -36,27 +69,30 @@ export interface BuildingDef {
   cost: number
   tickMs: number
   goldPerTick: number
-  producesItem?: ItemType    // mill: 'flour', well: 'water', crafter: undefined
+  producesItem?: ItemType    // mill: 'flour', well: 'water', workshop: undefined
   itemTickMs?: number        // how often it produces 1 of producesItem
 }
 
 export const BUILDINGS: Record<BuiltType, BuildingDef> = {
   mill:    { name: 'Mill',    description: 'Grinds grains into flour.',     cost: 15, tickMs: 4000, goldPerTick: 0, producesItem: 'flour', itemTickMs: 8000 },
   well:    { name: 'Well',    description: 'Extracts groundwater.',     cost: 30, tickMs: 8000, goldPerTick: 0, producesItem: 'water', itemTickMs: 16000 },
-  crafter: { name: 'Crafter', description: 'Crafts materials into products.', cost: 50, tickMs: 6000, goldPerTick: 0 },
+  workshop: { name: 'Workshop', description: 'Crafts materials into products.', cost: 50, tickMs: 6000, goldPerTick: 0 },
   field:   { name: 'Field',   description: 'Plant and harvest crops.', cost: 100, tickMs: 0, goldPerTick: 0 },
 }
 
-export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'crafter', 'field']
+export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field']
 
 // Upgrade cost: 25, 50, 100, 200, …
 export function getUpgradeCost(level: number): number {
   return 25 * Math.pow(2, level - 1)
 }
 
-// Effective tick speed after leveling: 15% faster per level.
+// Effective tick speed after leveling: 18% faster per level.
+// Divided by the dev-only time multiplier on the state singleton (default 1).
 export function getEffectiveTickMs(base: number, level: number): number {
-  return Math.round(base * Math.pow(0.82, level - 1))
+  const leveled = base * Math.pow(0.82, level - 1)
+  const divisor = Math.max(0.01, state.timeMultiplier)   // avoid divide-by-zero
+  return Math.max(1, Math.round(leveled / divisor))
 }
 
 // Building output slot capacity: 16, 32, 64, 128, …
@@ -89,13 +125,21 @@ class GameState {
   discoveredTowns: Set<string> = new Set()
   // Plot building types the player can build. Defaults to the starter set;
   // others (field, etc.) are unlocked by purchasing at the Land Office.
-  unlockedBuildings: Set<BuiltType> = new Set(['mill', 'well', 'crafter'])
+  unlockedBuildings: Set<BuiltType> = new Set(['mill', 'well', 'workshop', 'field'])
   // Dirt patches left by the shovel — visual scars in the world that persist
-  // across the play session. Items dug up will live alongside these later.
+  // across the play session.
   dugSpots: { x: number; y: number }[] = []
   // Invisible buried items, placed by world gen. Each entry is consumed when
   // the player digs within reveal radius.
   buriedItems: { x: number; y: number; reward: number }[] = []
+  // Item stacks buried by the player. Stored when a dropped item is buried
+  // by a shovel-click on a dirt patch. Revealed when the spot is dug again.
+  buriedStacks: { x: number; y: number; stack: ItemStack }[] = []
+  // Per-walkable-interior state. Keyed by "<buildingType>:<structureIndex>"
+  // (e.g. "abandoned_house:3"). Each entry is the live list of items still
+  // on the floor — items get spliced out when picked up and never respawn.
+  // Initialized lazily on first entry from the spawn config.
+  walkableInteriors: Record<string, WalkableInteriorItemInstance[]> = {}
   // Revealed but not yet collected — sprite drawn at position, walk over to claim.
   revealedItems: { x: number; y: number; reward: number }[] = []
   // Items dropped by the player into the world — walk over them to pick up.
@@ -118,11 +162,22 @@ class GameState {
 
   // NPC dialogue progression — each flag flips true the first time its line
   // is shown, and the corresponding line is never shown again.
-  crafterFirstLineSeen = false
-  crafterSecondLineSeen = false
-  // Set to true the first time bread is crafted. Used to trigger the crafter
+  workshopFirstLineSeen = false
+  workshopSecondLineSeen = false
+  // Set to true the first time bread is crafted. Used to trigger the workshop
   // NPC's second line.
   hasMadeBread = false
+  // Set to true the first time rope is crafted. Unlocks the rope listing in
+  // the Tool Shop — the player must discover the recipe before they can buy.
+  hasCraftedRope = false
+
+  // ---- developer overrides ----
+  // Multiplier on production tick speed. 1 = normal, 2 = twice as fast.
+  // Applied inside getEffectiveTickMs. Set via window.speed() in devtools.
+  timeMultiplier = 1
+  // If set, overrides the default player movement speed. null = use default.
+  // Set via window.playerSpeed() in devtools.
+  playerSpeedOverride: number | null = null
 
   // Convenience: true when the player has the shovel selected in the hotbar.
   // Used by overworld click handlers to disable normal clicks (gold farming,
@@ -130,6 +185,16 @@ class GameState {
   isShovelSelected(): boolean {
     const s = this.inventory[this.selectedInventorySlot]
     return s !== null && s.type === 'shovel'
+  }
+
+  // Returns the ItemDef of the scroll-selected hotbar item if it's an active
+  // tool (shovel, rope, axe, pickaxe, etc.), else null. The CursorController
+  // uses this to swap the cursor to the tool's sprite in the overworld.
+  getSelectedTool(): ItemDef | null {
+    const s = this.inventory[this.selectedInventorySlot]
+    if (!s) return null
+    const def = ITEMS[s.type]
+    return def.activeTool ? def : null
   }
 
   // Returns the bag ItemStacks in the player's inventory, in slot order.
@@ -174,9 +239,11 @@ class GameState {
       { type: 'nursery', x: 3100, y: 204, townId: 'northern_town' },
     ]
     this.discoveredTowns = new Set()
-    this.unlockedBuildings = new Set(['mill', 'well', 'crafter'])
+    this.unlockedBuildings = new Set(['mill', 'well', 'workshop', 'field'])
     this.dugSpots = []
     this.buriedItems = []
+    this.buriedStacks = []
+    this.walkableInteriors = {}
     this.revealedItems = []
     this.droppedItems = []
     this.plantedTrees = []
@@ -302,9 +369,12 @@ class GameState {
     plot.lastTickAt = now
     plot.lastItemTickAt = now
     plot.output = null
-    if (type === 'crafter') {
+    if (type === 'workshop') {
       plot.craftInputs = [null, null]
       plot.craftOutput = null
+    }
+    if (type === 'field') {
+      plot.fieldCells = makeEmptyFieldCells()
     }
     return true
   }

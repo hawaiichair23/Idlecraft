@@ -10,25 +10,26 @@ import { UI_INVENTORY_BAR_HEIGHT } from './UI'
 import type { UI } from './UI'
 
 // ---------------------------------------------------------------------------
-// CrafterInterior — crafter panel (2 input slots + arrow + virtual output)
+// WorkshopInterior — workshop panel (2 input slots + arrow + virtual output)
 // plus the in-corner NPC who triggers dialogue lines.
 // No panel — the parent Interior scene provides the frame.
 // ---------------------------------------------------------------------------
 
-export interface CrafterInteriorHandle {
+export interface WorkshopInteriorHandle {
   bindings: SlotBinding[]
   slotVisuals: SlotVisual[]
   onCleanup: () => void
 }
 
-export function buildCrafterInterior(
+export function buildWorkshopInterior(
   scene: Phaser.Scene,
   plotIndex: number,
   centerX: number,
   centerY: number,
   onSlotShiftClick: (binding: SlotBinding) => void,
   onCraftAllShiftClick: () => void,
-): CrafterInteriorHandle {
+  container?: Phaser.GameObjects.Container,
+): WorkshopInteriorHandle {
   const bindings: SlotBinding[] = []
   const slotVisuals: SlotVisual[] = []
 
@@ -47,8 +48,9 @@ export function buildCrafterInterior(
   const arrowX = slot2X + SLOT / 2 + GAP + SYMBOL / 2
   const slot3X = arrowX + SYMBOL / 2 + GAP + SLOT / 2
 
-  scene.add.bitmapText(plusX, centerY + 4, 'main', '+', 24).setOrigin(0.5, 0.5).setTint(COLORS.craftSymbol)
-  scene.add.sprite(arrowX, centerY, 'arrow_right').setScale(2).setTint(COLORS.craftSymbol)
+  const plusText = scene.add.bitmapText(plusX, centerY + 4, 'main', '+', 24).setOrigin(0.5, 0.5).setTint(COLORS.craftSymbol)
+  const arrowSprite = scene.add.sprite(arrowX, centerY, 'arrow_right').setScale(2).setTint(COLORS.craftSymbol)
+  container?.add([plusText, arrowSprite])
 
   // ensure craftInputs is initialized
   const plot = state.plots[plotIndex]
@@ -62,8 +64,9 @@ export function buildCrafterInterior(
     const x = i === 0 ? slot1X : slot2X
     const getStack = () => state.plots[plotIndex].craftInputs![i]
     const slotImg = makeSlotImage(scene, { x, y: centerY, peek: getStack, tooltipOffsetY: -38 })
+    container?.add(slotImg)
     const setStack = (s: ItemStack | null) => { state.plots[plotIndex].craftInputs![i] = s }
-    slotVisuals.push({ x, y: centerY, getStack, icon: null, count: null, lastType: null, lastCount: 0 })
+    slotVisuals.push({ x, y: centerY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container })
 
     const binding = makeStorageBinding({ x, y: centerY }, getStack, setStack, { onChange: () => {} })
     bindings.push(binding)
@@ -80,7 +83,8 @@ export function buildCrafterInterior(
     const x = slot3X
     const getStack = () => previewCraft(plotIndex)
     const slotImg = makeSlotImage(scene, { x, y: centerY, peek: getStack, tooltipOffsetY: -38 })
-    slotVisuals.push({ x, y: centerY, getStack, icon: null, count: null, lastType: null, lastCount: 0 })
+    container?.add(slotImg)
+    slotVisuals.push({ x, y: centerY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container })
 
     const outputBinding: SlotBinding = {
       getScreenPos: () => ({ x, y: centerY }),
@@ -109,7 +113,7 @@ export function buildCrafterInterior(
   const margin = 16
   const npcX = margin + SPRITE_PX / 2
   const npcY = h - UI_INVENTORY_BAR_HEIGHT - margin - SPRITE_PX / 2
-  scene.add.sprite(npcX, npcY, 'npc_crafter').setScale(NPC_SCALE)
+  scene.add.sprite(npcX, npcY, 'npc_workshop').setScale(NPC_SCALE)
   const npcAnchor = { x: npcX, y: npcY - SPRITE_PX / 2 - 12 }
 
   let npcText: Phaser.GameObjects.BitmapText | null = null
@@ -141,15 +145,15 @@ export function buildCrafterInterior(
     })
   }
 
-  if (!state.crafterFirstLineSeen) {
-    state.crafterFirstLineSeen = true
+  if (!state.workshopFirstLineSeen) {
+    state.workshopFirstLineSeen = true
     showDialogue(`I DON'T RECKON YOU COULD MAKE ME SOME BREAD?`)
   }
 
   const onBreadCrafted = () => {
-    if (state.crafterSecondLineSeen) return
+    if (state.workshopSecondLineSeen) return
     if (!state.hasMadeBread) return
-    state.crafterSecondLineSeen = true
+    state.workshopSecondLineSeen = true
     showDialogue('THANK YOU STRANGER. MY FRIEND THE SHOPKEEPER IN THE SETTLEMENT NORTH OF HERE HAS A TOOL FOR YOU.')
   }
   scene.events.on('bread-crafted', onBreadCrafted)

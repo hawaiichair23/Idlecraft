@@ -17,18 +17,25 @@ export interface ShopInteriorHandle {
 
 // Items the shop sells, with their buy prices and descriptions.
 // (Sell prices live on the items themselves in items/types.ts.)
+// `gatedBy` is an optional predicate — when present, the listing only appears
+// if the predicate returns true. Used to hide items behind progression flags.
 interface ShopEntry {
   type: ItemType
   buyPrice: number
   description: string
+  gatedBy?: () => boolean
 }
 const SHOP_ITEMS: ShopEntry[] = [
   { type: 'shovel', buyPrice: 100, description: 'For digging and burying.' },
+  { type: 'rope',   buyPrice: 200, description: 'A grouping of twine.', gatedBy: () => state.hasCraftedRope },
 ]
 
 export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number): ShopInteriorHandle {
   // ---- backdrop (wall, windows, floor, side walls) ----
   buildInteriorBackdrop(scene, INTERIOR_PALETTES.toolShop)
+
+  // Visible listings: filter out anything whose gate hasn't been met.
+  const visibleItems = SHOP_ITEMS.filter(e => !e.gatedBy || e.gatedBy())
 
   const w = scene.cameras.main.width
   const h = scene.cameras.main.height
@@ -47,7 +54,7 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
   const TITLE_BAND = 36
 
   const ROW_W = ICON_W + GAP + NAME_W + GAP + COST_W
-  const rowStackH = SHOP_ITEMS.length * ROW_H + Math.max(0, SHOP_ITEMS.length - 1) * ROW_GAP
+  const rowStackH = visibleItems.length * ROW_H + Math.max(0, visibleItems.length - 1) * ROW_GAP
   const PANEL_W = ROW_W + PANEL_PAD_X * 2
   const PANEL_H = TITLE_BAND + rowStackH + PANEL_PAD_Y * 2
 
@@ -81,7 +88,7 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
     }
   }
 
-  SHOP_ITEMS.forEach((entry, i) => {
+  visibleItems.forEach((entry, i) => {
     const def = ITEMS[entry.type]
     const rowY = topRowY + i * (ROW_H + ROW_GAP)
 

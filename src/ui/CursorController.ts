@@ -1,6 +1,5 @@
 import Phaser from 'phaser'
 import { state } from '../game/state'
-import { ITEMS } from '../items/types'
 import { grabbableSlots } from './hover'
 
 // Custom cursor — renders a sprite at the pointer position so the game has
@@ -41,16 +40,29 @@ export class CursorController {
     if (this.scene.game.canvas && this.scene.game.canvas.style.cursor !== 'none') {
       this.scene.game.canvas.style.cursor = 'none'
     }
-    const sel = state.inventory[state.selectedInventorySlot]
-    // Tool cursor (shovel) only applies in the overworld — interiors are
-    // menu space where the player isn't using world tools.
-    const interiorOpen = this.scene.scene.manager.isActive('Interior')
-    if (!interiorOpen && sel && sel.type === 'shovel') {
-      this.setTexture(ITEMS.shovel.sprite, ITEMS.shovel.scale)
-      return
+    // Tool cursor — only show if the selected tool says it's usable in the
+    // current scene context. Tools default to overworld-only.
+    const tool = state.getSelectedTool()
+    if (tool) {
+      const contexts = tool.cursorContexts ?? ['overworld']
+      const interiorScene = this.scene.scene.manager.getScene('Interior') as any
+      const interiorActive = this.scene.scene.manager.isActive('Interior')
+      const interiorData = interiorActive ? interiorScene?.getInteriorData?.() : null
+
+      const inOverworld = !interiorActive
+      const inField = !!(interiorData && interiorData.source === 'plot' && interiorData.buildingType === 'field')
+
+      const showCursor =
+        (inOverworld && contexts.includes('overworld')) ||
+        (inField && contexts.includes('field'))
+
+      if (showCursor) {
+        this.setTexture(tool.sprite, tool.scale)
+        return
+      }
     }
     // hovering a registered slot frame? Slots can live in any scene (UI
-    // inventory bar lives in UI; crafter/producer/modifier slots live in
+    // inventory bar lives in UI; workshop/producer/modifier slots live in
     // Interior). Check the pointer against every active scene's input plugin.
     const p = this.scene.input.activePointer
     let overSlot = false

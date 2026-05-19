@@ -14,6 +14,7 @@ export const RECIPES: Recipe[] = [
   { inputs: ['sugar_cane', 'sugar_cane'], output: 'sugar', outputCount: 2 },
   { inputs: ['sugar', 'bread'], output: 'pastry' },
   { inputs: ['hemp', 'hemp'], output: 'twine' },
+  { inputs: ['twine', 'twine'], output: 'rope' },
 ]
 
 // Returns the matching recipe for the given two inputs (order doesn't matter),
@@ -30,7 +31,7 @@ function findRecipe(a: ItemType, b: ItemType): Recipe | null {
 // Returns the output stack or null. Does not modify state.
 export function previewCraft(plotIndex: number): ItemStack | null {
   const plot = state.plots[plotIndex]
-  if (plot.built !== 'crafter') return null
+  if (plot.built !== 'workshop') return null
   const inputs = plot.craftInputs
   if (!inputs) return null
   const a = inputs[0]
@@ -54,7 +55,9 @@ export function consumeCraft(plotIndex: number): ItemStack | null {
   b.count--
   if (a.count <= 0) inputs[0] = null
   if (b.count <= 0) inputs[1] = null
-  // dialogue flag — the crafter NPC reacts the first time bread is made
+  // dialogue flag — the workshop NPC reacts the first time bread is made
   if (preview.type === 'bread') state.hasMadeBread = true
+  // unlock flag — first rope craft adds rope to the Tool Shop's listings
+  if (preview.type === 'rope') state.hasCraftedRope = true
   return preview
 }
