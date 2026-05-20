@@ -16,6 +16,13 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
+  physics: {
+    default: 'matter',
+    matter: {
+      gravity: { x: 0, y: 0 },   // top-down: no falling
+      enableSleeping: true,
+    },
+  },
   scene: [Overworld, UI, Interior],
 })
 // right-click is used to pick up half a stack — suppress the browser menu

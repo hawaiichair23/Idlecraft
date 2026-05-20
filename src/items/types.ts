@@ -1,7 +1,7 @@
 // Items in the game. Each ItemType is a string id; ITEMS maps id → metadata.
 // New items: add an entry to ItemType, ITEMS, and (if needed) a sprite.
 
-export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope'
+export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post'
 
 export interface ItemDef {
   name: string
@@ -51,6 +51,7 @@ export const ITEMS: Record<ItemType, ItemDef> = {
   hemp:               { name: 'Hemp',                sprite: 'item_hemp',               maxStack: 64, scale: 2, sellPrice: 10 },
   hemp_seed:          { name: 'Hemp Seed',           sprite: 'item_hemp_seed',          maxStack: 64, scale: 2, activeTool: true, cursorContexts: ['field'] },
   rope:               { name: 'Rope',                sprite: 'item_rope',               maxStack: 64, scale: 2, sellPrice: 25, activeTool: true },
+  post:               { name: 'Post',                sprite: 'item_post',               maxStack: 64, scale: 2, activeTool: true, cursorContexts: ['overworld'] },
 }
 
 // A stack of a single item type. Slots hold one of these (or null).

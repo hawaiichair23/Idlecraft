@@ -5,6 +5,7 @@ import Phaser from 'phaser'
 import type { ItemStack, ItemType, ItemDef } from '../items/types'
 import { ITEMS } from '../items/types'
 import type { WorldStructure } from '../world/structures'
+import type { Honse } from '../world/honse'
 
 export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field'
 export type BuiltType = Exclude<BuildingType, 'empty'>
@@ -147,6 +148,12 @@ class GameState {
   // Trees and saplings planted by the player. Each entry persists as a sprite
   // in the world. Stage advances over time (future feature).
   plantedTrees: { x: number; y: number; kind: 'cottonwood' }[] = []
+  // Hitching posts placed by the player. Each entry is a sprite in the world
+  // and an obstacle in collision. Future: rope-throw target for catching honse.
+  placedPosts: { x: number; y: number }[] = []
+  // Honses in the world. Position is the visual center; sprite/collision/rope
+  // hitboxes derive from this. Stationary for now — movement comes later.
+  honses: Honse[] = []
   inventory: (ItemStack | null)[] = Array.from({ length: INVENTORY_SIZE }, () => null)
   // currently-selected inventory slot, set by scroll wheel
   selectedInventorySlot = 0
@@ -247,7 +254,22 @@ class GameState {
     this.revealedItems = []
     this.droppedItems = []
     this.plantedTrees = []
+    this.placedPosts = []
+    // seed: one test honse above the General Store. Her spawn point is her
+    // home — she'll drift around it within HOME_RADIUS rather than wander off.
+    this.honses = [{
+      x: 2700, y: 2240,
+      vx: 0, vy: 0,
+      facingRight: false,
+      facingLockedUntil: 0,
+      homeX: 2700, homeY: 2240,
+      mode: 'idle', modeUntil: 0,
+    }]
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
+    // dev seed: 3 posts in the first inventory slot for testing placement.
+    this.inventory[0] = { type: 'post', count: 3 }
+    // dev seed: rope in slot 1 for testing the rope-throw physics.
+    this.inventory[1] = { type: 'rope', count: 10 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.

@@ -7,9 +7,11 @@ import { ITEMS, type ItemStack, type ItemDef } from '../items/types'
 import { generateWorld } from '../world/gen'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { registerGrabbable } from '../ui/hover'
+import { RopeController } from '../world/ropeController'
+import { updateHonses, getHonseBodyAABB } from '../world/honse'
 
 const WORLD_PX = 576 * 8    // 8x canvas size, so player can wander
-const PLAYER_SPEED = 530
+const PLAYER_SPEED = 130
 const FOOD_BUFF_MS = 60000
 
 const PLOT_COLS = 4
@@ -21,6 +23,12 @@ const PLOT_COUNT = PLOT_COLS * PLOT_ROWS
 // Sprites are authored at 1px-per-pixel. We render them upscaled to fit plots.
 const SPRITE_SCALE = 3   // 16px sprite → 48px on screen (fits 56px plot)
 const PLAYER_SCALE = 2   // player half-size: 8px sprite → 16px on screen
+
+// Rope leash: when the rope is attached, the player can't go further than
+// ROPE_LEASH_LENGTH from the anchor. From ROPE_LEASH_SOFT_START fraction
+// outward, outward radial movement is progressively dampened to zero.
+const ROPE_LEASH_LENGTH = 140
+const ROPE_LEASH_SOFT_START = 0.9
 
 interface PlotView {
   x: number
@@ -44,6 +52,10 @@ export class Overworld extends Phaser.Scene {
   private plotViews: PlotView[] = []
   // Solid obstacles the player can't walk through. World-space AABBs.
   private obstacles: { x: number; y: number; w: number; h: number }[] = []
+  // Buildings — the player passes through these on purpose (door-zone trigger
+  // enters the interior). Honses don't enter buildings, so they get a
+  // separate list checked only for honse movement.
+  private buildingObstacles: { x: number; y: number; w: number; h: number }[] = []
   private worldBg!: Phaser.GameObjects.Rectangle
   // sprite for each currently-revealed buried coin, keyed by `x,y` so we can
   // destroy it on pickup. Parallel to state.revealedItems.
@@ -54,6 +66,14 @@ export class Overworld extends Phaser.Scene {
   private droppedSprites: (Phaser.GameObjects.Sprite | null)[] = []
   // Planted trees/saplings in the world, keyed by `x,y` so we can destroy on dig-up.
   private plantedTreeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Player-placed hitching posts, keyed by `x,y`. Future: rope-throw targets.
+  private placedPostSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Honse sprites — parallel to state.honses by index. Position + depth are
+  // synced from state each frame in update().
+  private honseSprites: Phaser.GameObjects.Sprite[] = []
+  // Owns rope physics, catch detection, and the leash-anchor lookup. Built in
+  // create() once the player sprite exists.
+  private rope!: RopeController
 
   constructor() {
     super('Overworld')
@@ -131,6 +151,11 @@ export class Overworld extends Phaser.Scene {
       }
       // sapling selected? try to plant on a nearby dirt patch
       if (this.trySaplingPlant(p.worldX, p.worldY)) return
+      // post selected? try to place it in the world
+      if (this.tryPlacePost(p.worldX, p.worldY)) return
+      // rope selected? throw it from the player toward the click
+      const sel = state.inventory[state.selectedInventorySlot]
+      if (sel && sel.type === 'rope' && this.rope.throw(p.worldX, p.worldY)) return
     })
 
     // 16 plots, evenly spaced, centered on the world
@@ -206,6 +231,12 @@ export class Overworld extends Phaser.Scene {
       const sprite = this.add.sprite(t.x, t.y, 'planted_cottonwood_sapling').setScale(2).setDepth(2)
       this.plantedTreeSprites.set(`${t.x},${t.y}`, sprite)
     }
+    // restore any placed posts already in state (e.g. after HMR)
+    for (const p of state.placedPosts) {
+      const sprite = this.add.sprite(p.x, p.y, 'post').setScale(2).setDepth(p.y + 8)
+      this.placedPostSprites.set(`${p.x},${p.y}`, sprite)
+      this.obstacles.push(this.makePostObstacle(p.x, p.y))
+    }
     // restore any revealed-but-uncollected coins
     for (const r of state.revealedItems) {
       this.spawnRevealedCoinSprite(r.x, r.y)
@@ -222,6 +253,11 @@ export class Overworld extends Phaser.Scene {
         // mirror to the right, snug against the original. Sprite's right side
         // has 4px of native padding, so offset by content width not full width.
         this.add.sprite(s.x + 24, s.y, def.sprite).setScale(def.scale).setFlipX(true).setDepth(bottomY)
+        // building footprint covers both halves: x ranges ~[-24, +48], y ~±24
+        this.buildingObstacles.push({ x: s.x - 24, y: s.y - 24, w: 72, h: 48 })
+      } else {
+        // single-sprite building: 48x48 centered
+        this.buildingObstacles.push({ x: s.x - 24, y: s.y - 24, w: 48, h: 48 })
       }
     }
 
@@ -279,9 +315,15 @@ export class Overworld extends Phaser.Scene {
       this.obstacles.push(this.makeTreeTrunkObstacle(3220, 160))
     }
 
+    // ---- HONSES ---- spawn from state. Position + depth resync each frame.
+    this.honseSprites = state.honses.map(h =>
+      this.add.sprite(h.x, h.y, 'honse').setScale(2).setDepth(h.y + 8)
+    )
+
     // player at world center. Depth = y, so sprites south of the player render
     // in front and sprites north render behind (standard overhead y-sort).
     this.player = this.add.sprite(cx, cy, 'player').setScale(PLAYER_SCALE).setDepth(cy)
+    this.rope = new RopeController(this, this.player)
 
     // camera — viewport starts below the top bar, extends to bottom of canvas
     const cam = this.cameras.main
@@ -358,6 +400,8 @@ export class Overworld extends Phaser.Scene {
     const view = this.plotViews[plotIndex]
     view.priceTag.destroy()
     view.building = this.add.sprite(view.x, view.y, type).setScale(SPRITE_SCALE).setDepth(view.y + 12)
+    // honses can't walk through built plots
+    this.buildingObstacles.push({ x: view.x - 24, y: view.y - 24, w: 48, h: 48 })
 
     const def = BUILDINGS[type]
     // name label above the plot
@@ -409,6 +453,60 @@ export class Overworld extends Phaser.Scene {
       w: TRUNK_W,
       h: TRUNK_H,
     }
+  }
+
+  // Base footprint for a hitching post at (px, py). Sprite is 8x8 at scale 2
+  // → 16x16 on screen. Both H legs share a small base near the ground; the
+  // AABB covers that base so the player can't walk through.
+  private makePostObstacle(px: number, py: number) {
+    const POST_W = 15
+    const POST_H = 5
+    // Sprite bottom edge sits at py + 8 (8px sprite tall, scale 2, default origin)
+    const bottomY = py + 4
+    return {
+      x: px - POST_W / 2,
+      y: bottomY - POST_H,
+      w: POST_W,
+      h: POST_H,
+    }
+  }
+
+  // Half-extent used when checking whether the player's center collides.
+  // Player sprite is 8×8 at scale 2 = 16×16 on screen; ~5px around center
+  // is the historically-tuned tight check.
+  private static PLAYER_HALF = 5
+
+  // True if a player-sized AABB centered at (px, py) overlaps any static
+  // obstacle (trees, rocks, posts) or any honse body. When called by a
+  // honse's own movement code, pass that honse's index in ignoreHonseIndex
+  // so she doesn't collide with herself; the call ALSO checks building
+  // footprints, which the player passes through on purpose.
+  private collidesAt(px: number, py: number, ignoreHonseIndex?: number): boolean {
+    const half = Overworld.PLAYER_HALF
+    for (const o of this.obstacles) {
+      if (px + half > o.x &&
+          px - half < o.x + o.w &&
+          py + half > o.y &&
+          py - half < o.y + o.h) return true
+    }
+    // Honses also bump off buildings (player doesn't — door zones handle entry)
+    if (ignoreHonseIndex !== undefined) {
+      for (const o of this.buildingObstacles) {
+        if (px + half > o.x &&
+            px - half < o.x + o.w &&
+            py + half > o.y &&
+            py - half < o.y + o.h) return true
+      }
+    }
+    for (let i = 0; i < state.honses.length; i++) {
+      if (i === ignoreHonseIndex) continue
+      const b = getHonseBodyAABB(state.honses[i])
+      if (px + half > b.x &&
+          px - half < b.x + b.w &&
+          py + half > b.y &&
+          py - half < b.y + b.h) return true
+    }
+    return false
   }
 
   // Drop a stack at world position (x, y). Spawns a sprite and adds to state.
@@ -487,6 +585,55 @@ export class Overworld extends Phaser.Scene {
     }
     return planted
   }
+
+  // Try to place a hitching post at click position. The selected hotbar slot
+  // must be a post, the spot must be clear of plots, world structures, and
+  // existing obstacles (trees, rocks, other posts). Returns true if placed.
+  private tryPlacePost(clickX: number, clickY: number): boolean {
+    const slotIdx = state.selectedInventorySlot
+    const stack = state.inventory[slotIdx]
+    if (!stack || stack.type !== 'post') return false
+
+    const x = Math.round(clickX)
+    const y = Math.round(clickY)
+
+    // refuse if inside any plot footprint
+    for (const v of this.plotViews) {
+      if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) return false
+    }
+    // refuse if inside any world structure footprint (~32px square)
+    for (const s of state.worldStructures) {
+      if (Math.abs(x - s.x) < 32 && Math.abs(y - s.y) < 32) return false
+    }
+    // refuse if the post's base would overlap any existing obstacle (trees, rocks, posts)
+    const newObs = this.makePostObstacle(x, y)
+    for (const o of this.obstacles) {
+      if (newObs.x + newObs.w > o.x &&
+          newObs.x < o.x + o.w &&
+          newObs.y + newObs.h > o.y &&
+          newObs.y < o.y + o.h) return false
+    }
+
+    state.placedPosts.push({ x, y })
+    const sprite = this.add.sprite(x, y, 'post').setScale(2).setDepth(y + 8)
+    this.placedPostSprites.set(`${x},${y}`, sprite)
+    this.obstacles.push(newObs)
+
+    stack.count -= 1
+    if (stack.count <= 0) state.inventory[slotIdx] = null
+    this.registry.events.emit('inventory-changed')
+    return true
+  }
+
+  // ---- ROPE THROW ----
+  // All rope state and physics live in src/world/ropeController.ts. The scene
+  // holds one RopeController (this.rope), calls its throw() on click, calls
+  // its update() each frame, and reads getLeashAnchor() for player movement.
+
+
+
+
+
 
   // Lower-level: given a sapling stack, try planting one near (clickX, clickY).
   // Mutates the stack (count -= 1) on success but does NOT clear empty slots
@@ -727,6 +874,55 @@ export class Overworld extends Phaser.Scene {
   update(_t: number, dt: number) {
     const overworldVisible = this.cameras.main.visible
 
+    // step honses, then sync sprite position + depth (do this before the
+    // rope update so attached ropes read the honse's new position this frame)
+    updateHonses(
+      state.honses,
+      dt,
+      (px, py, ignoreIdx) => this.collidesAt(px, py, ignoreIdx),
+      this.rope.getAttachedHonseIndex(),
+      { x: this.player.x, y: this.player.y },
+    )
+    // if any honse is overlapping the player, shove the player out along the
+    // axis of least overlap. She's a big animal and doesn't notice you.
+    {
+      const half = Overworld.PLAYER_HALF
+      for (const h of state.honses) {
+        const b = getHonseBodyAABB(h)
+        const px = this.player.x
+        const py = this.player.y
+        if (px + half > b.x && px - half < b.x + b.w &&
+            py + half > b.y && py - half < b.y + b.h) {
+          // overlap depth on each axis — pick the smaller and push out that way
+          const overlapLeft   = (px + half) - b.x
+          const overlapRight  = (b.x + b.w) - (px - half)
+          const overlapTop    = (py + half) - b.y
+          const overlapBottom = (b.y + b.h) - (py - half)
+          const minX = Math.min(overlapLeft, overlapRight)
+          const minY = Math.min(overlapTop, overlapBottom)
+          if (minX < minY) {
+            this.player.x += overlapLeft < overlapRight ? -minX : minX
+          } else {
+            this.player.y += overlapTop < overlapBottom ? -minY : minY
+          }
+        }
+      }
+    }
+    for (let i = 0; i < state.honses.length; i++) {
+      const h = state.honses[i]
+      const s = this.honseSprites[i]
+      if (!s) continue
+      s.x = h.x
+      s.y = h.y
+      s.setDepth(h.y + 8)
+      // sprite is authored facing LEFT, so flipX=true makes her face right
+      s.setFlipX(h.facingRight)
+    }
+
+    // update the rope controller (catch detection, anchor pinning, redraw)
+    this.rope.update()
+
+
     // movement only when overworld is the active view
     if (overworldVisible) {
       const baseSpeed = state.playerSpeedOverride ?? PLAYER_SPEED
@@ -741,20 +937,55 @@ export class Overworld extends Phaser.Scene {
       if (this.wasd.S.isDown || this.arrows.down!.isDown) dy += 1
       if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2 }
       // axis-separated movement so the player can slide along obstacle edges
-      const PLAYER_HALF = 5
-      const collidesAt = (px: number, py: number): boolean => {
-        for (const o of this.obstacles) {
-          if (px + PLAYER_HALF > o.x &&
-              px - PLAYER_HALF < o.x + o.w &&
-              py + PLAYER_HALF > o.y &&
-              py - PLAYER_HALF < o.y + o.h) return true
+      const collidesAt = (px: number, py: number): boolean => this.collidesAt(px, py)
+      // rope leash: when attached to a post or honse, dampen movement that
+      // would increase distance from the anchor. The tangential (sideways)
+      // component is left alone; only the outward radial component is scaled
+      // down, smoothly going to zero as the player approaches max leash length.
+      if (this.rope.isAttached() && (dx !== 0 || dy !== 0)) {
+        const anchor = this.rope.getLeashAnchor()
+        if (anchor !== null) {
+          const rx = this.player.x - anchor.x
+          const ry = this.player.y - anchor.y
+          const dist = Math.sqrt(rx * rx + ry * ry)
+          if (dist > 0.0001) {
+            const rNormX = rx / dist
+            const rNormY = ry / dist
+            // signed radial component: positive = moving away from the anchor
+            const radial = dx * rNormX + dy * rNormY
+            if (radial > 0) {
+              // scale outward motion: 1.0 at < soft start, → 0 at the leash limit
+              const softStart = ROPE_LEASH_LENGTH * ROPE_LEASH_SOFT_START
+              const t = Math.max(0, Math.min(1, (dist - softStart) / (ROPE_LEASH_LENGTH - softStart)))
+              const scale = 1 - t   // linear falloff; quadratic (1 - t*t) feels softer
+              // remove outward radial, then add back the scaled version
+              dx -= radial * rNormX
+              dy -= radial * rNormY
+              dx += radial * scale * rNormX
+              dy += radial * scale * rNormY
+            }
+          }
         }
-        return false
       }
       const nextX = Phaser.Math.Clamp(this.player.x + dx * step, 8, WORLD_PX - 8)
       if (!collidesAt(nextX, this.player.y)) this.player.x = nextX
       const nextY = Phaser.Math.Clamp(this.player.y + dy * step, 8, WORLD_PX - 8)
       if (!collidesAt(this.player.x, nextY)) this.player.y = nextY
+      // hard cap: if somehow past leash (e.g. honse moved), snap back to the circle
+      if (this.rope.isAttached()) {
+        const anchor = this.rope.getLeashAnchor()
+        if (anchor !== null) {
+          const rx = this.player.x - anchor.x
+          const ry = this.player.y - anchor.y
+          const distSq = rx * rx + ry * ry
+          const maxSq = ROPE_LEASH_LENGTH * ROPE_LEASH_LENGTH
+          if (distSq > maxSq) {
+            const dist = Math.sqrt(distSq)
+            this.player.x = anchor.x + (rx / dist) * ROPE_LEASH_LENGTH
+            this.player.y = anchor.y + (ry / dist) * ROPE_LEASH_LENGTH
+          }
+        }
+      }
       // Y-sort by feet, not center, so player passes in front of buildings
       // when their feet are below the building's bottom edge.
       this.player.setDepth(this.player.y + 8)
@@ -826,7 +1057,7 @@ export class Overworld extends Phaser.Scene {
       const s = state.worldStructures[i]
       const inZone = overworldVisible && (
         (s.type === 'shop' || s.type === 'general_store')
-          ? (px - s.x) >= -16 && (px - s.x) <= 52 && Math.abs(py - s.y) < 16
+          ? (px - s.x) >= -22 && (px - s.x) <= 46 && Math.abs(py - s.y) < 16
           : Math.abs(px - s.x) < 16 && Math.abs(py - s.y) < 16
       )
       if (inZone) {

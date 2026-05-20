@@ -899,6 +899,57 @@ export const ITEM_HEMP_SEED: Sprite = [
   [_,_,_,_,_,_,_,_],
 ]
 
+// Post: weathered wooden hitching post, H-shape. Same art as the item icon
+// so the placed object reads identical to what's in your inventory. 8x8.
+const psL = '#9A7A52'   // wood light (sunlit side)
+const psM = '#6B4F30'   // wood mid (main)
+const psD = '#3F2C18'   // wood dark (shadow / grain)
+const psG = '#1A1208'   // deepest shadow / knothole
+export const POST: Sprite = [
+  [_,psM,_,_,_,_,psM,_],
+  [psM,psL,psM,_,_,psM,psL,psM],
+  [psM,psL,psM,psM,psM,psM,psL,psM],
+  [psM,psM,psL,psL,psL,psL,psM,psM],
+  [psM,psL,psM,psM,psM,psM,psL,psM],
+  [psM,psL,psM,_,_,psM,psL,psM],
+  [psM,psL,psD,_,_,psM,psL,psD],
+  [psM,psM,psG,_,_,psM,psM,psG],
+]
+
+// Post item icon: identical to the world POST. 8x8.
+export const ITEM_POST: Sprite = [
+  [_,psM,_,_,_,_,psM,_],
+  [psM,psL,psM,_,_,psM,psL,psM],
+  [psM,psL,psM,psM,psM,psM,psL,psM],
+  [psM,psM,psL,psL,psL,psL,psM,psM],
+  [psM,psL,psM,psM,psM,psM,psL,psM],
+  [psM,psL,psM,_,_,psM,psL,psM],
+  [psM,psL,psD,_,_,psM,psL,psD],
+  [psM,psM,psG,_,_,psM,psM,psG],
+]
+
+// Honse: side view facing LEFT, single solid brown. 26 wide × 15 tall.
+// Long face juts out at the upper-left, body extends across, tail drapes
+// down off the rear-right, four legs underneath.
+const hnB = '#6B3F22'   // honse brown (single color, placeholder)
+export const HONSE: Sprite = [
+  [_,_,_,hnB,hnB,hnB,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [hnB,hnB,hnB,hnB,hnB,hnB,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [hnB,hnB,hnB,hnB,hnB,hnB,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,hnB,hnB,hnB,hnB,hnB,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,hnB,hnB,hnB,hnB,hnB,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,_,_,_,_,_,_],
+  [_,_,_,_,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,_,_,_],
+  [_,_,_,_,_,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,_,_],
+  [_,_,_,_,_,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,_,hnB,hnB,hnB,_],
+  [_,_,_,_,_,_,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,hnB,_,_,_,hnB,hnB,hnB],
+  [_,_,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB],
+  [_,_,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,_,_],
+  [_,_,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,_,_],
+  [_,_,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,_,_],
+  [_,_,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,_,_],
+]
+
 export const ALL_SPRITES: Record<string, Sprite> = {
   mill: MILL,
   well: WELL,
@@ -951,4 +1002,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   planted_cottonwood_sapling: PLANTED_COTTONWOOD_SAPLING,
   item_hemp: ITEM_HEMP,
   item_hemp_seed: ITEM_HEMP_SEED,
+  post: POST,
+  item_post: ITEM_POST,
+  honse: HONSE,
 }
