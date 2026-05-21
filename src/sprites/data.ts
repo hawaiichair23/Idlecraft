@@ -8,7 +8,6 @@ const _ = null
 // ---- MILL ----
 const R = '#5C3A1E'
 const D = '#7A5230'
-const L = '#8B6340'
 const B = '#A0522D'
 const W = '#C4A35A'
 const O = '#654321'
@@ -173,7 +172,6 @@ export const WELL: Sprite = [
 const rD = '#4A2F0F'  // roof dark
 const wL = '#8B5A2B'  // wall light brown
 const wM = '#6B3410'  // wall medium brown
-const dK = '#1A1208'  // doorway interior shadow
 const aB = '#222222'  // anvil
 const gO = '#FF6622'  // forge glow orange
 const gY = '#FFAA33'  // forge glow yellow
@@ -373,9 +371,9 @@ export const LAND_OFFICE: Sprite = [
   [_,loP,loP,loP,loA,loA,loP,loP,loA,loA,loP,loP,_,_,_,_],
   [_,loP,loD,loP,loA,loA,loP,loD,loA,loA,loP,loP,_,_,_,_],
   [_,loP,loP,loP,loA,loA,loP,loP,loA,loA,loP,loP,_,_,_,_],
-  [loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,_,_,_],
-  [_,loC,_,_,_,_,_,_,_,_,_,_,loC,_,_,_],
-  [_,loC,_,_,_,_,_,_,_,_,_,_,loC,_,_,_],
+  [_,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,loR,_,_,_,_],
+  [_,loC,loC,loC,loC,loC,loC,loC,loC,loC,loC,loC,loC,_,_,_],
+  [_,loC,loC,loC,loC,loC,loC,loC,loC,loC,loC,loC,loC,_,_,_],
   [_,loS,loS,loS,loS,loS,loS,loS,loS,loS,loS,loS,loS,_,_,_],
 ]
 
@@ -655,6 +653,19 @@ export const ITEM_SHOVEL: Sprite = [
   [_,svM,svD,_,_,_,_,_],
 ]
 
+// Axe: wood handle running corner-to-corner with a metal head at the top.
+// Reuses the shovel palette (svH handle, svM/svD metal). 8x8.
+export const ITEM_AXE: Sprite = [
+  [_,_,_,svM,svM,svD,_,_],
+  [_,_,svM,svM,svM,svD,svD,_],
+  [_,_,svM,svM,svD,svH,_,_],
+  [_,_,_,_,svH,_,_,_],
+  [_,_,_,svH,_,_,_,_],
+  [_,_,svH,_,_,_,_,_],
+  [_,svH,_,_,_,_,_,_],
+  [svH,_,_,_,_,_,_,_],
+]
+
 // Bag: brown leather pouch with drawstring. 8x8.
 const bgL = '#A07040'   // leather light
 const bgD = '#6B4422'   // leather dark
@@ -828,6 +839,28 @@ export const COTTONWOOD: Sprite = [
   [_,_,cotBk,cotBk,cotBk,cotBkD,cotBkD,cotBkD,cotBkD,_,_,_],
 ]
 
+// Cottonwood stump: the COTTONWOOD sprite with the canopy rows blanked out,
+// leaving only the trunk. Used as the post-felled state of a chopped tree —
+// the entry stays in the world but its visual swaps to this. Same 12x16
+// dimensions and palette as COTTONWOOD so depth/sort math is unchanged.
+export const COTTONWOOD_STUMP: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,_,_,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,_,cotBk,cotBk,cotBkD,_,_,_,_,_],
+  [_,_,_,cotBk,cotBk,cotBk,cotBkD,cotBkD,_,_,_,_],
+  [_,_,cotBk,cotBk,cotBk,cotBkD,cotBkD,cotBkD,cotBkD,_,_,_],
+]
 // Cottonwood sapling: thin trunk with a small leafy tuft. 8x8.
 // Reuses the cottonwood palette (cotBk, cotBkD, cotLfL, cotLfM).
 export const ITEM_COTTONWOOD_SAPLING: Sprite = [
@@ -928,6 +961,69 @@ export const ITEM_POST: Sprite = [
   [psM,psM,psG,_,_,psM,psM,psG],
 ]
 
+// Cedar post: same H-shape and behavior as POST, but warm cedar wood from a
+// different tree species. Palette shifted toward red-orange tones; structure
+// identical to POST. Mechanically interchangeable.
+const fcL = '#C28A55'   // wood light (warm cedar)
+const fcM = '#9C5E2C'   // wood mid (main warm brown)
+const fcD = '#5F3418'   // wood dark
+const fcG = '#2F1A0A'   // deepest shadow
+export const CEDAR_POST: Sprite = [
+  [_,fcM,_,_,_,_,fcM,_],
+  [fcM,fcL,fcM,_,_,fcM,fcL,fcM],
+  [fcM,fcL,fcM,fcM,fcM,fcM,fcL,fcM],
+  [fcM,fcM,fcL,fcL,fcL,fcL,fcM,fcM],
+  [fcM,fcL,fcM,fcM,fcM,fcM,fcL,fcM],
+  [fcM,fcL,fcM,_,_,fcM,fcL,fcM],
+  [fcM,fcL,fcD,_,_,fcM,fcL,fcD],
+  [fcM,fcM,fcG,_,_,fcM,fcM,fcG],
+]
+
+// Cedar post item icon: identical to the world CEDAR_POST. 8x8.
+export const ITEM_CEDAR_POST: Sprite = [
+  [_,fcM,_,_,_,_,fcM,_],
+  [fcM,fcL,fcM,_,_,fcM,fcL,fcM],
+  [fcM,fcL,fcM,fcM,fcM,fcM,fcL,fcM],
+  [fcM,fcM,fcL,fcL,fcL,fcL,fcM,fcM],
+  [fcM,fcL,fcM,fcM,fcM,fcM,fcL,fcM],
+  [fcM,fcL,fcM,_,_,fcM,fcL,fcM],
+  [fcM,fcL,fcD,_,_,fcM,fcL,fcD],
+  [fcM,fcM,fcG,_,_,fcM,fcM,fcG],
+]
+
+// Wood: a single log lying horizontally, light top / dark underside for
+// roundness, two knot specks. Reuses the post-wood palette so it reads as the
+// same wood family as posts. 8x8.
+export const ITEM_WOOD: Sprite = [
+  [_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_],
+  [psD,psM,psM,psM,psM,psM,psM,psD],
+  [psM,psL,psL,psG,psL,psL,psM,psM],
+  [psM,psL,psL,psL,psL,psG,psL,psM],
+  [psD,psM,psM,psM,psM,psM,psM,psD],
+  [_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_],
+]
+
+// ---- BRUSH GROUND ---- 8x8 ground tile, dusty gray-green to match the
+// cottonwood foliage palette. Tiled densely under the oasis grove so the
+// area reads as a distinct patch of dry brushy ground instead of cream.
+// Not interactable; pure visual. Edges of the patch fade by reducing tile
+// density toward the perimeter rather than a hard square boundary.
+const brL = '#8C9A6E'   // brush light (matches cotLfL)
+const brM = '#5F6B48'   // brush mid (matches cotLfM)
+const brD = '#4e5f37'   // brush dark speck (matches cotLfD)
+export const BRUSH_GROUND: Sprite = [
+  [brL,brM,brL,brL,brM,brL,brL,brM],
+  [brM,brL,brL,brM,brL,brL,brM,brL],
+  [brL,brL,brD,brL,brM,brL,brL,brL],
+  [brL,brM,brL,brL,brL,brM,brL,brM],
+  [brM,brL,brL,brM,brL,brL,brL,brL],
+  [brL,brL,brM,brL,brL,brL,brM,brL],
+  [brL,brM,brL,brL,brD,brL,brL,brM],
+  [brM,brL,brL,brM,brL,brL,brM,brL],
+]
+
 // Honse: side view facing LEFT, single solid brown. 26 wide × 15 tall.
 // Long face juts out at the upper-left, body extends across, tail drapes
 // down off the rear-right, four legs underneath.
@@ -973,6 +1069,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_water: ITEM_WATER,
   item_bread: ITEM_BREAD,
   item_shovel: ITEM_SHOVEL,
+  item_axe: ITEM_AXE,
   shovel_dig: SHOVEL_DIG,
   dirt_patch: DIRT_PATCH,
   rock_tl: ROCK_TL,
@@ -998,11 +1095,16 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_sugar: ITEM_SUGAR,
   item_pastry: ITEM_PASTRY,
   cottonwood: COTTONWOOD,
+  cottonwood_stump: COTTONWOOD_STUMP,
   item_cottonwood_sapling: ITEM_COTTONWOOD_SAPLING,
   planted_cottonwood_sapling: PLANTED_COTTONWOOD_SAPLING,
   item_hemp: ITEM_HEMP,
   item_hemp_seed: ITEM_HEMP_SEED,
   post: POST,
   item_post: ITEM_POST,
+  cedar_post: CEDAR_POST,
+  item_cedar_post: ITEM_CEDAR_POST,
+  item_wood: ITEM_WOOD,
+  brush_ground: BRUSH_GROUND,
   honse: HONSE,
 }

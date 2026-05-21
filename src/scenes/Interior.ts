@@ -18,6 +18,7 @@ import { buildWalkableInterior } from './WalkableInterior'
 import { buildLandOfficeInterior } from './LandOfficeInterior'
 import { buildChurchInterior } from './ChurchInterior'
 import { buildNurseryInterior } from './NurseryInterior'
+import { buildTannerInterior } from './TannerInterior'
 import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
 
 export type InteriorData =
@@ -195,11 +196,12 @@ export class Interior extends Phaser.Scene {
             if (stack.type === 'shovel') {
               if (cell.state === 'empty') return
               if (cell.state === 'mature') {
+                const hempStack: ItemStack = { type: 'hemp', count: 1 }
+                const hempAdded = state.inventoryAddAnywhere(hempStack)
+                if (hempAdded <= 0) return  // no room — don't harvest
                 cell.state = 'empty'
                 cell.plantedAt = 0
                 rebuildMask()
-                const hempStack: ItemStack = { type: 'hemp', count: 1 }
-                state.inventoryAddAnywhere(hempStack)
                 this.registry.events.emit('inventory-changed')
                 return
               }
@@ -207,7 +209,14 @@ export class Interior extends Phaser.Scene {
               cell.plantedAt = 0
               rebuildMask()
               const seedStack: ItemStack = { type: 'hemp_seed', count: 1 }
-              state.inventoryAddAnywhere(seedStack)
+              const seedAdded = state.inventoryAddAnywhere(seedStack)
+              if (seedAdded <= 0) {
+                // no room — undo the dig so nothing is lost
+                cell.state = 'planted'
+                cell.plantedAt = Date.now()
+                rebuildMask()
+                return
+              }
               this.registry.events.emit('inventory-changed')
               return
             }
@@ -320,6 +329,9 @@ export class Interior extends Phaser.Scene {
       this.moduleCleanups.push(handle.onCleanup)
     } else if (this.interiorData.buildingType === 'nursery') {
       const handle = buildNurseryInterior(this)
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'tanner') {
+      const handle = buildTannerInterior(this)
       this.moduleCleanups.push(handle.onCleanup)
     }
 
@@ -648,6 +660,9 @@ export class Interior extends Phaser.Scene {
   private cleanup() {
     const ui = this.scene.get('UI') as UI
     const dc = ui.getDragController()
+    // If the player is holding an item on the cursor when the interior closes,
+    // restore it to the slot it came from so it doesn't vanish into limbo.
+    dc.restoreHeld()
     for (const b of this.bindings) dc.unregister(b)
     this.bindings = []
     this.slotVisuals = []

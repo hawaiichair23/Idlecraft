@@ -23,10 +23,22 @@ export interface Honse {
   // ms timestamp at which the current sub-behavior expires and a new one
   // should be picked. Zero on a fresh honse means "decide immediately".
   modeUntil: number
+  // Once she's been ridden, she's tame: she ignores the player's proximity
+  // instead of trying to keep her distance (wild behavior comes later).
+  tame: boolean
 }
 
 // ---- tuning ----
 const WALK_SPEED = 25
+// Wild honses keep their distance from the player. While the player is
+// inside AVOID_RADIUS, an untamed honse walks directly away. Speed scales
+// linearly with proximity: AVOID_SPEED_MIN at the edge of the radius,
+// AVOID_SPEED_MAX when the player is right on top of her. Faster than idle
+// so a strolling player can't close the gap; slower than a running player
+// so she can still be caught on foot.
+const AVOID_RADIUS = 400
+const AVOID_SPEED_MIN = 40
+const AVOID_SPEED_MAX = 170
 // Idle = mostly standing still, occasionally a short walk in a random
 // direction. Long pauses, short walks. McCarthy unhurried.
 const IDLE_PAUSE_MIN_MS = 3000
@@ -47,6 +59,11 @@ const HOME_BIAS_HALF_ANGLE = Math.PI / 2
 const ROPE_TAUT_DIST = 70
 const ROPE_PULL_PER_PX = 1.2   // px/sec of pull per px past taut
 const ROPE_PULL_MAX = 60       // cap on the tug velocity so far-pulls don't yank her at runaway speed
+// Hard wall: she can never end a frame farther than this from her tether
+// anchor. Slightly past the player's leash (140) so the honse side reads as
+// the softer constraint, but still a real cap — without it, a fast-avoiding
+// wild honse can outrun the tug indefinitely.
+const ROPE_LEASH_MAX = 160
 // Minimum ms between facing flips. Stops the sprite from strobing when vx
 // oscillates near zero. She commits to a direction for at least this long.
 const FACING_LOCK_MS = 400
@@ -107,48 +124,87 @@ function pickIdleBehavior(h: Honse, now: number) {
   }
 }
 
+// Returns the additive velocity contribution from the rope this frame.
+// Zero vector when no tether or when slack (within ROPE_TAUT_DIST). Past taut,
+// pull strength grows linearly with overshoot, capped at ROPE_PULL_MAX.
+// Used by both the AI tick in updateHonses and the mounted-movement branch
+// in the Overworld scene so both feel the same tug.
+export function getHonseRopePull(
+  h: Honse,
+  tether: { x: number; y: number } | null,
+): { vx: number; vy: number } {
+  if (!tether) return { vx: 0, vy: 0 }
+  const neck = getHonseNeckAnchor(h)
+  const dx = tether.x - neck.x
+  const dy = tether.y - neck.y
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist <= ROPE_TAUT_DIST || dist <= 0.0001) return { vx: 0, vy: 0 }
+  const pull = Math.min((dist - ROPE_TAUT_DIST) * ROPE_PULL_PER_PX, ROPE_PULL_MAX)
+  return { vx: (dx / dist) * pull, vy: (dy / dist) * pull }
+}
+
 // Per-frame: tick each honse's state machine, then integrate position from
 // velocity. dt in ms. `collidesAt(px, py, ignoreHonseIndex)` is a callback
 // supplied by the scene — when a step would put the honse inside an obstacle
 // (or another honse), the step is skipped for that frame.
 //
-// If a honse is roped to the player, pass `ropedHonseIndex` + `playerPos`
-// so the rope tension can tug her toward the player when the rope goes taut.
-// The tug is additive to her current AI velocity for this frame only — it
-// doesn't permanently override her wander.
+// `getTether(honseIndex)` returns the world position of the other end of any
+// rope this honse is tied to (post, player, another honse) — or null if she
+// isn't tethered. When tethered, the rope tension tugs her toward that point
+// once the distance exceeds ROPE_TAUT_DIST. The tug is additive to her AI
+// velocity for this frame only.
 export function updateHonses(
   honses: Honse[],
   dt: number,
   collidesAt: (px: number, py: number, ignoreHonseIndex: number) => boolean,
-  ropedHonseIndex: number | null = null,
+  getTether: (honseIndex: number) => { x: number; y: number } | null = () => null,
+  mountedIndex: number | null = null,
   playerPos: { x: number; y: number } | null = null,
 ) {
   const now = Date.now()
   const step = dt / 1000
 
   for (let i = 0; i < honses.length; i++) {
+    // The mounted honse is driven by player input in the scene; skip her AI
+    // entirely so she doesn't fight the rider's movement.
+    if (i === mountedIndex) continue
     const h = honses[i]
 
-    // mode tick: if the current sub-behavior has expired, pick a new one
-    if (now >= h.modeUntil) {
+    // Wild-avoidance: untamed honses keep their distance from the player.
+    // While the player is inside AVOID_RADIUS, her velocity points directly
+    // away at a proximity-scaled speed — overrides idle AI for this frame.
+    // Still runs while tethered: she yanks against the rope trying to get
+    // away from you, and the rope-pull below fights her back.
+    const tether = getTether(i)
+    let avoiding = false
+    if (!h.tame && playerPos && !(tether && mountedIndex !== null)) {
+      const ax = h.x - playerPos.x
+      const ay = h.y - playerPos.y
+      const distSq = ax * ax + ay * ay
+      if (distSq < AVOID_RADIUS * AVOID_RADIUS && distSq > 0.0001) {
+        const dist = Math.sqrt(distSq)
+        // proximity 0 = at edge, 1 = right on her
+        const proximity = 1 - dist / AVOID_RADIUS
+        const speed = AVOID_SPEED_MIN + (AVOID_SPEED_MAX - AVOID_SPEED_MIN) * proximity
+        h.vx = (ax / dist) * speed
+        h.vy = (ay / dist) * speed
+        avoiding = true
+      }
+    }
+
+    // mode tick: if the current sub-behavior has expired, pick a new one.
+    // Suppressed while avoiding so her walk/pause timer doesn't expire
+    // mid-flight and snap her into a random direction.
+    if (!avoiding && now >= h.modeUntil) {
       pickIdleBehavior(h, now)
     }
 
-    // start with her AI velocity, then add the rope-pull this frame if any
+    // start with her AI (or avoidance) velocity, then add the rope-pull this frame if any
     let vx = h.vx
     let vy = h.vy
-    if (i === ropedHonseIndex && playerPos) {
-      const neck = getHonseNeckAnchor(h)
-      const dx = playerPos.x - neck.x
-      const dy = playerPos.y - neck.y
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      if (dist > ROPE_TAUT_DIST && dist > 0.0001) {
-        // pull strength grows with how far past taut, capped so she doesn't run
-        const pull = Math.min((dist - ROPE_TAUT_DIST) * ROPE_PULL_PER_PX, ROPE_PULL_MAX)
-        vx += (dx / dist) * pull
-        vy += (dy / dist) * pull
-      }
-    }
+    const pull = getHonseRopePull(h, tether)
+    vx += pull.vx
+    vy += pull.vy
 
     // face the direction she's actually moving this frame (covers both AI
     // walks and rope-tugs). Zero vx leaves the last facing alone. A short
@@ -171,6 +227,22 @@ export function updateHonses(
     if (vy !== 0) {
       const nextY = h.y + vy * step
       if (!collidesAt(h.x, nextY, i)) h.y = nextY
+    }
+
+    // hard leash cap: if she ended the frame past the leash, snap her back
+    // to the boundary along the radial line. The pull-tug above is soft and
+    // can be outrun by a fast avoidance velocity — this guarantees she's
+    // never actually beyond the rope.
+    if (tether) {
+      const rx = h.x - tether.x
+      const ry = h.y - tether.y
+      const distSq = rx * rx + ry * ry
+      const maxSq = ROPE_LEASH_MAX * ROPE_LEASH_MAX
+      if (distSq > maxSq) {
+        const dist = Math.sqrt(distSq)
+        h.x = tether.x + (rx / dist) * ROPE_LEASH_MAX
+        h.y = tether.y + (ry / dist) * ROPE_LEASH_MAX
+      }
     }
   }
 }

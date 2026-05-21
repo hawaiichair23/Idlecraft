@@ -99,6 +99,13 @@ export class UI extends Phaser.Scene {
       this.setSelectedSlot(next)
     })
 
+    // number keys 1-5 select hotbar slots directly
+    const kb = this.input.keyboard!
+    const slotKeys = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE']
+    for (let i = 0; i < slotKeys.length; i++) {
+      kb.on(`keydown-${slotKeys[i]}`, () => this.setSelectedSlot(i))
+    }
+
 
     // ---- build menu ----
     // full-screen click shade behind menu, blocks pointers + closes on click
@@ -200,7 +207,8 @@ export class UI extends Phaser.Scene {
       this.menuRowTexts[type] = [label, desc, cost]
       this.menuContainer.add([iconSlot, nameSlot, costSlot, icon, label, desc, cost, coin, iconHover, nameHover, costHover])
 
-      const onClick = (_p: any, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      const onClick = (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+        if (!p.leftButtonDown()) return        // buy on left-click only
         ev.stopPropagation()
         if (this.registry.get('gold') < def.cost) return  // can't afford — block
         this.attemptBuy(type)

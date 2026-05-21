@@ -118,7 +118,7 @@ export function createBagContents(type: ItemType): (ItemStack | null)[] {
 }
 
 class GameState {
-  gold = 500
+  gold = 30
   plots: PlotState[] = []
   // Fixed world buildings (shop, church, etc.) — not owned, not bought, no ticks.
   worldStructures: WorldStructure[] = []
@@ -126,7 +126,7 @@ class GameState {
   discoveredTowns: Set<string> = new Set()
   // Plot building types the player can build. Defaults to the starter set;
   // others (field, etc.) are unlocked by purchasing at the Land Office.
-  unlockedBuildings: Set<BuiltType> = new Set(['mill', 'well', 'workshop', 'field'])
+  unlockedBuildings: Set<BuiltType> = new Set(['mill', 'well', 'workshop'])
   // Dirt patches left by the shovel — visual scars in the world that persist
   // across the play session.
   dugSpots: { x: number; y: number }[] = []
@@ -146,14 +146,24 @@ class GameState {
   // Items dropped by the player into the world — walk over them to pick up.
   droppedItems: { x: number; y: number; stack: ItemStack }[] = []
   // Trees and saplings planted by the player. Each entry persists as a sprite
-  // in the world. Stage advances over time (future feature).
-  plantedTrees: { x: number; y: number; kind: 'cottonwood' }[] = []
+  // in the world. `stage` distinguishes a walk-through sapling (diggable, no
+  // collision) from a mature tree (solid trunk obstacle, felled with an axe).
+  // `plantedAt` is the Date.now() stamp set when a sapling is planted; the
+  // overworld grows it to mature once enough time has elapsed. Only saplings
+  // carry it — mature/stump and hand-placed trees leave it undefined.
+  plantedTrees: { x: number; y: number; kind: 'cottonwood'; stage: 'sapling' | 'mature' | 'stump'; plantedAt?: number }[] = []
   // Hitching posts placed by the player. Each entry is a sprite in the world
-  // and an obstacle in collision. Future: rope-throw target for catching honse.
-  placedPosts: { x: number; y: number }[] = []
+  // and an obstacle in collision. `species` chooses which sprite to render —
+  // 'post' (weathered cottonwood gray) or 'cedar_post' (warm cedar brown).
+  // Mechanically identical otherwise.
+  placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' }[] = []
   // Honses in the world. Position is the visual center; sprite/collision/rope
   // hitboxes derive from this. Stationary for now — movement comes later.
   honses: Honse[] = []
+  // Index into `honses` of the honse the player is currently riding, or null.
+  // While set, the honse's AI is suppressed and player input moves the honse;
+  // the player sprite is locked to the honse position each frame.
+  mounted: number | null = null
   inventory: (ItemStack | null)[] = Array.from({ length: INVENTORY_SIZE }, () => null)
   // currently-selected inventory slot, set by scroll wheel
   selectedInventorySlot = 0
@@ -177,6 +187,14 @@ class GameState {
   // Set to true the first time rope is crafted. Unlocks the rope listing in
   // the Tool Shop — the player must discover the recipe before they can buy.
   hasCraftedRope = false
+  // Set to true the first time twine is crafted. Triggers honse spawns.
+  hasCraftedTwine = false
+  // Set to true the first time a post is crafted. Unlocks the post listing
+  // in the Tool Shop.
+  hasCraftedPost = false
+  // Set to true the first time a bag is crafted. Unlocks the bag listing
+  // in the Tool Shop.
+  hasCraftedBag = false
 
   // ---- developer overrides ----
   // Multiplier on production tick speed. 1 = normal, 2 = twice as fast.
@@ -227,7 +245,7 @@ class GameState {
   }
 
   init(plotCount: number) {
-    this.gold = 1500
+    this.gold = 30
     this.plots = Array.from({ length: plotCount }, () => ({
       built: 'empty' as BuildingType,
       level: 1,
@@ -244,9 +262,10 @@ class GameState {
       { type: 'abandoned_house', x: 2100, y: 3400, townId: null },
       { type: 'land_office', x: 3030, y: 204, townId: 'northern_town' },
       { type: 'nursery', x: 3100, y: 204, townId: 'northern_town' },
+      { type: 'tanner', x: 3235, y: 355, townId: 'northern_town' },
     ]
     this.discoveredTowns = new Set()
-    this.unlockedBuildings = new Set(['mill', 'well', 'workshop', 'field'])
+    this.unlockedBuildings = new Set(['mill', 'well', 'workshop'])
     this.dugSpots = []
     this.buriedItems = []
     this.buriedStacks = []
@@ -255,21 +274,10 @@ class GameState {
     this.droppedItems = []
     this.plantedTrees = []
     this.placedPosts = []
-    // seed: one test honse above the General Store. Her spawn point is her
-    // home — she'll drift around it within HOME_RADIUS rather than wander off.
-    this.honses = [{
-      x: 2700, y: 2240,
-      vx: 0, vy: 0,
-      facingRight: false,
-      facingLockedUntil: 0,
-      homeX: 2700, homeY: 2240,
-      mode: 'idle', modeUntil: 0,
-    }]
+    // honses spawn dynamically when twine is first crafted — start empty
+    this.honses = []
+    this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    // dev seed: 3 posts in the first inventory slot for testing placement.
-    this.inventory[0] = { type: 'post', count: 3 }
-    // dev seed: rope in slot 1 for testing the rope-throw physics.
-    this.inventory[1] = { type: 'rope', count: 10 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.

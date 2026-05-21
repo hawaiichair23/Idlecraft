@@ -126,7 +126,8 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
 
     rowRefs.push({ entry, label, desc, cost })
 
-    const onClick = (_p: any, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+    const onClick = (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      if (!p.leftButtonDown()) return        // buy on left-click only
       ev.stopPropagation()
       if (state.unlockedBuildings.has(entry.type)) return  // already owned
       const gold = (scene.registry.get('gold') as number | undefined) ?? 0

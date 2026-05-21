@@ -2,6 +2,10 @@ import Phaser from 'phaser'
 import { state } from '../game/state'
 import { grabbableSlots } from './hover'
 
+// Must match the TOOL_RANGE in Overworld.ts — max distance from the player
+// at which tool cursors are shown and tool actions are allowed.
+const TOOL_RANGE = 150
+
 // Custom cursor — renders a sprite at the pointer position so the game has
 // a pixel-art cursor instead of the OS one. Three states:
 //   - default: gold arrow
@@ -57,8 +61,70 @@ export class CursorController {
         (inField && contexts.includes('field'))
 
       if (showCursor) {
-        this.setTexture(tool.sprite, tool.scale)
-        return
+        // In the overworld, tool cursor only shows within TOOL_RANGE of the player.
+        // Beyond that the cursor reverts to default — visual feedback that you can't
+        // reach that far.
+        if (inOverworld) {
+          const overworld = this.scene.scene.manager.getScene('Overworld') as any
+          const playerObj = overworld?.player as Phaser.GameObjects.Sprite | undefined
+          const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+          if (playerObj && cam) {
+            const p = this.scene.input.activePointer
+            const world = cam.getWorldPoint(p.x, p.y)
+            const dx = world.x - playerObj.x
+            const dy = world.y - playerObj.y
+            if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) {
+              // out of range — fall through to default cursor
+            } else {
+              const sel = state.inventory[state.selectedInventorySlot]
+              // Sapling only shows its plant cursor when hovering a plantable
+              // dirt patch — the same check planting uses, so the cursor can
+              // never disagree with whether a plant would succeed. Elsewhere it
+              // falls through to the default arrow.
+              if (sel !== null && sel.type === 'cottonwood_sapling'
+                  && !overworld.findPlantableDirtSpot(world.x, world.y)) {
+                // not over a dirt patch — fall through to default cursor
+              } else {
+                this.setTexture(tool.sprite, tool.scale)
+                const isPost = sel !== null && (sel.type === 'post' || sel.type === 'cedar_post')
+                if (isPost) {
+                  this.cursor.setAlpha(0.45)
+                  this.snapCursorToWorldGrid(10)
+                } else if (this.cursor.alpha !== 1) {
+                  this.cursor.setAlpha(1)
+                }
+                return
+              }
+            }
+          }
+        } else {
+          // Field/interior — no range limit, show tool cursor
+          this.setTexture(tool.sprite, tool.scale)
+          if (this.cursor.alpha !== 1) this.cursor.setAlpha(1)
+          return
+        }
+      }
+    }
+    if (this.cursor.alpha !== 1) this.cursor.setAlpha(1)
+    // Honse mount affordance — overworld only, no tool selected, not already
+    // mounted. Cursor swaps to the honse sprite when the player is close
+    // enough to mount. Distance is player-to-honse, not pointer-to-honse:
+    // you have to walk up to her, not just hover.
+    const interiorActive2 = this.scene.scene.manager.isActive('Interior')
+    if (!interiorActive2 && state.mounted === null && state.honses.length > 0) {
+      const overworld = this.scene.scene.manager.getScene('Overworld') as any
+      const playerObj = overworld?.player as Phaser.GameObjects.Sprite | undefined
+      if (playerObj) {
+        const MOUNT_RANGE = 40
+        const rangeSq = MOUNT_RANGE * MOUNT_RANGE
+        for (const h of state.honses) {
+          const dx = h.x - playerObj.x
+          const dy = h.y - playerObj.y
+          if (dx * dx + dy * dy <= rangeSq) {
+            this.setTexture('honse', 1)
+            return
+          }
+        }
       }
     }
     // hovering a registered slot frame? Slots can live in any scene (UI
@@ -80,5 +146,25 @@ export class CursorController {
   private setTexture(key: string, scale: number) {
     if (this.cursor.texture.key === key && this.cursor.scaleX === scale) return
     this.cursor.setTexture(key).setScale(scale).setOrigin(0, 0)
+  }
+
+  // Override the cursor's screen position so it snaps to a world-space grid.
+  // The Overworld camera is what defines world coords; we convert the pointer
+  // from screen → world, snap, then convert the snapped world point back to
+  // screen and set the cursor sprite there. Origin is centered so the cursor
+  // visually lines up with where the placed sprite lands (placed sprites use
+  // default center origin).
+  private snapCursorToWorldGrid(gridPx: number) {
+    const overworld = this.scene.scene.manager.getScene('Overworld') as any
+    const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+    if (!cam) return
+    const p = this.scene.input.activePointer
+    const world = cam.getWorldPoint(p.x, p.y)
+    const sx = Math.round(world.x / gridPx) * gridPx
+    const sy = Math.round(world.y / gridPx) * gridPx
+    const screenX = (sx - cam.worldView.x) * cam.zoom + cam.x
+    const screenY = (sy - cam.worldView.y) * cam.zoom + cam.y
+    this.cursor.setOrigin(0.5, 0.5)
+    this.cursor.setPosition(screenX, screenY)
   }
 }

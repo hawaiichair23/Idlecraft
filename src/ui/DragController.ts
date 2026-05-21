@@ -46,6 +46,15 @@ export class DragController {
     return stack
   }
 
+  // Return the held item to the slot it was picked up from. Used when the
+  // interior closes while the player is holding something — the item goes
+  // back where it came from instead of vanishing.
+  restoreHeld(): void {
+    if (!this.held) return
+    this.held.source.restore(this.held.stack)
+    this.clearHeld()
+  }
+
   // Consume 1 of the held stack if it's edible. Returns true if eaten.
   tryEatHeld(): boolean {
     if (!this.held) return false

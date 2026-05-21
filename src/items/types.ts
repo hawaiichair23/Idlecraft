@@ -1,7 +1,7 @@
 // Items in the game. Each ItemType is a string id; ITEMS maps id → metadata.
 // New items: add an entry to ItemType, ITEMS, and (if needed) a sprite.
 
-export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post'
+export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'axe' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post' | 'cedar_post' | 'wood'
 
 export interface ItemDef {
   name: string
@@ -36,8 +36,9 @@ export interface ItemDef {
 export const ITEMS: Record<ItemType, ItemDef> = {
   flour:   { name: 'Flour',   sprite: 'item_flour',   maxStack: 64, scale: 36 / 67, sellPrice: 1 },
   water:   { name: 'Water',   sprite: 'item_water',   maxStack: 64, scale: 36 / 88, sellPrice: 2 },
-  bread:   { name: 'Bread',   sprite: 'item_bread',   maxStack: 64, scale: 2, edible: true, crumbColor: 0xD4A574, speedBuff: 25, sellPrice: 5 },
+  bread:   { name: 'Bread',   sprite: 'item_bread',   maxStack: 64, scale: 2, edible: true, crumbColor: 0xD4A574, speedBuff: 25, sellPrice: 7 },
   shovel:  { name: 'Shovel',  sprite: 'item_shovel',  maxStack: 1,  scale: 3, sellPrice: 80, activeTool: true, cursorContexts: ['overworld', 'field'] },
+  axe:     { name: 'Axe',     sprite: 'item_axe',     maxStack: 1,  scale: 3, sellPrice: 200, activeTool: true, cursorContexts: ['overworld'] },
   bag:     { name: 'Bag',     sprite: 'item_bag',     maxStack: 1,  scale: 2, bagCols: 2, bagRows: 2, sellPrice: 100 },
   medium_bag: { name: 'War Bag', sprite: 'item_medium_bag', maxStack: 1,  scale: 2, bagCols: 3, bagRows: 2, sellPrice: 100 },
   sausage: { name: 'Sausage', sprite: 'item_sausage', maxStack: 64, scale: 2, edible: true, crumbColor: 0xA03828, speedBuff: 25, sellPrice: 3 },
@@ -47,11 +48,13 @@ export const ITEMS: Record<ItemType, ItemDef> = {
   sugar_cane: { name: 'Sugar Cane', sprite: 'item_sugar_cane', maxStack: 64, scale: 2, sellPrice: 2 },
   sugar:      { name: 'Sugar',      sprite: 'item_sugar',      maxStack: 64, scale: 2, sellPrice: 4 },
   pastry:             { name: 'Tart',                sprite: 'item_pastry',             maxStack: 64, scale: 2, edible: true, crumbColor: 0xD8A848, speedBuff: 25, sellPrice: 10 },
-  cottonwood_sapling: { name: 'Cottonwood Sapling',  sprite: 'item_cottonwood_sapling', maxStack: 64, scale: 2, sellPrice: 1 },
+  cottonwood_sapling: { name: 'Cottonwood Sapling',  sprite: 'item_cottonwood_sapling', maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
   hemp:               { name: 'Hemp',                sprite: 'item_hemp',               maxStack: 64, scale: 2, sellPrice: 10 },
-  hemp_seed:          { name: 'Hemp Seed',           sprite: 'item_hemp_seed',          maxStack: 64, scale: 2, activeTool: true, cursorContexts: ['field'] },
+  hemp_seed:          { name: 'Hemp Seed',           sprite: 'item_hemp_seed',          maxStack: 64, scale: 2, sellPrice: 5, activeTool: true, cursorContexts: ['field'] },
   rope:               { name: 'Rope',                sprite: 'item_rope',               maxStack: 64, scale: 2, sellPrice: 25, activeTool: true },
-  post:               { name: 'Post',                sprite: 'item_post',               maxStack: 64, scale: 2, activeTool: true, cursorContexts: ['overworld'] },
+  post:               { name: 'Post',                sprite: 'item_post',               maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
+  cedar_post:         { name: 'Cedar Post',          sprite: 'item_cedar_post',         maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
+  wood:               { name: 'Wood',                sprite: 'item_wood',               maxStack: 64, scale: 2, sellPrice: 15 },
 }
 
 // A stack of a single item type. Slots hold one of these (or null).

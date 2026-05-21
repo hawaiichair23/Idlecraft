@@ -19,7 +19,8 @@ interface NurseryEntry {
   description: string
 }
 const NURSERY_ITEMS: NurseryEntry[] = [
-  { type: 'hemp_seed', buyPrice: 20, description: 'Plant in a field. Grows hemp.' },
+  { type: 'hemp_seed', buyPrice: 10, description: 'Plant in a field. Grows hemp.' },
+  { type: 'cottonwood_sapling', buyPrice: 50, description: 'Plant in the ground. Grows a cottonwood.' },
 ]
 
 export function buildNurseryInterior(scene: Phaser.Scene): NurseryInteriorHandle {
@@ -100,7 +101,8 @@ export function buildNurseryInterior(scene: Phaser.Scene): NurseryInteriorHandle
 
     rowTexts.push({ entry, texts: [label, desc, cost] })
 
-    const onClick = (_p: any, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+    const onClick = (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      if (!p.leftButtonDown()) return        // buy on left-click only
       ev.stopPropagation()
       const gold = (scene.registry.get('gold') as number | undefined) ?? 0
       if (gold < entry.buyPrice) return

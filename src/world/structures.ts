@@ -7,7 +7,7 @@
 // Same split: this file is the catalog (types + metadata); state holds the
 // instances (where they're placed in the world).
 
-export type WorldStructureType = 'shop' | 'church' | 'general_store' | 'abandoned_house' | 'land_office' | 'nursery'   // future: 'npc_house', ...
+export type WorldStructureType = 'shop' | 'church' | 'general_store' | 'abandoned_house' | 'land_office' | 'nursery' | 'tanner'   // future: 'npc_house', ...
 
 export interface WorldStructureDef {
   name: string
@@ -24,6 +24,7 @@ export const WORLD_STRUCTURES: Record<WorldStructureType, WorldStructureDef> = {
   abandoned_house: { name: 'Abandoned House', sprite: 'abandoned_house', scale: 3 },
   land_office: { name: 'Land Office', sprite: 'land_office', scale: 3 },
   nursery: { name: 'Nursery', sprite: 'nursery', scale: 3 },
+  tanner: { name: 'Tanner', sprite: 'nursery', scale: 3 },
 }
 
 // A single placed instance in the world.
