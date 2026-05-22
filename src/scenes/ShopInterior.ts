@@ -70,7 +70,7 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
 
   // ---- title ----
   const topRowY = panelY - rowStackH / 2 + ROW_H / 2
-  const title = scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Tool Shop', 24)
+  scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Tool Shop', 24)
     .setOrigin(0.5, 0.5)
     .setTint(COLORS.uiText)
 

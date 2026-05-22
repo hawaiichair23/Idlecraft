@@ -9,6 +9,9 @@ import { attachSlotHover, attachSlotTooltip } from '../ui/hover'
 import type { Interior } from './Interior'
 
 const BAR_HEIGHT = 40
+// ENVELOP scale mode overflows the screen edges to fill it, cropping anything
+// flush to the top/bottom. Inset the bars by this much so they stay visible.
+const EDGE_INSET = 95
 
 export class UI extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.BitmapText
@@ -48,11 +51,11 @@ export class UI extends Phaser.Scene {
   }
 
   preload() {
-    this.load.bitmapFont('main', '/minecraftbm.png', '/minecraftbm.xml')
-    this.load.bitmapFont('mainSmall', '/minecraftbmsmall.png', '/minecraftbmsmall.xml')
-    this.load.image('menu-bg', '/menu.png')
-    this.load.image('menu-slot', '/slot.png')
-    this.load.image('menu-longslot', '/longslot.png')
+    this.load.bitmapFont('main', 'minecraftbm.png', 'minecraftbm.xml')
+    this.load.bitmapFont('mainSmall', 'minecraftbmsmall.png', 'minecraftbmsmall.xml')
+    this.load.image('menu-bg', 'menu.png')
+    this.load.image('menu-slot', 'slot.png')
+    this.load.image('menu-longslot', 'longslot.png')
   }
 
   create() {
@@ -65,9 +68,9 @@ export class UI extends Phaser.Scene {
     this.cursorController = new CursorController(this)
 
     // top bar
-    this.add.rectangle(0, 0, w, BAR_HEIGHT, COLORS.uiBarBg).setOrigin(0, 0)
+    this.add.rectangle(0, EDGE_INSET, w, BAR_HEIGHT, COLORS.uiBarBg).setOrigin(0, 0)
     const initialGold = (this.registry.get('gold') as number | undefined) ?? 0
-    this.goldText = this.add.bitmapText(12, BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, 20)
+    this.goldText = this.add.bitmapText(12, EDGE_INSET + BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, 20)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiGold)
 
@@ -258,7 +261,7 @@ export class UI extends Phaser.Scene {
 
     const barW = layoutW + PAD_X * 2
     const barH = SLOT + PAD_Y * 2
-    const barY = h - barH / 2   // bottom of bar flush with bottom of screen
+    const barY = h - barH / 2 - EDGE_INSET   // inset from bottom so ENVELOP overflow doesn't crop it
 
     // 9-sliced menu background as the bar
     this.add.nineslice(w / 2, barY, 'menu-bg', undefined, barW, barH, 16, 16, 16, 16)

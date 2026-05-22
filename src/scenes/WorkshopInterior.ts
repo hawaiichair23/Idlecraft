@@ -33,7 +33,6 @@ export function buildWorkshopInterior(
   const bindings: SlotBinding[] = []
   const slotVisuals: SlotVisual[] = []
 
-  const w = scene.cameras.main.width
   const h = scene.cameras.main.height
 
   const SLOT = 48

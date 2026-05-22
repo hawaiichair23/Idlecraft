@@ -57,14 +57,14 @@ export class Interior extends Phaser.Scene {
 
   preload() {
     if (!this.cache.bitmapFont.exists('main')) {
-      this.load.bitmapFont('main', '/minecraftbm.png', '/minecraftbm.xml')
+      this.load.bitmapFont('main', 'minecraftbm.png', 'minecraftbm.xml')
     }
     if (!this.cache.bitmapFont.exists('mainSmall')) {
-      this.load.bitmapFont('mainSmall', '/minecraftbmsmall.png', '/minecraftbmsmall.xml')
+      this.load.bitmapFont('mainSmall', 'minecraftbmsmall.png', 'minecraftbmsmall.xml')
     }
-    if (!this.textures.exists('menu-bg')) this.load.image('menu-bg', '/menu.png')
-    if (!this.textures.exists('menu-slot')) this.load.image('menu-slot', '/slot.png')
-    if (!this.textures.exists('menu-longslot')) this.load.image('menu-longslot', '/longslot.png')
+    if (!this.textures.exists('menu-bg')) this.load.image('menu-bg', 'menu.png')
+    if (!this.textures.exists('menu-slot')) this.load.image('menu-slot', 'slot.png')
+    if (!this.textures.exists('menu-longslot')) this.load.image('menu-longslot', 'longslot.png')
   }
 
   create() {
@@ -568,9 +568,7 @@ export class Interior extends Phaser.Scene {
     }
 
     // ---- tab switching ----
-    let activeTab = 0
     const setActiveTab = (idx: number) => {
-      activeTab = idx
       for (let i = 0; i < tabNames.length; i++) {
         tabContainers[i].setVisible(i === idx)
         tabUnderlines[i].setVisible(i === idx)

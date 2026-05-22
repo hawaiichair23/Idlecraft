@@ -44,6 +44,57 @@ export class CursorController {
     if (this.scene.game.canvas && this.scene.game.canvas.style.cursor !== 'none') {
       this.scene.game.canvas.style.cursor = 'none'
     }
+    // Rope-dissolve cursor — a red X over a tied rope, signalling "click to
+    // dissolve." Priority: above tool cursors (so it beats rope/shovel/post),
+    // but below horse riding — suppressed while mounted and while the mount
+    // affordance is showing (handled by the near-honse check below, which we
+    // replicate here so the honse cursor wins). Overworld only.
+    {
+      const interiorActiveR = this.scene.scene.manager.isActive('Interior')
+      if (!interiorActiveR && state.mounted === null) {
+        const overworld = this.scene.scene.manager.getScene('Overworld') as any
+        const playerObj = overworld?.player as Phaser.GameObjects.Sprite | undefined
+        const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+        if (overworld?.rope && playerObj && cam) {
+          // mount affordance wins: if near a honse, skip the X
+          let nearHonse = false
+          const MOUNT_RANGE_SQ = 40 * 40
+          for (const h of state.honses) {
+            const dx = h.x - playerObj.x
+            const dy = h.y - playerObj.y
+            if (dx * dx + dy * dy <= MOUNT_RANGE_SQ) { nearHonse = true; break }
+          }
+          if (!nearHonse) {
+            const p = this.scene.input.activePointer
+            const world = cam.getWorldPoint(p.x, p.y)
+            if (overworld.rope.isNearTiedRope(world.x, world.y)) {
+              this.setTexture('cursor_x', 2)
+              if (this.cursor.alpha !== 1) this.cursor.setAlpha(1)
+              return
+            }
+          }
+        }
+      }
+    }
+    // Post-destroy cursor — red X when the axe is held over a placed post,
+    // matching the rope-dissolve affordance. Overworld only, not mounted.
+    {
+      const interiorActiveP = this.scene.scene.manager.isActive('Interior')
+      if (!interiorActiveP && state.mounted === null
+          && state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+        const overworld = this.scene.scene.manager.getScene('Overworld') as any
+        const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+        if (overworld?.isNearPost && cam) {
+          const p = this.scene.input.activePointer
+          const world = cam.getWorldPoint(p.x, p.y)
+          if (overworld.isNearPost(world.x, world.y)) {
+            this.setTexture('cursor_x', 2)
+            if (this.cursor.alpha !== 1) this.cursor.setAlpha(1)
+            return
+          }
+        }
+      }
+    }
     // Tool cursor — only show if the selected tool says it's usable in the
     // current scene context. Tools default to overworld-only.
     const tool = state.getSelectedTool()

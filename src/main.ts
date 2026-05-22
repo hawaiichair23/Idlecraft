@@ -4,6 +4,7 @@ import { Overworld } from './scenes/Overworld'
 import { UI } from './scenes/UI'
 import { Interior } from './scenes/Interior'
 import { state } from './game/state'
+import { ITEMS, type ItemType } from './items/types'
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -13,7 +14,7 @@ const game = new Phaser.Game({
   pixelArt: true,
   backgroundColor: '#2A2520',
   scale: {
-    mode: Phaser.Scale.RESIZE,
+    mode: Phaser.Scale.ENVELOP,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   physics: {
@@ -28,6 +29,12 @@ const game = new Phaser.Game({
 // right-click is used to pick up half a stack — suppress the browser menu
 game.input.mouse?.disableContextMenu()
 
+// Phaser's auto modes can miss bounds changes when the window moves between
+// monitors or enters/leaves fullscreen (known scale-manager regression).
+// updateBounds() forces a re-measure of the parent so the canvas rescales.
+window.addEventListener('resize', () => game.scale.updateBounds())
+document.addEventListener('fullscreenchange', () => game.scale.updateBounds())
+
 // ---- developer console commands ----
 // Exposed on window for use in browser devtools. Type `gold(5000)` etc.
 // in the F12 console to call them at runtime.
@@ -36,6 +43,8 @@ declare global {
     gold: (n: number) => string
     speed: (n: number) => string
     playerSpeed: (n?: number) => string
+    getItem: (name: string, count?: number) => string
+    spawnItem: (name: string, x: number, y: number) => string
   }
 }
 
@@ -57,4 +66,34 @@ window.speed = (n: number) => {
 window.playerSpeed = (n?: number) => {
   state.playerSpeedOverride = (n === undefined || n === null) ? null : n
   return `playerSpeedOverride: ${state.playerSpeedOverride}`
+}
+
+// Give the player items. getItem("rope") gives 1; getItem("post", 12) gives 12.
+// Valid names are the keys of ITEMS — if the name is unknown, the valid names
+// are printed. Respects maxStack and inventory space (returns how many fit).
+window.getItem = (name: string, count = 1) => {
+  if (!(name in ITEMS)) {
+    return `unknown item "${name}". valid: ${Object.keys(ITEMS).join(', ')}`
+  }
+  const added = state.inventoryAddAnywhere({ type: name as ItemType, count })
+  game.registry.events.emit('inventory-changed')
+  if (added < count) return `gave ${added} ${name} (inventory full — ${count - added} didn't fit)`
+  return `gave ${added} ${name}`
+}
+
+// Spawn a world entity at coordinates. Only certain things are spawnable —
+// these aren't inventory items, they're world entities with their own spawn
+// logic, so the list is a curated switch (no central registry to read from).
+// spawnItem("horse", 2617, 2129)
+window.spawnItem = (name: string, x: number, y: number) => {
+  const overworld = game.scene.getScene('Overworld') as Overworld | undefined
+  if (!overworld) return 'Overworld scene not active'
+  switch (name) {
+    case 'horse':
+    case 'honse':
+      overworld.spawnHonse(x, y)
+      return `spawned honse at ${x}, ${y}`
+    default:
+      return `can't spawn "${name}". spawnable: horse`
+  }
 }

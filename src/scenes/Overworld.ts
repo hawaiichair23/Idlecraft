@@ -3,7 +3,7 @@ import { loadSprites } from '../sprites/loader'
 import { COLORS } from '../colors'
 import { UI_BAR_HEIGHT, UI } from './UI'
 import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, type BuiltType } from '../game/state'
-import { ITEMS, type ItemStack, type ItemDef } from '../items/types'
+import { ITEMS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
 import { generateWorld } from '../world/gen'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { registerGrabbable } from '../ui/hover'
@@ -11,9 +11,11 @@ import { RopeController } from '../world/ropeController'
 import { updateHonses, getHonseBodyAABB } from '../world/honse'
 
 const WORLD_PX = 576 * 8    // 8x canvas size, so player can wander
-const PLAYER_SPEED = 430
+// Wood-brown palette for the burst when an axe destroys a post.
+const POST_PARTICLE_COLORS = [0x6B4A2A, 0x8B5A2B, 0x4A3318, 0x9C7248]
+const PLAYER_SPEED = 130
 const MOUNTED_SPEED_MIN = 130   // honse walk speed — same as player on foot
-const MOUNTED_SPEED_MAX = 250   // honse top speed after full ramp
+const MOUNTED_SPEED_MAX = 235   // honse top speed after full ramp
 const MOUNTED_RAMP_MS = 2200    // time to accelerate from min to max
 // How close the player must be to a honse to mount her (center-to-center px).
 const MOUNT_RANGE = 40
@@ -87,6 +89,7 @@ export class Overworld extends Phaser.Scene {
   private player!: Phaser.GameObjects.Sprite
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
   private arrows!: Phaser.Types.Input.Keyboard.CursorKeys
+  private eKey!: Phaser.Input.Keyboard.Key
   // Mounted acceleration ramp: tracks how long the honse has been moving in
   // the current direction. Reversal on either axis resets the timer to zero.
   private mountedRampTime = 0
@@ -99,7 +102,7 @@ export class Overworld extends Phaser.Scene {
   // `kind` tag so consumers (placement validation, future hit-tests) can ask
   // what each rectangle represents instead of cross-referencing parallel
   // lists. Add new kinds here as new placeable types appear.
-  private obstacles: { x: number; y: number; w: number; h: number; kind: ObstacleKind }[] = []
+  private obstacles: { x: number; y: number; w: number; h: number; kind: ObstacleKind; originX?: number; originY?: number }[] = []
   private worldBg!: Phaser.GameObjects.Rectangle
   // sprite for each currently-revealed buried coin, keyed by `x,y` so we can
   // destroy it on pickup. Parallel to state.revealedItems.
@@ -131,18 +134,18 @@ export class Overworld extends Phaser.Scene {
   }
 
   preload() {
-    this.load.bitmapFont('main', '/minecraftbm.png', '/minecraftbm.xml')
-    this.load.bitmapFont('mainSmall', '/minecraftbmsmall.png', '/minecraftbmsmall.xml')
+    this.load.bitmapFont('main', 'minecraftbm.png', 'minecraftbm.xml')
+    this.load.bitmapFont('mainSmall', 'minecraftbmsmall.png', 'minecraftbmsmall.xml')
     // real art assets — these take priority over the generated pixel sprites
     // (loadSprites in create() skips keys that already exist)
-    this.load.image('item_flour', '/flour.png')
-    this.load.image('item_water', '/water.png')
-    this.load.image('field_bg', '/field.png')
-    this.load.image('field_bg_patched', '/field_patched.png')
-    this.load.image('field_sprouts', '/field_sprouts.png')
-    this.load.image('field_growing', '/field_growing.png')
-    this.load.image('field_mature', '/field_mature.png')
-    this.load.image('field_patch', '/patch.png')
+    this.load.image('item_flour', 'flour.png')
+    this.load.image('item_water', 'water.png')
+    this.load.image('field_bg', 'field.png')
+    this.load.image('field_bg_patched', 'field_patched.png')
+    this.load.image('field_sprouts', 'field_sprouts.png')
+    this.load.image('field_growing', 'field_growing.png')
+    this.load.image('field_mature', 'field_mature.png')
+    this.load.image('field_patch', 'patch.png')
   }
 
   create() {
@@ -171,11 +174,7 @@ export class Overworld extends Phaser.Scene {
         const rightClickEats = isRight && (heldEdible || selectedEdible)
         const leftClickDismounts = !isRight && !state.getSelectedTool()
         if ((isRight && !rightClickEats) || leftClickDismounts) {
-          const h = state.honses[state.mounted]
-          if (h) h.tame = true
-          state.mounted = null
-          // nudge the player down off the saddle so the dismount reads visually
-          this.player.y += 15
+          this.dismount()
           return
         }
       }
@@ -183,16 +182,7 @@ export class Overworld extends Phaser.Scene {
       // Refuse if a rope is in-flight/attached or a tool is selected (those
       // clicks have their own meaning).
       if (!isRight && !this.rope.isAttached() && !state.getSelectedTool()) {
-        const rangeSq = MOUNT_RANGE * MOUNT_RANGE
-        for (let i = 0; i < state.honses.length; i++) {
-          const h = state.honses[i]
-          const dx = h.x - this.player.x
-          const dy = h.y - this.player.y
-          if (dx * dx + dy * dy <= rangeSq) {
-            state.mounted = i
-            return
-          }
-        }
+        if (this.mountNearestHonse()) return
       }
 
 
@@ -241,8 +231,11 @@ export class Overworld extends Phaser.Scene {
       }
       // sapling selected? try to plant on a nearby dirt patch
       if (this.trySaplingPlant(p.worldX, p.worldY)) return
-      // axe selected? try to chop a nearby mature tree
-      if (state.inventory[state.selectedInventorySlot]?.type === 'axe' && this.tryChop(p.worldX, p.worldY)) return
+      // axe selected? try to chop a nearby mature tree, else destroy a post
+      if (state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+        if (this.tryChop(p.worldX, p.worldY)) return
+        if (this.tryAxePost(p.worldX, p.worldY)) return
+      }
       // post selected? try to place it in the world
       if (this.tryPlacePost(p.worldX, p.worldY)) return
       // rope selected? Throw goes through the rope controller, which consumes
@@ -312,11 +305,10 @@ export class Overworld extends Phaser.Scene {
       const sprite = this.add.sprite(d.x, d.y, 'dirt_patch').setScale(2).setDepth(1)
       this.dugSprites.set(`${d.x},${d.y}`, sprite)
     }
-    // restore any dropped items already in state
+    // restore any dropped items already in state — they were already on the
+    // ground, so no jump; they just start floating.
     this.droppedSprites = state.droppedItems.map(d =>
-      this.add.sprite(d.x, d.y, ITEMS[d.stack.type].sprite)
-        .setScale(ITEMS[d.stack.type].scale)
-        .setDepth(2)
+      this.spawnDroppedSprite(d.x, d.y, d.stack.type, false)
     )
     // restore any planted trees already in state, by stage
     for (const t of state.plantedTrees) {
@@ -535,6 +527,7 @@ export class Overworld extends Phaser.Scene {
     const kb = this.input.keyboard!
     this.wasd = kb.addKeys('W,A,S,D') as any
     this.arrows = kb.createCursorKeys()
+    this.eKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E)
 
     // listen for buy events coming back from the UI build menu
     this.registry.events.on('buy-building', (plotIndex: number, type: BuiltType) => {
@@ -624,9 +617,19 @@ export class Overworld extends Phaser.Scene {
   // dropping doesn't require pixel-perfect aim.
   private static PLANT_HIT_RADIUS = 28
   // Axe hits required to fell a mature tree.
-  private static CHOP_HITS_TO_FELL = 7
+  private static CHOP_HITS_TO_FELL = 8
+  // Axe hit-radius for destroying a placed post — matches CHOP_HIT_RADIUS.
+  private static POST_HIT_RADIUS = 18
+  // Dropped-item animation: a fresh drop pops up DROP_JUMP_HEIGHT px and
+  // settles over DROP_JUMP_MS, then floats with a gentle sine bob of
+  // DROP_BOB_AMP px at DROP_BOB_SPEED radians/ms. Bob is visual only —
+  // pickup range and depth sorting read the logical position in state.
+  private static DROP_JUMP_HEIGHT = 14
+  private static DROP_JUMP_MS = 360
+  private static DROP_BOB_AMP = 3
+  private static DROP_BOB_SPEED = 0.004
   // Minimum time (ms) between axe swings.
-  private static CHOP_COOLDOWN_MS = 600
+  private static CHOP_COOLDOWN_MS = 0
   // Time (ms) for a planted sapling to grow into a mature tree. Divided by the
   // dev time multiplier in the growth check so window.speed() fast-forwards it.
   private static SAPLING_GROW_MS = 60000
@@ -704,6 +707,59 @@ export class Overworld extends Phaser.Scene {
       } else {
         this.treeHits.set(key, hits)
       }
+      return true
+    }
+    return false
+  }
+
+  // Non-destructive: is there a placed post within axe hit-radius of this
+  // point? Mirrors tryAxePost's search so the cursor (which calls this) can
+  // never disagree with whether a click would actually destroy a post.
+  isNearPost(x: number, y: number): boolean {
+    const hitSq = Overworld.POST_HIT_RADIUS * Overworld.POST_HIT_RADIUS
+    for (const p of state.placedPosts) {
+      const dx = x - p.x
+      const dy = y - p.y
+      if (dx * dx + dy * dy <= hitSq) return true
+    }
+    return false
+  }
+
+  // Axe-destroy a placed post: removes it from state, sprite, and collision,
+  // bursts wood particles, and drops the post item where it stood. Returns
+  // true if a post was destroyed.
+  private tryAxePost(clickX: number, clickY: number): boolean {
+    const dx = clickX - this.player.x
+    const dy = clickY - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+
+    const hitSq = Overworld.POST_HIT_RADIUS * Overworld.POST_HIT_RADIUS
+    for (let i = 0; i < state.placedPosts.length; i++) {
+      const p = state.placedPosts[i]
+      const pdx = clickX - p.x
+      const pdy = clickY - p.y
+      if (pdx * pdx + pdy * pdy > hitSq) continue
+
+      const species = p.species ?? 'post'
+      const key = `${p.x},${p.y}`
+
+      // remove the visual
+      const sprite = this.placedPostSprites.get(key)
+      if (sprite) sprite.destroy()
+      this.placedPostSprites.delete(key)
+
+      // remove the collision body — found by the origin stamped on it, so no
+      // geometry has to be recomputed here.
+      const obsIdx = this.obstacles.findIndex(
+        o => o.kind === 'post' && o.originX === p.x && o.originY === p.y,
+      )
+      if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
+
+      // remove the data
+      state.placedPosts.splice(i, 1)
+
+      this.spawnParticles(p.x, p.y, POST_PARTICLE_COLORS)
+      this.dropStack(p.x, p.y, { type: species, count: 1 })
       return true
     }
     return false
@@ -814,6 +870,10 @@ export class Overworld extends Phaser.Scene {
       w: POST_W,
       h: POST_H,
       kind: 'post' as ObstacleKind,
+      // origin of the post this box belongs to, so it can be found and removed
+      // by post position without recomputing the geometry above.
+      originX: px,
+      originY: py,
     }
   }
 
@@ -821,6 +881,56 @@ export class Overworld extends Phaser.Scene {
   // Player sprite is 8×8 at scale 2 = 16×16 on screen; ~5px around center
   // is the historically-tuned tight check.
   private static PLAYER_HALF = 5
+
+  // Is a dismount spot blocked by something the player would get stuck in?
+  // Checks the same solid obstacles the player collides with (skips 'building',
+  // which the player walks through) and all honses EXCEPT the one just
+  // dismounted — standing beside your own horse is fine.
+  private solidBlockedAt(px: number, py: number, ignoreHonseIndex: number): boolean {
+    const half = Overworld.PLAYER_HALF
+    for (const o of this.obstacles) {
+      if (o.kind === 'building') continue
+      if (aabbOverlap(px, py, half, o.x, o.y, o.w, o.h)) return true
+    }
+    for (let i = 0; i < state.honses.length; i++) {
+      if (i === ignoreHonseIndex) continue
+      const b = getHonseBodyAABB(state.honses[i])
+      if (aabbOverlap(px, py, half, b.x, b.y, b.w, b.h)) return true
+    }
+    return false
+  }
+
+  // Mount the nearest honse within range. Returns true if a honse was mounted.
+  // Shared by click-to-mount and the E key. Caller is responsible for its own
+  // guards (e.g. not while holding a tool).
+  mountNearestHonse(): boolean {
+    const rangeSq = MOUNT_RANGE * MOUNT_RANGE
+    for (let i = 0; i < state.honses.length; i++) {
+      const h = state.honses[i]
+      const dx = h.x - this.player.x
+      const dy = h.y - this.player.y
+      if (dx * dx + dy * dy <= rangeSq) {
+        state.mounted = i
+        return true
+      }
+    }
+    return false
+  }
+
+  // Dismount: tame the honse and step the player off the saddle. South is the
+  // natural spot; if it's blocked by a solid obstacle, go north instead so the
+  // player never lands stuck. The dismounted honse is ignored by the check —
+  // standing next to your own horse is fine. Shared by click and the E key.
+  dismount() {
+    if (state.mounted === null) return
+    const dismountedIdx = state.mounted
+    const h = state.honses[dismountedIdx]
+    if (h) h.tame = true
+    state.mounted = null
+    const south = h ? h.y + 12 : this.player.y + 14
+    const north = h ? h.y - 12 : this.player.y - 14
+    this.player.y = this.solidBlockedAt(this.player.x, south, dismountedIdx) ? north : south
+  }
 
   // True if a player-sized AABB centered at (px, py) overlaps any static
   // obstacle (trees, rocks, posts) or any honse body. When called by a
@@ -869,12 +979,37 @@ export class Overworld extends Phaser.Scene {
     console.log(`[place] ${label} @ ${Math.round(x)}, ${Math.round(y)}`)
   }
 
+  // Creates the sprite for a dropped item and returns it. The caller owns
+  // array placement and state.droppedItems — this only builds the visual and
+  // its animation. `jump` true = a fresh drop, pops up then floats; false =
+  // restored from a save, floats immediately. The float baseline (baseY) and
+  // a per-item phase live on the sprite via data, read each frame in update().
+  private spawnDroppedSprite(x: number, y: number, type: ItemType, jump: boolean): Phaser.GameObjects.Sprite {
+    const sprite = this.add.sprite(x, y, ITEMS[type].sprite)
+      .setScale(ITEMS[type].scale)
+      .setDepth(2)
+    sprite.setData('baseY', y)
+    sprite.setData('bobPhase', Math.random() * Math.PI * 2)
+    if (jump) {
+      // not settled yet — the bob loop skips it so it can't fight the tween
+      sprite.setData('settled', false)
+      sprite.y = y - Overworld.DROP_JUMP_HEIGHT
+      this.tweens.add({
+        targets: sprite,
+        y,
+        duration: Overworld.DROP_JUMP_MS,
+        ease: 'Bounce.easeOut',
+        onComplete: () => sprite.setData('settled', true),
+      })
+    } else {
+      sprite.setData('settled', true)
+    }
+    return sprite
+  }
+
   private dropStack(x: number, y: number, stack: ItemStack) {
     state.droppedItems.push({ x, y, stack })
-    const sprite = this.add.sprite(x, y, ITEMS[stack.type].sprite)
-      .setScale(ITEMS[stack.type].scale)
-      .setDepth(2)
-    this.droppedSprites.push(sprite)
+    this.droppedSprites.push(this.spawnDroppedSprite(x, y, stack.type, true))
     this.logPlacement(stack.type, x, y)
   }
 
@@ -900,7 +1035,7 @@ export class Overworld extends Phaser.Scene {
   }
 
   // Four waves of food-colored crumbs spraying from the player. Pixel-art friendly:
-  // no fade, just arc-and-snap-and-vanish like spawnDirtParticles.
+  // no fade, just arc-and-snap-and-vanish like spawnParticles.
   private spawnCrumbs(x: number, y: number, color: number) {
     this.spawnCrumbWave(x, y, color)
     this.time.delayedCall(150, () => this.spawnCrumbWave(x, y, color))
@@ -964,6 +1099,13 @@ export class Overworld extends Phaser.Scene {
     const x = Math.round(clickX / POST_GRID) * POST_GRID
     const y = Math.round(clickY / POST_GRID) * POST_GRID
 
+    // refuse if a post already occupies this exact grid cell. (Touching/
+    // overlapping posts are fine — that's how fence lines interlock — but
+    // stacking one directly on another is not.)
+    if (this.placedPostSprites.has(`${x},${y}`)) return false
+
+
+
     // refuse if inside any plot footprint
     for (const v of this.plotViews) {
       if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) return false
@@ -1003,6 +1145,28 @@ export class Overworld extends Phaser.Scene {
     const obs = { x: x - 16, y: y, w: 28, h: 20, kind: 'solid' as ObstacleKind }
     this.obstacles.push(obs)
     this.addRopeBlocker(obs)
+  }
+
+  // Spawn a wild honse at a world position: state entry + sprite + shadow
+  // Matter body (so rope segments physically interact with her). The single
+  // source of truth for "a honse exists" — used by the twine-craft spawn and
+  // available for hardcoded placements or dev tools.
+  spawnHonse(x: number, y: number) {
+    state.honses.push({
+      x, y,
+      vx: 0, vy: 0,
+      facingRight: false,
+      facingLockedUntil: 0,
+      homeX: x, homeY: y,
+      mode: 'idle', modeUntil: 0,
+      tame: false,
+    })
+    this.honseSprites.push(
+      this.add.sprite(x, y, 'honse').setScale(2).setDepth(y + 8)
+    )
+    this.honseBodies.push(
+      this.matter.add.rectangle(x, y + 3, 30, 12, { isStatic: true })
+    )
   }
 
   // World-creation half of placing a post: sprite + obstacle + state entry,
@@ -1101,10 +1265,7 @@ export class Overworld extends Phaser.Scene {
       // sapling appears as a dropped item on top, walk over to pick up
       const sapStack: ItemStack = { type: 'cottonwood_sapling', count: 1 }
       state.droppedItems.push({ x: t.x, y: t.y, stack: sapStack })
-      const sapSprite = this.add.sprite(t.x, t.y, ITEMS.cottonwood_sapling.sprite)
-        .setScale(ITEMS.cottonwood_sapling.scale)
-        .setDepth(2)
-      this.droppedSprites.push(sapSprite)
+      this.droppedSprites.push(this.spawnDroppedSprite(t.x, t.y, 'cottonwood_sapling', true))
       return
     }
 
@@ -1177,11 +1338,12 @@ export class Overworld extends Phaser.Scene {
       .setDepth(3)
 
     // continuous dirt particles while the shovel is planted
+    const DIRT_COLORS = [0x5A3D1F, 0x7A5230, 0x3D2A14, 0x8B5A2B]
     let wave = 0
     const particleTimer = this.time.addEvent({
       delay: 400,   // big burst every 0.4s while planted
       loop: true,
-      callback: () => this.spawnDirtParticles(x, y, wave++),
+      callback: () => this.spawnParticles(x, y, DIRT_COLORS, wave++),
     })
 
     this.time.delayedCall(Overworld.DIG_DURATION_MS, () => {
@@ -1216,10 +1378,7 @@ export class Overworld extends Phaser.Scene {
           if (dx * dx + dy * dy > revSq) continue
           state.buriedStacks.splice(i, 1)
           state.droppedItems.push({ x, y, stack: b.stack })
-          const sprite = this.add.sprite(x, y, ITEMS[b.stack.type].sprite)
-            .setScale(ITEMS[b.stack.type].scale)
-            .setDepth(2)
-          this.droppedSprites.push(sprite)
+          this.droppedSprites.push(this.spawnDroppedSprite(x, y, b.stack.type, true))
           break
         }
       }
@@ -1232,17 +1391,17 @@ export class Overworld extends Phaser.Scene {
     this.revealedSprites.set(`${x},${y}`, sprite)
   }
 
-  // Burst of brown specks at a dig position. Each particle flies outward,
-  // lands, sits for a moment, then snaps away (no fade — pixel game).
-  private spawnDirtParticles(x: number, y: number, wave: number) {
+  // Burst of specks at a position. Each particle flies outward, lands, sits
+  // for a moment, then snaps away (no fade — pixel game). Caller picks the
+  // palette; wave (default 0) pushes each successive burst a bit farther.
+  private spawnParticles(x: number, y: number, colors: number[], wave = 0) {
     const PARTICLE_COUNT = 12
-    const COLORS_DIRT = [0x5A3D1F, 0x7A5230, 0x3D2A14, 0x8B5A2B]
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const angle = (Math.PI / 6) + Math.random() * (Math.PI * 2 / 3)
       const speed = 12 + Math.random() * 10 + wave * 3   // each wave a bit farther
       const dx = Math.cos(angle) * speed
       const dy = -Math.sin(angle) * speed
-      const color = COLORS_DIRT[Math.floor(Math.random() * COLORS_DIRT.length)]
+      const color = colors[Math.floor(Math.random() * colors.length)]
       const p = this.add.rectangle(x, y - 4, 3, 3, color).setDepth(4)
       const landX = Math.floor(x + dx)
       const landY = Math.floor(y + dy + 12)   // small gravity so particles still arc down
@@ -1292,21 +1451,7 @@ export class Overworld extends Phaser.Scene {
       this.honsesSpawned = true
       const spawns: [number, number][] = [[2700, 2240], [2780, 2300], [2640, 2190]]
       for (const [sx, sy] of spawns) {
-        state.honses.push({
-          x: sx, y: sy,
-          vx: 0, vy: 0,
-          facingRight: false,
-          facingLockedUntil: 0,
-          homeX: sx, homeY: sy,
-          mode: 'idle', modeUntil: 0,
-          tame: false,
-        })
-        this.honseSprites.push(
-          this.add.sprite(sx, sy, 'honse').setScale(2).setDepth(sy + 8)
-        )
-        this.honseBodies.push(
-          this.matter.add.rectangle(sx, sy + 3, 30, 12, { isStatic: true })
-        )
+        this.spawnHonse(sx, sy)
       }
     }
 
@@ -1320,6 +1465,17 @@ export class Overworld extends Phaser.Scene {
       state.mounted,
       { x: this.player.x, y: this.player.y },
     )
+    // A wild honse can wander out of the game area. When she does, send her
+    // back to where she spawned.
+    for (const h of state.honses) {
+      if (h.tame) continue
+      if (h.x < 8 || h.x > WORLD_PX - 8 || h.y < 8 || h.y > WORLD_PX - 8) {
+        h.x = h.homeX
+        h.y = h.homeY
+        h.vx = 0
+        h.vy = 0
+      }
+    }
     // if any honse is overlapping the player, shove the player out along the
     // axis of least overlap. She's a big animal and doesn't notice you.
     // Skip while mounted — the player is intentionally on top of the honse.
@@ -1359,9 +1515,30 @@ export class Overworld extends Phaser.Scene {
       if (mb) this.matter.body.setPosition(mb, { x: h.x, y: h.y + 3 }, false)
     }
 
+    // Float bob for settled dropped items. Visual only — pickup and depth read
+    // the logical position in state, so wiggling sprite.y here is harmless.
+    const bobNow = Date.now()
+    for (const s of this.droppedSprites) {
+      if (!s || !s.getData('settled')) continue
+      const baseY = s.getData('baseY') as number
+      const phase = s.getData('bobPhase') as number
+      s.y = baseY + Math.sin(bobNow * Overworld.DROP_BOB_SPEED + phase) * Overworld.DROP_BOB_AMP
+    }
+
     // update the rope controller (catch detection, anchor pinning, redraw)
     this.rope.update()
 
+
+    // E key: mount the nearest honse / dismount the current one. Same actions
+    // as click, context-dependent on whether already mounted. Unlike click,
+    // E ignores held tools/rope — it's a dedicated key with no other meaning.
+    if (overworldVisible && Phaser.Input.Keyboard.JustDown(this.eKey)) {
+      if (state.mounted !== null) {
+        this.dismount()
+      } else {
+        this.mountNearestHonse()
+      }
+    }
 
     // movement only when overworld is the active view
     if (overworldVisible && state.mounted !== null) {

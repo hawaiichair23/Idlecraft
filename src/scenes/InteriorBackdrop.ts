@@ -7,7 +7,7 @@
 // top of the returned floor bounds.
 
 import Phaser from 'phaser'
-import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
+import { UI_BAR_HEIGHT } from './UI'
 
 export interface InteriorBackdropConfig {
   floorColor: number

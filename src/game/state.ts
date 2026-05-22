@@ -245,7 +245,7 @@ class GameState {
   }
 
   init(plotCount: number) {
-    this.gold = 30
+    this.gold = 20
     this.plots = Array.from({ length: plotCount }, () => ({
       built: 'empty' as BuildingType,
       level: 1,

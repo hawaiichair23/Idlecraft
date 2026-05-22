@@ -33,11 +33,9 @@ const ROPE_THICKNESS = 3
 const ROPE_CATCH_RADIUS = 16
 const ROPE_CATCH_RADIUS_HONSE = 28
 const ROPE_ATTACHED_FRICTION_AIR = 0.1
-// Untie: click within this many px of a rope segment to sever it. After
-// severing, the two halves whip back to their anchors for a brief moment
-// before the rope is fully removed.
+// Untie: click within this many px of a rope segment to sever it.
 const ROPE_CLICK_TOLERANCE = 12
-const ROPE_UNTIE_LINGER_MS = 350
+
 
 // ---- endpoint type ----
 export type RopeEnd =
@@ -160,6 +158,22 @@ export class RopeController {
     // bursts into particles — each segment becomes a small brown puff that
     // scatters outward, then disappears. The rope is removed immediately.
     // Returns true if a rope was untied.
+    // Non-destructive: is there a tied rope within untie range of this point?
+    // Mirrors untieAtClick's search exactly so the cursor (which calls this)
+    // can never disagree with whether a click would actually untie.
+    isNearTiedRope(x: number, y: number): boolean {
+        const tolSq = ROPE_CLICK_TOLERANCE * ROPE_CLICK_TOLERANCE
+        for (const rope of this.ropes) {
+            if (rope.endB === null) continue   // can't untie an in-flight rope
+            for (const b of rope.bodies) {
+                const dx = b.position.x - x
+                const dy = b.position.y - y
+                if (dx * dx + dy * dy <= tolSq) return true
+            }
+        }
+        return false
+    }
+
     untieAtClick(clickX: number, clickY: number): boolean {
         const tolSq = ROPE_CLICK_TOLERANCE * ROPE_CLICK_TOLERANCE
         let best: { rope: Rope; distSq: number } | null = null

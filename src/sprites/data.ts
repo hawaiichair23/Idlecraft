@@ -466,6 +466,21 @@ export const CURSOR_GRAB: Sprite = [
   [_,_,_,grG,grG,_,_,_],
 ]
 
+// Rope-dissolve cursor — a red X shown over a tied rope to signal "click to
+// dissolve." 8x8, two crossed diagonals, darker red core for a little depth.
+const xR = '#C0392B'   // red
+const xD = '#8E2820'   // darker red (center crossing)
+export const CURSOR_X: Sprite = [
+  [xR,_,_,_,_,_,_,xR],
+  [xR,xR,_,_,_,_,xR,xR],
+  [_,xR,xR,_,_,xR,xR,_],
+  [_,_,xR,xD,xD,xR,_,_],
+  [_,_,xR,xD,xD,xR,_,_],
+  [_,xR,xR,_,_,xR,xR,_],
+  [xR,xR,_,_,_,_,xR,xR],
+  [xR,_,_,_,_,_,_,xR],
+]
+
 export const CURSOR: Sprite = [
   [curG,_,_,_,_,_,_,_],
   [curG,curG,_,_,_,_,_,_],
@@ -1084,6 +1099,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   rock_bump: ROCK_BUMP,
   cursor: CURSOR,
   cursor_grab: CURSOR_GRAB,
+  cursor_x: CURSOR_X,
   item_bag: ITEM_BAG,
   item_medium_bag: ITEM_MEDIUM_BAG,
   item_sausage: ITEM_SAUSAGE,

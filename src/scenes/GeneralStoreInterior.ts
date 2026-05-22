@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { state, GENERAL_STORE_SLOTS } from '../game/state'
+import { state } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { type SlotBinding } from '../ui/SlotBinding'
 import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
