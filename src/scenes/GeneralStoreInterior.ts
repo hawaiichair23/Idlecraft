@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { state } from '../game/state'
+import { state, isBag } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { type SlotBinding } from '../ui/SlotBinding'
 import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
@@ -108,6 +108,14 @@ export function buildGeneralStoreInterior(
             binding.accepts = (itemType) => {
                 if ((ITEMS[itemType].sellPrice ?? 0) <= 0) return false
                 return baseAccepts(itemType)
+            }
+            // wrap offer to reject a bag that still has items inside — you can
+            // sell an empty bag, but not one with contents (which would sell
+            // the items too). accepts() can't see contents, so it's checked here.
+            const baseOffer = binding.offer
+            binding.offer = (stack) => {
+                if (isBag(stack.type) && stack.contents?.some(s => s !== null)) return 0
+                return baseOffer(stack)
             }
             bindings.push(binding)
             dc.register(binding)

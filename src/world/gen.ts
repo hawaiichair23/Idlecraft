@@ -13,9 +13,18 @@ export interface BuriedItem {
   reward: number
 }
 
+// One rock formation placed by gen. Position only — the Overworld renders the
+// full 10-tile 9-slice heap at this point. When mining/ores arrive, an `ore`
+// field rolled from a weighted table slots in here without changing placement.
+export interface RockFormation {
+  x: number
+  y: number
+}
+
 export interface WorldLayout {
   decor: DecorItem[]
   buried: BuriedItem[]
+  rocks: RockFormation[]
 }
 
 // Mulberry32 — small deterministic seeded RNG.
@@ -153,6 +162,78 @@ const PATH_SNAKE_PERIOD = 600      // length of one wobble cycle
 const PATH_PEBBLE_SPACING = 6      // lower = denser
 const PATH_WIDTH = 14              // random scatter perpendicular to path
 
+// Rock formation placement knobs.
+const ROCK_HEAPS_PER_CLUSTER = 8
+const ROCK_CLUSTER_RADIUS = 600      // how far heaps spread from the cluster center
+const ROCK_HEAP_SPACING = 160        // min gap between heaps — full 10-tile formations are ~72px wide
+const ROCK_CLUSTER_MIN_Y_FRAC = 0.4   // cluster center stays in the southern 60% of the map
+
+// Place one cluster of rock formations. Unlike scatter (which spreads evenly
+// across the whole world), this rolls a single cluster center, then samples
+// heaps in a radius around it so they read as a localized deposit. The center
+// roll uses the seeded rng, so the cluster lands somewhere new every save — but
+// the same seed always reproduces the same spot. Radial sampling uses
+// sqrt(rng()) so heaps fill the cluster area evenly instead of bunching at the
+// center (area grows with radius²; sqrt counteracts that). Same rejection
+// sampling as scatter: skip heaps too close together or inside an exclusion.
+function scatterRockCluster(
+  out: RockFormation[],
+  rng: () => number,
+  opts: GenOpts,
+  exclusions: { x: number; y: number; radius: number }[],
+) {
+  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
+
+  // roll a cluster center clear of exclusions (e.g. town); cap attempts
+  let cx = 0, cy = 0
+  let centerOk = false
+  for (let i = 0; i < 60 && !centerOk; i++) {
+    cx = margin + ROCK_CLUSTER_RADIUS + rng() * (opts.worldSize - (margin + ROCK_CLUSTER_RADIUS) * 2)
+    // clamp to southern band — north is low Y (town), rocks belong further south
+    const minY = opts.worldSize * ROCK_CLUSTER_MIN_Y_FRAC
+    const yLow = Math.max(margin + ROCK_CLUSTER_RADIUS, minY)
+    cy = yLow + rng() * (opts.worldSize - margin - ROCK_CLUSTER_RADIUS - yLow)
+    centerOk = true
+    for (const ex of exclusions) {
+      const dx = cx - ex.x
+      const dy = cy - ex.y
+      // keep the whole cluster footprint clear of the exclusion, not just its center
+      const clear = ex.radius + ROCK_CLUSTER_RADIUS
+      if (dx * dx + dy * dy < clear * clear) { centerOk = false; break }
+    }
+  }
+  if (!centerOk) return   // couldn't find a clear center; skip rocks this world
+
+  const minSq = ROCK_HEAP_SPACING * ROCK_HEAP_SPACING
+  const maxAttempts = ROCK_HEAPS_PER_CLUSTER * 30
+  let attempts = 0
+  let placed = 0
+  while (placed < ROCK_HEAPS_PER_CLUSTER && attempts < maxAttempts) {
+    attempts++
+    const angle = rng() * Math.PI * 2
+    const dist = ROCK_CLUSTER_RADIUS * Math.sqrt(rng())
+    const x = cx + Math.cos(angle) * dist
+    const y = cy + Math.sin(angle) * dist
+
+    let blocked = false
+    for (const ex of exclusions) {
+      const dx = x - ex.x
+      const dy = y - ex.y
+      if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const r of out) {
+      const dx = x - r.x
+      const dy = y - r.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+
+    out.push({ x: Math.floor(x), y: Math.floor(y) })
+    placed++
+  }
+}
+
 function buildPath(
   decor: DecorItem[],
   rng: () => number,
@@ -183,6 +264,7 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   const rng = makeRng(opts.seed)
   const decor: DecorItem[] = []
   const buried: BuriedItem[] = []
+  const rocks: RockFormation[] = []
 
   const worldArea = opts.worldSize * opts.worldSize
   const skullCount = Math.floor(SKULL_DENSITY * worldArea)
@@ -195,6 +277,7 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   scatter(decor, rng, opts, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
   buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
+  scatterRockCluster(rocks, rng, opts, opts.exclusions)
 
-  return { decor, buried }
+  return { decor, buried, rocks }
 }

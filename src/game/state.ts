@@ -17,6 +17,9 @@ export const MODIFIER_SLOTS_PER_PLOT = 8
 // General store sell-grid: 6 columns × 4 rows.
 export const GENERAL_STORE_SLOTS = 24
 
+// World-placed crate storage: 6 columns × 4 rows, same grid as the store.
+export const CRATE_SLOTS = 24
+
 // Field grid: 5×2 plantable cells per field plot.
 export const FIELD_COLS = 5
 export const FIELD_ROWS = 2
@@ -117,6 +120,12 @@ export function createBagContents(type: ItemType): (ItemStack | null)[] {
   return Array.from({ length: size }, () => null)
 }
 
+// Create the contents array for a placed crate — a flat fixed-size grid,
+// independent of any ItemDef (crates are world objects, not carried bags).
+export function createCrateContents(): (ItemStack | null)[] {
+  return Array.from({ length: CRATE_SLOTS }, () => null)
+}
+
 class GameState {
   gold = 30
   plots: PlotState[] = []
@@ -157,6 +166,10 @@ class GameState {
   // 'post' (weathered cottonwood gray) or 'cedar_post' (warm cedar brown).
   // Mechanically identical otherwise.
   placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' }[] = []
+  // Crates placed by the player. Each is a sprite + obstacle in the world (like
+  // a post) plus its own storage grid in `contents` (CRATE_SLOTS long). The
+  // contents persist for the play session — open the crate to take/put items.
+  placedCrates: { x: number; y: number; contents: (ItemStack | null)[] }[] = []
   // Honses in the world. Position is the visual center; sprite/collision/rope
   // hitboxes derive from this. Stationary for now — movement comes later.
   honses: Honse[] = []
@@ -167,6 +180,13 @@ class GameState {
   inventory: (ItemStack | null)[] = Array.from({ length: INVENTORY_SIZE }, () => null)
   // currently-selected inventory slot, set by scroll wheel
   selectedInventorySlot = 0
+
+  // Seed for this world's procedural generation. Rolled once in init() and
+  // read by generateWorld — the whole world layout is a pure function of it.
+  // Stored here (rather than inline at the gen call) so it's recoverable: a
+  // future menu can display it for sharing or set it before init() to replay
+  // a specific world. 0 until init() runs.
+  worldSeed = 0
 
   // General store sell-grid contents — items dragged in here are sold on click.
   // Persists across closing the menu so the player can leave/return mid-trade.
@@ -246,6 +266,10 @@ class GameState {
 
   init(plotCount: number) {
     this.gold = 20
+    // Roll this world's seed. generateWorld reads state.worldSeed, so the
+    // whole layout derives from this one number. Random per new game today;
+    // a future menu can set worldSeed before calling init() to replay a world.
+    this.worldSeed = Math.floor(Math.random() * 1e9)
     this.plots = Array.from({ length: plotCount }, () => ({
       built: 'empty' as BuildingType,
       level: 1,
@@ -274,10 +298,15 @@ class GameState {
     this.droppedItems = []
     this.plantedTrees = []
     this.placedPosts = []
+    this.placedCrates = []
     // honses spawn dynamically when twine is first crafted — start empty
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
+    // DEV: seed a pickaxe for testing mining
+    this.inventory[0] = { type: 'pickaxe', count: 1 }
+    // DEV: seed a crate for testing storage
+    this.inventory[1] = { type: 'crate', count: 1 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -375,6 +404,66 @@ class GameState {
       }
     }
     return added
+  }
+
+  // Read-only twin of inventoryAddAnywhere: returns how many of `stack` would
+  // be accepted right now, without moving anything. Mirrors the same four
+  // phases (top-up hotbar, top-up bags, empty hotbar, empty bags) so the
+  // answer always matches what an actual add would do. Used by the loot magnet
+  // to decide whether a drop is collectable before dragging it to the player.
+  roomFor(stack: Readonly<ItemStack>): number {
+    const cap = ITEMS[stack.type].maxStack
+    let remaining = stack.count
+    let room = 0
+
+    // PHASE 1 — matching hotbar stacks
+    for (const s of this.inventory) {
+      if (remaining <= 0) break
+      if (s && s.type === stack.type && s.count < cap) {
+        const moved = Math.min(cap - s.count, remaining)
+        room += moved
+        remaining -= moved
+      }
+    }
+    // PHASE 2 — matching bag stacks
+    if (remaining > 0) {
+      for (const bag of this.getBags()) {
+        if (remaining <= 0) break
+        for (const s of bag.contents!) {
+          if (remaining <= 0) break
+          if (s && s.type === stack.type && s.count < cap) {
+            const moved = Math.min(cap - s.count, remaining)
+            room += moved
+            remaining -= moved
+          }
+        }
+      }
+    }
+    // PHASE 3 — empty hotbar slots
+    for (const s of this.inventory) {
+      if (remaining <= 0) break
+      if (s === null) {
+        if (isBag(stack.type) && this.bagCount() >= MAX_BAGS) break
+        const moved = Math.min(cap, remaining)
+        room += moved
+        remaining -= moved
+      }
+    }
+    // PHASE 4 — empty bag slots
+    if (remaining > 0) {
+      for (const bag of this.getBags()) {
+        if (remaining <= 0) break
+        for (const s of bag.contents!) {
+          if (remaining <= 0) break
+          if (s === null) {
+            const moved = Math.min(cap, remaining)
+            room += moved
+            remaining -= moved
+          }
+        }
+      }
+    }
+    return room
   }
 
   addGold(n: number, registry: Phaser.Data.DataManager) {

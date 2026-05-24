@@ -1,7 +1,7 @@
 // Items in the game. Each ItemType is a string id; ITEMS maps id → metadata.
 // New items: add an entry to ItemType, ITEMS, and (if needed) a sprite.
 
-export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'axe' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post' | 'cedar_post' | 'wood'
+export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'axe' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post' | 'cedar_post' | 'wood' | 'stone' | 'pickaxe' | 'coal' | 'iron' | 'copper' | 'silver' | 'gold' | 'crate'
 
 export interface ItemDef {
   name: string
@@ -37,7 +37,7 @@ export const ITEMS: Record<ItemType, ItemDef> = {
   flour:   { name: 'Flour',   sprite: 'item_flour',   maxStack: 64, scale: 36 / 67, sellPrice: 1 },
   water:   { name: 'Water',   sprite: 'item_water',   maxStack: 64, scale: 36 / 88, sellPrice: 2 },
   bread:   { name: 'Bread',   sprite: 'item_bread',   maxStack: 64, scale: 2, edible: true, crumbColor: 0xD4A574, speedBuff: 25, sellPrice: 7 },
-  shovel:  { name: 'Shovel',  sprite: 'item_shovel',  maxStack: 1,  scale: 3, sellPrice: 80, activeTool: true, cursorContexts: ['overworld', 'field'] },
+  shovel:  { name: 'Shovel',  sprite: 'item_shovel',  maxStack: 1,  scale: 3, sellPrice: 40, activeTool: true, cursorContexts: ['overworld', 'field'] },
   axe:     { name: 'Axe',     sprite: 'item_axe',     maxStack: 1,  scale: 3, sellPrice: 200, activeTool: true, cursorContexts: ['overworld'] },
   bag:     { name: 'Bag',     sprite: 'item_bag',     maxStack: 1,  scale: 2, bagCols: 2, bagRows: 2, sellPrice: 100 },
   medium_bag: { name: 'War Bag', sprite: 'item_medium_bag', maxStack: 1,  scale: 2, bagCols: 3, bagRows: 2, sellPrice: 100 },
@@ -54,7 +54,15 @@ export const ITEMS: Record<ItemType, ItemDef> = {
   rope:               { name: 'Rope',                sprite: 'item_rope',               maxStack: 64, scale: 2, sellPrice: 25, activeTool: true },
   post:               { name: 'Post',                sprite: 'item_post',               maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
   cedar_post:         { name: 'Cedar Post',          sprite: 'item_cedar_post',         maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
-  wood:               { name: 'Wood',                sprite: 'item_wood',               maxStack: 64, scale: 2, sellPrice: 15 },
+  wood:               { name: 'Wood',                sprite: 'item_wood',               maxStack: 64, scale: 2, sellPrice: 6 },
+  stone:              { name: 'Stone',               sprite: 'item_stone',              maxStack: 64, scale: 2, sellPrice: 2 },
+  crate:              { name: 'Crate',               sprite: 'item_crate',              maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
+  pickaxe:            { name: 'Pickaxe',             sprite: 'item_pickaxe',            maxStack: 1,  scale: 3, sellPrice: 400, activeTool: true, cursorContexts: ['overworld'] },
+  coal:               { name: 'Coal',                sprite: 'item_coal',               maxStack: 64, scale: 2 },
+  iron:               { name: 'Iron Ore',            sprite: 'item_iron',               maxStack: 64, scale: 2 },
+  copper:             { name: 'Copper Ore',          sprite: 'item_copper',             maxStack: 64, scale: 2 },
+  silver:             { name: 'Silver Ore',          sprite: 'item_silver',             maxStack: 64, scale: 2 },
+  gold:               { name: 'Gold Ore',            sprite: 'item_gold',               maxStack: 64, scale: 2 },
 }
 
 // A stack of a single item type. Slots hold one of these (or null).

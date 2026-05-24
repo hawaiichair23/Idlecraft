@@ -9,7 +9,7 @@ import type { UI } from './UI'
 import type { SlotBinding } from '../ui/SlotBinding'
 import type { SlotVisual } from './InteriorTypes'
 import { registerGrabbable } from '../ui/hover'
-import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
+import { makeSlotImage, makeStorageBinding, distributeIntoBindings } from '../ui/slotFactory'
 import { buildProducerInterior } from './ProducerInterior'
 import { buildWorkshopInterior } from './WorkshopInterior'
 import { buildShopInterior } from './ShopInterior'
@@ -582,21 +582,7 @@ export class Interior extends Phaser.Scene {
   }
 
   placeFromInventory(stack: ItemStack) {
-    // Pass 1: merge into existing stacks of the same type
-    for (const b of this.bindings) {
-      if (stack.count <= 0) break
-      const existing = b.peek()
-      if (!existing || existing.type !== stack.type) continue
-      const accepted = b.offer(stack)
-      stack.count -= accepted
-    }
-    // Pass 2: place into empty slots
-    for (const b of this.bindings) {
-      if (stack.count <= 0) break
-      if (!b.accepts(stack.type)) continue
-      const accepted = b.offer(stack)
-      stack.count -= accepted
-    }
+    distributeIntoBindings(stack, this.bindings)
   }
 
   private shiftTakeToInventory(binding: SlotBinding) {

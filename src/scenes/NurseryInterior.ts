@@ -20,7 +20,7 @@ interface NurseryEntry {
 }
 const NURSERY_ITEMS: NurseryEntry[] = [
   { type: 'hemp_seed', buyPrice: 10, description: 'Plant in a field. Grows hemp.' },
-  { type: 'cottonwood_sapling', buyPrice: 50, description: 'Plant in the ground. Grows a cottonwood.' },
+  { type: 'cottonwood_sapling', buyPrice: 50, description: 'Plant in arable ground. Grows a cottonwood.' },
 ]
 
 export function buildNurseryInterior(scene: Phaser.Scene): NurseryInteriorHandle {

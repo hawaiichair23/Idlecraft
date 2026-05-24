@@ -28,6 +28,7 @@ interface ShopEntry {
 const SHOP_ITEMS: ShopEntry[] = [
   { type: 'shovel', buyPrice: 100, description: 'For digging and burying.' },
   { type: 'axe',    buyPrice: 500, description: 'For felling trees into wood.' },
+  { type: 'pickaxe', buyPrice: 1000, description: 'For breaking, prying, and digging.' },
   { type: 'rope',   buyPrice: 80,  description: 'A grouping of twine.', gatedBy: () => state.hasCraftedRope },
   { type: 'post',   buyPrice: 50,  description: 'For tying leads and building fences.', gatedBy: () => state.hasCraftedPost },
   { type: 'bag',    buyPrice: 280, description: 'Extra storage. 4 slots.', gatedBy: () => state.hasCraftedBag },

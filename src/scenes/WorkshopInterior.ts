@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { state } from '../game/state'
+import { state, isBag } from '../game/state'
 import { type ItemStack } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
 import { type SlotBinding } from '../ui/SlotBinding'
@@ -68,6 +68,9 @@ export function buildWorkshopInterior(
     slotVisuals.push({ x, y: centerY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container })
 
     const binding = makeStorageBinding({ x, y: centerY }, getStack, setStack, { onChange: () => {} })
+    // bags can't be crafting inputs — reject them
+    const baseAccepts = binding.accepts
+    binding.accepts = (itemType) => !isBag(itemType) && baseAccepts(itemType)
     bindings.push(binding)
     dc.register(binding)
 

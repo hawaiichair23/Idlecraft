@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { loadSprites } from '../sprites/loader'
 import { COLORS } from '../colors'
 import { UI_BAR_HEIGHT, UI } from './UI'
-import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, type BuiltType } from '../game/state'
+import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createCrateContents, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
 import { generateWorld } from '../world/gen'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
@@ -13,15 +13,40 @@ import { updateHonses, getHonseBodyAABB } from '../world/honse'
 const WORLD_PX = 576 * 8    // 8x canvas size, so player can wander
 // Wood-brown palette for the burst when an axe destroys a post.
 const POST_PARTICLE_COLORS = [0x6B4A2A, 0x8B5A2B, 0x4A3318, 0x9C7248]
-const PLAYER_SPEED = 130
-const MOUNTED_SPEED_MIN = 130   // honse walk speed — same as player on foot
-const MOUNTED_SPEED_MAX = 235   // honse top speed after full ramp
+const PLAYER_SPEED = 135
+const MOUNTED_SPEED_MIN = 135   // honse walk speed — same as player on foot
+const MOUNTED_SPEED_MAX = 240   // honse top speed after full ramp
 const MOUNTED_RAMP_MS = 2200    // time to accelerate from min to max
 // How close the player must be to a honse to mount her (center-to-center px).
 const MOUNT_RANGE = 40
 // Max distance (px) from the player at which tools (shovel, posts) can be used.
 // Beyond this the cursor reverts to default and clicks do nothing.
 const TOOL_RANGE = 150
+
+// Weighted loot table for mining a rock tile. Each tile break is an independent
+// roll (variable-ratio reinforcement — the unpredictability is the hook). Texas-
+// grounded ladder: stone is the common floor, gold the near-mythical jackpot.
+// Weights are relative; they don't need to sum to 100.
+const ORE_ROLL_TABLE: { type: ItemType; weight: number }[] = [
+  { type: 'stone',  weight: 78 },
+  { type: 'coal',   weight: 11 },
+  { type: 'iron',   weight: 6 },
+  { type: 'copper', weight: 3 },
+  { type: 'silver', weight: 1.5 },
+  { type: 'gold',   weight: 0.5 },
+]
+
+// Roll the ore table once. Returns the dropped item type.
+function rollOre(): ItemType {
+  const total = ORE_ROLL_TABLE.reduce((s, e) => s + e.weight, 0)
+  let r = Math.random() * total
+  for (const e of ORE_ROLL_TABLE) {
+    r -= e.weight
+    if (r <= 0) return e.type
+  }
+  return ORE_ROLL_TABLE[0].type
+}
+
 // Player sprite offset above honse center while mounted (saddle position).
 const MOUNT_SADDLE_Y = -10
 const FOOD_BUFF_MS = 60000
@@ -45,7 +70,7 @@ const ROPE_LEASH_SOFT_START = 0.9
 // Kind tag for entries in the Overworld's obstacles list. Used by placement
 // validation and any other code that needs to know what a given collision
 // rectangle represents. Add new variants when adding new placeable types.
-type ObstacleKind = 'tree' | 'rock' | 'post' | 'building' | 'solid'
+type ObstacleKind = 'tree' | 'rock' | 'post' | 'building' | 'solid' | 'crate'
 
 // True if two axis-aligned rectangles overlap. First rect is center+half-extent
 // (px, py, half), second is origin+size (x, y, w, h).
@@ -117,8 +142,25 @@ export class Overworld extends Phaser.Scene {
   private matureTreeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // Axe hit counts per mature tree, keyed by `x,y`. Resets when the tree fells.
   private treeHits: Map<string, number> = new Map()
+  // Rock tile sprites, keyed by `x,y` of each individual tile.
+  private rockSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Rock formation containers, keyed by formation origin `x,y`. All tiles in
+  // a formation live inside the container so shaking it moves them as one mass.
+  private rockContainers: Map<string, Phaser.GameObjects.Container> = new Map()
+  // Maps each tile key to its formation's container key.
+  private rockTileToFormation: Map<string, string> = new Map()
+  // Mining dependency: a tile here can't be mined until the tile it maps to is
+  // gone. Used for stacked pieces (the bump base is locked under the bump top
+  // so the top can't be left floating). A hit on a locked tile redirects to
+  // its blocker — you're really hitting the piece on top.
+  private rockMineBlockedBy: Map<string, string> = new Map()
+  // Pickaxe hit counts per rock tile, keyed by `x,y`. Resets on depletion.
+  private rockHits: Map<string, number> = new Map()
   // Player-placed hitching posts, keyed by `x,y`. Future: rope-throw targets.
   private placedPostSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Player-placed crates, keyed by `x,y`. Each maps to its entry in
+  // state.placedCrates (matched by position); clicking/E near one opens it.
+  private placedCrateSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // Honse sprites — parallel to state.honses by index. Position + depth are
   // synced from state each frame in update().
   private honseSprites: Phaser.GameObjects.Sprite[] = []
@@ -231,13 +273,20 @@ export class Overworld extends Phaser.Scene {
       }
       // sapling selected? try to plant on a nearby dirt patch
       if (this.trySaplingPlant(p.worldX, p.worldY)) return
-      // axe selected? try to chop a nearby mature tree, else destroy a post
+      // axe selected? try to chop a nearby mature tree, else destroy a post or crate
       if (state.inventory[state.selectedInventorySlot]?.type === 'axe') {
         if (this.tryChop(p.worldX, p.worldY)) return
         if (this.tryAxePost(p.worldX, p.worldY)) return
+        if (this.tryAxeCrate(p.worldX, p.worldY)) return
+      }
+      // pickaxe selected? try to mine a nearby rock formation
+      if (state.inventory[state.selectedInventorySlot]?.type === 'pickaxe') {
+        if (this.tryMine(p.worldX, p.worldY)) return
       }
       // post selected? try to place it in the world
       if (this.tryPlacePost(p.worldX, p.worldY)) return
+      // crate selected? try to place it in the world
+      if (this.tryPlaceCrate(p.worldX, p.worldY)) return
       // rope selected? Throw goes through the rope controller, which consumes
       // one rope when the throw resolves (caught-and-thrown, or missed).
       const sel = state.inventory[state.selectedInventorySlot]
@@ -287,10 +336,37 @@ export class Overworld extends Phaser.Scene {
     // procedural world decor — scatter cow skulls (wide buffer), pebbles + grass (plot footprint only)
     const exclusions = this.plotViews.map(v => ({ x: v.x, y: v.y, radius: 100 }))
     exclusions.push({ x: cx, y: cy, radius: 60 })  // also clear the spawn point
+    // world structures (shops, church, etc.) — rocks must keep clear of buildings
+    for (const s of state.worldStructures) {
+      exclusions.push({ x: s.x, y: s.y, radius: 120 })
+    }
+    // authored trees, yuccas, grove, corral, decor posts, corral house — all at
+    // fixed coordinates, so they're known before gen even though they render later.
+    // Trees above abandoned house + nursery tree
+    for (const [tx, ty] of [[2080,3340],[2120,3290],[3220,160]]) {
+      exclusions.push({ x: tx, y: ty, radius: 60 })
+    }
+    // Oasis grove (10 cottonwoods)
+    for (const [tx, ty] of [[3780,2240],[3880,2200],[3980,2260],[4060,2320],[3820,2340],[3940,2360],[4040,2400],[3800,2440],[3920,2460],[4000,2500]]) {
+      exclusions.push({ x: tx, y: ty, radius: 60 })
+    }
+    // Yuccas by nursery
+    for (const [yx, yy] of [[3120,210],[3136,208],[3128,224],[3144,222]]) {
+      exclusions.push({ x: yx, y: yy, radius: 40 })
+    }
+    // Starter corral posts + corral house
+    for (const [px, py] of [[3720,1460],[3730,1460],[3740,1460],[3750,1460],[3760,1460],[3770,1460],[3780,1460],[3720,1470],[3720,1480],[3720,1490],[3720,1500],[3720,1510],[3730,1510],[3740,1510],[3750,1510],[3760,1510],[3770,1510],[3780,1510]]) {
+      exclusions.push({ x: px, y: py, radius: 40 })
+    }
+    exclusions.push({ x: 3790, y: 1480, radius: 120 })  // corral house
+    // Decor posts
+    for (const [px, py] of [[3280,1070],[3290,1070],[3330,1070],[3380,1070],[3410,1070],[2960,220],[2970,220],[2980,220],[2990,220]]) {
+      exclusions.push({ x: px, y: py, radius: 40 })
+    }
     // ground texture only avoids the plot footprint itself (so pebbles/grass appear right up to plot edges)
     const tightExclusions = this.plotViews.map(v => ({ x: v.x, y: v.y, radius: 61 }))
     const layout = generateWorld({
-      seed: Math.floor(Math.random() * 1e9),
+      seed: state.worldSeed,
       worldSize: WORLD_PX,
       exclusions,
       tightExclusions,
@@ -298,6 +374,16 @@ export class Overworld extends Phaser.Scene {
     for (const d of layout.decor) {
       this.add.sprite(d.x, d.y, d.type).setScale(d.scale)
     }
+    // rock formations — placed as a seeded cluster by gen, rendered via the
+    // helper (multi-tile sprite + collision + rope blocker)
+    for (const r of layout.rocks) {
+      this.spawnRockFormation(r.x, r.y)
+    }
+    // fixed landmark heap near spawn — NOT procedural. Always in the same spot
+    // every world so the player has a known, reliable rock to mine once they
+    // get the pickaxe. The seeded cluster above is the real deposit; this is
+    // the tutorial anchor.
+    this.spawnRockFormation(cx - 240, cy + 280)
     // seed buried items from the layout
     state.buriedItems = layout.buried.map(b => ({ x: b.x, y: b.y, reward: b.reward }))
     // restore any dirt patches already in state
@@ -331,6 +417,13 @@ export class Overworld extends Phaser.Scene {
       this.placedPostSprites.set(`${p.x},${p.y}`, sprite)
       this.obstacles.push(this.makePostObstacle(p.x, p.y))
     }
+    // restore any placed crates already in state (contents persist on the entry)
+    for (const c of state.placedCrates) {
+      const sprite = this.add.sprite(c.x, c.y, 'item_crate').setScale(2).setDepth(c.y + 8).setInteractive()
+      this.attachCrateOpenHandler(sprite, c.x, c.y)
+      this.placedCrateSprites.set(`${c.x},${c.y}`, sprite)
+      this.obstacles.push(this.makeCrateObstacle(c.x, c.y))
+    }
     // restore any revealed-but-uncollected coins
     for (const r of state.revealedItems) {
       this.spawnRevealedCoinSprite(r.x, r.y)
@@ -353,32 +446,6 @@ export class Overworld extends Phaser.Scene {
         // single-sprite building: 48x48 centered
         this.obstacles.push({ x: s.x - 24, y: s.y - 24, w: 48, h: 48, kind: 'building' as ObstacleKind })
       }
-    }
-
-    // ---- TEST ROCK FORMATION ---- horizontal ridge with a bump in the middle.
-    {
-      const TILE = 24
-      const rockX = cx - 240
-      const rockY = cy + 280
-      const rockBottomY = rockY + TILE / 2   // y-sort depth (same for every tile)
-      const rockTiles = ['rock_tl', 'rock_bump', 'rock_tr']
-      for (let c = 0; c < rockTiles.length; c++) {
-        const x = rockX + c * TILE
-        const isBump = rockTiles[c] === 'rock_bump'
-        const sprite = this.add.sprite(x, rockY, rockTiles[c]).setScale(3)
-        if (isBump) sprite.setOrigin(0.5, 1).setY(rockBottomY)
-        sprite.setDepth(rockBottomY)
-      }
-      // collision rect covering the full formation footprint
-      const rockAABB = {
-        x: rockX - TILE / 2,
-        y: rockY - TILE / 2,
-        w: TILE * rockTiles.length,
-        h: TILE,
-        kind: 'rock' as ObstacleKind,
-      }
-      this.obstacles.push(rockAABB)
-      this.addRopeBlocker(rockAABB)
     }
 
     // ---- TREES ABOVE ABANDONED HOUSE ---- 12px sprite at scale 3 = 36px tall.
@@ -405,6 +472,9 @@ export class Overworld extends Phaser.Scene {
       ]
       for (const [yx, yy] of yuccaPositions) {
         this.add.sprite(yx, yy, 'yucca').setScale(2).setDepth(yy)
+        // small footprint so yuccas count as physical for placement systems
+        // (they have no walk-collision by design, but should block gen scatter)
+        this.obstacles.push({ x: yx - 8, y: yy - 8, w: 16, h: 16, kind: 'solid' as ObstacleKind })
       }
       this.placeTree(3220, 160)
     }
@@ -520,6 +590,13 @@ export class Overworld extends Phaser.Scene {
     cam.setBounds(0, 0, WORLD_PX, WORLD_PX)
     cam.setZoom(1.08)
 
+    // Under RESIZE scale mode the canvas matches the window, so cam.width/height
+    // change whenever the window does. Re-set the viewport to the new size,
+    // keeping the top-bar offset. Bounds/follow/zoom persist across this.
+    this.scale.on('resize', (gameSize: Phaser.Structs.Size) => {
+      cam.setViewport(0, UI_BAR_HEIGHT, gameSize.width, gameSize.height - UI_BAR_HEIGHT)
+    })
+
     // launch the UI scene on top
     this.scene.launch('UI')
 
@@ -618,6 +695,8 @@ export class Overworld extends Phaser.Scene {
   private static PLANT_HIT_RADIUS = 28
   // Axe hits required to fell a mature tree.
   private static CHOP_HITS_TO_FELL = 8
+  // Pickaxe hits required to deplete a rock formation.
+  private static MINE_HITS_TO_DEPLETE = 10
   // Axe hit-radius for destroying a placed post — matches CHOP_HIT_RADIUS.
   private static POST_HIT_RADIUS = 18
   // Dropped-item animation: a fresh drop pops up DROP_JUMP_HEIGHT px and
@@ -643,6 +722,14 @@ export class Overworld extends Phaser.Scene {
   private static DIG_REVEAL_RADIUS = 36
   // pickup radius: player walking within this distance of a revealed item collects it.
   private static PICKUP_RADIUS = 18
+  // Fresh drops can't be picked up for this long after landing, so the player
+  // sees the item on the ground (and the character collecting it) instead of
+  // it vanishing the instant it's created underfoot.
+  private static PICKUP_DELAY_MS = 500
+  // Loot magnet: items within this (larger) radius slide toward the player and
+  // get collected on arrival. Ease is the fraction of the gap closed per frame.
+  private static PICKUP_ATTRACT_RADIUS = 30
+  private static PICKUP_ATTRACT_EASE = 0.25
   // dig duration: shovel stays planted for this long before dirt appears. Also
   // gates further dig clicks so the player can't spam the shovel.
   private static DIG_DURATION_MS = 2000
@@ -712,6 +799,164 @@ export class Overworld extends Phaser.Scene {
     return false
   }
 
+  // Try to mine a nearby rock formation with the pickaxe. For now: shake
+  // feedback only. Hit counting, depletion, and drops come later.
+  private tryMine(clickX: number, clickY: number): boolean {
+    const dx = clickX - this.player.x
+    const dy = clickY - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+
+    const HIT_RADIUS = 24
+    const hitSq = HIT_RADIUS * HIT_RADIUS
+    // pick the CLOSEST rock obstacle to the click, not the first within radius —
+    // otherwise a wide neighbor earlier in the array steals clicks meant for the
+    // tile actually under the cursor.
+    let best = -1
+    let bestDistSq = hitSq
+    for (let i = 0; i < this.obstacles.length; i++) {
+      const o = this.obstacles[i]
+      if (o.kind !== 'rock') continue
+      const odx = clickX - (o.x + o.w / 2)
+      const ody = clickY - (o.y + o.h / 2)
+      const dSq = odx * odx + ody * ody
+      if (dSq <= bestDistSq) {
+        bestDistSq = dSq
+        best = i
+      }
+    }
+    if (best >= 0) {
+      const o = this.obstacles[best]
+      const tileX = o.x + 12
+      const tileY = o.y + 12
+      let key = `${tileX},${tileY}`
+      let obstacleIndex = best
+
+      // if this tile is locked beneath another, redirect the hit to the
+      // blocking tile (you're really hitting the piece on top). Only redirect
+      // while the blocker still exists.
+      const blocker = this.rockMineBlockedBy.get(key)
+      if (blocker && this.rockSprites.has(blocker)) {
+        key = blocker
+        const [bx, by] = blocker.split(',').map(Number)
+        obstacleIndex = this.obstacles.findIndex(
+          ob => ob.kind === 'rock' && ob.x + 12 === bx && ob.y + 12 === by,
+        )
+      }
+
+      // shake the whole formation as one rigid body via its container
+      const formKey = this.rockTileToFormation.get(key)
+      if (formKey) {
+        const container = this.rockContainers.get(formKey)
+        if (container) {
+          this.tweens.killTweensOf(container)
+          container.x = 0
+          this.tweens.add({
+            targets: container,
+            x: 1,
+            duration: 30,
+            yoyo: true,
+            repeat: 2,
+            ease: 'Sine.inOut',
+            onComplete: () => { container.x = 0 },
+          })
+        }
+      }
+
+      // count hits on this tile; deplete on threshold
+      const hits = (this.rockHits.get(key) ?? 0) + 1
+      if (hits >= Overworld.MINE_HITS_TO_DEPLETE) {
+        this.rockHits.delete(key)
+        this.depleteTile(key, obstacleIndex)
+      } else {
+        this.rockHits.set(key, hits)
+      }
+      return true
+    }
+    return false
+  }
+
+  // Destroy a single mined-out rock tile: remove its sprite, obstacle, and
+  // drop stone at its position. The formation shrinks piece by piece.
+  private depleteTile(key: string, obstacleIndex: number) {
+    // remove the obstacle immediately so the player can walk through
+    this.obstacles.splice(obstacleIndex, 1)
+
+    const sprite = this.rockSprites.get(key)
+    if (sprite) {
+      const [tx, ty] = key.split(',').map(Number)
+      sprite.destroy()
+      this.rockSprites.delete(key)
+
+      // which way do drops fly? left tile → left, right tile → right,
+      // center column (the bump) → random per drop. Compare tile x to the
+      // formation center x (origin + one TILE, since formations are 3 wide).
+      const formKey = this.rockTileToFormation.get(key)
+      let dir = 0   // -1 left, +1 right, 0 = center (decide per drop below)
+      let dropY = ty   // where drops land — overridden to the base row below
+      // for the center column: bias toward an already-mined (empty) side so
+      // ore doesn't fly into a still-standing neighbor tile. -1 only-left-open,
+      // +1 only-right-open, 0 = both open or both closed (random per drop).
+      let centerBias = 0
+      let isolated = false   // no standing neighbor → pop straight up instead
+      if (formKey) {
+        const originX = Number(formKey.split(',')[0])
+        const baseY = Number(formKey.split(',')[1])
+        const centerX = originX + 24   // origin + TILE
+        if (tx < centerX - 1) dir = -1
+        else if (tx > centerX + 1) dir = 1
+        // always drop at the formation's base row, so the stacked top bump
+        // piece deposits at ground level instead of spewing from mid-air
+        dropY = baseY
+        // which neighbor tiles are still standing? (this tile's own sprite is
+        // already deleted above, so these reflect the remaining formation)
+        const leftStands = this.rockSprites.has(`${originX},${baseY}`)
+        const centerStands = this.rockSprites.has(`${centerX},${baseY}`)
+          || this.rockSprites.has(`${centerX},${baseY - 24}`)   // base or top bump
+        const rightStands = this.rockSprites.has(`${originX + 48},${baseY}`)
+        if (dir === -1) {
+          // left tile broke — neighbor is center
+          isolated = !centerStands
+        } else if (dir === 1) {
+          // right tile broke — neighbor is center
+          isolated = !centerStands
+        } else {
+          // center column broke — neighbors are left and right
+          isolated = !leftStands && !rightStands
+          if (!isolated) {
+            if (!leftStands && rightStands) centerBias = -1
+            else if (!rightStands && leftStands) centerBias = 1
+          }
+        }
+      }
+
+      // scatter 2–4 separate dropped items, each rolled independently. Each
+      // flies outward from the rock so it doesn't clip into remaining tiles.
+      const drops = 2 + Math.floor(Math.random() * 3)
+      for (let d = 0; d < drops; d++) {
+        // stagger each drop so they fly out one at a time — you can see each
+        // ore appear in sequence and read what you pulled
+        this.time.delayedCall(d * 50, () => {
+          const fly = isolated
+            ? 0
+            : dir !== 0
+              ? dir
+              : centerBias !== 0
+                ? centerBias
+                : (Math.random() < 0.5 ? -1 : 1)
+          const dist = 4 + Math.random() * 26         // wide random fly-out distance
+          // isolated → spread out around the break point (no side offset).
+          // otherwise → fly out to one side by dist.
+          const landX = isolated
+            ? tx + (Math.random() - 0.5) * 60
+            : tx + fly * dist
+          const landY = dropY + (Math.random() - 0.5) * 16
+          // sprite starts at the break point (tx) and arcs out to landX
+          this.dropStack(landX, landY, { type: rollOre(), count: 1 }, tx)
+        })
+      }
+    }
+  }
+
   // Non-destructive: is there a placed post within axe hit-radius of this
   // point? Mirrors tryAxePost's search so the cursor (which calls this) can
   // never disagree with whether a click would actually destroy a post.
@@ -720,6 +965,18 @@ export class Overworld extends Phaser.Scene {
     for (const p of state.placedPosts) {
       const dx = x - p.x
       const dy = y - p.y
+      if (dx * dx + dy * dy <= hitSq) return true
+    }
+    return false
+  }
+
+  // True if (x, y) is over a placed crate. Used by the cursor to show the
+  // grab affordance when hovering a crate (gated on range by the caller).
+  isNearCrate(x: number, y: number): boolean {
+    const hitSq = 26 * 26
+    for (const c of state.placedCrates) {
+      const dx = x - c.x
+      const dy = y - c.y
       if (dx * dx + dy * dy <= hitSq) return true
     }
     return false
@@ -760,6 +1017,58 @@ export class Overworld extends Phaser.Scene {
 
       this.spawnParticles(p.x, p.y, POST_PARTICLE_COLORS)
       this.dropStack(p.x, p.y, { type: species, count: 1 })
+      return true
+    }
+    return false
+  }
+
+  // Axe-destroy a placed crate: removes it from state, sprite, and collision,
+  // drops the crate item, and spills every stored stack onto the ground around
+  // it (scattered like mined ore — each slot's stack flies out and bobs, ready
+  // to pick back up). Returns true if a crate was destroyed.
+  private tryAxeCrate(clickX: number, clickY: number): boolean {
+    const dx = clickX - this.player.x
+    const dy = clickY - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+
+    const hitSq = 26 * 26
+    for (let i = 0; i < state.placedCrates.length; i++) {
+      const c = state.placedCrates[i]
+      const cdx = clickX - c.x
+      const cdy = clickY - c.y
+      if (cdx * cdx + cdy * cdy > hitSq) continue
+
+      const key = `${c.x},${c.y}`
+      // capture contents + position before we splice the entry away
+      const contents = c.contents
+      const cx = c.x
+      const cy = c.y
+
+      // remove the visual
+      const sprite = this.placedCrateSprites.get(key)
+      if (sprite) sprite.destroy()
+      this.placedCrateSprites.delete(key)
+
+      // remove the collision body (found by the stamped origin)
+      const obsIdx = this.obstacles.findIndex(
+        o => o.kind === 'crate' && o.originX === cx && o.originY === cy,
+      )
+      if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
+
+      // remove the data
+      state.placedCrates.splice(i, 1)
+
+      this.spawnParticles(cx, cy, POST_PARTICLE_COLORS)
+      // the crate itself drops back
+      this.dropStack(cx, cy, { type: 'crate', count: 1 })
+      // spill every stored stack, scattered around the crate. Pass the actual
+      // stack object so bag contents survive the drop→pickup round trip.
+      for (const stack of contents) {
+        if (!stack) continue
+        const landX = cx + (Math.random() - 0.5) * 48
+        const landY = cy + (Math.random() - 0.5) * 48
+        this.dropStack(landX, landY, stack, cx)
+      }
       return true
     }
     return false
@@ -962,6 +1271,88 @@ export class Overworld extends Phaser.Scene {
   // Create a static Matter rectangle matching an AABB so rope segments bounce
   // off it. Called for every world obstacle and building so the rope can't
   // pass through trees, rocks, posts, or buildings.
+  // Render a rock formation at (x, y) from a row of tile sprite keys, register
+  // its collision footprint, and add a rope blocker over it. The y-sort depth
+  // is the formation's bottom edge so the player walks behind/in front of it
+  // correctly. The 'rock_bump' tile is anchored to its base (origin 0.5,1) so
+  // it rises above the row instead of straddling the baseline. Callable
+  // anywhere — gen drives placement; the console can spawn one for testing.
+  spawnRockFormation(x: number, y: number) {
+    const TILE = 24
+    const bottomY = y + TILE / 2
+    const formKey = `${x},${y}`
+    const container = this.add.container(0, 0).setDepth(bottomY)
+    this.rockContainers.set(formKey, container)
+
+    // register one mineable tile: a sprite (already created/positioned by the
+    // caller), plus its collision obstacle and lookup maps. Returns nothing.
+    const register = (sprite: Phaser.GameObjects.Sprite, tx: number, ty: number) => {
+      sprite.setDepth(bottomY)
+      container.add(sprite)
+      const key = `${tx},${ty}`
+      this.rockSprites.set(key, sprite)
+      this.rockTileToFormation.set(key, formKey)
+      this.obstacles.push({
+        x: tx - TILE / 2,
+        y: ty - TILE / 2,
+        w: TILE,
+        h: TILE,
+        kind: 'rock' as ObstacleKind,
+      })
+      this.addRopeBlocker({ x: tx - TILE / 2, y: ty - TILE / 2, w: TILE, h: TILE })
+    }
+
+    // left tile
+    register(this.add.sprite(x, y, 'rock_tl').setScale(3), x, y)
+    // right tile
+    register(this.add.sprite(x + TILE * 2, y, 'rock_tr').setScale(3), x + TILE * 2, y)
+
+    // middle: the bump (8×11) split into two stacked mineable pieces using the
+    // same sprite cropped to top rows and bottom rows. No new art. Both sprites
+    // sit at the IDENTICAL position/origin — only their crop differs — so the
+    // two crops reconstruct the whole bump seamlessly (it's literally the same
+    // sprite drawn twice, each masked to a different slice).
+    const midX = x + TILE
+    const BUMP_W = 8, BUMP_H = 11, TOP_ROWS = 5  // top 5 rows, bottom 6 rows
+    // base piece — bottom rows
+    const base = this.add.sprite(midX, bottomY, 'rock_bump').setScale(3)
+      .setOrigin(0.5, 1)
+      .setCrop(0, TOP_ROWS, BUMP_W, BUMP_H - TOP_ROWS)
+    register(base, midX, y)
+    // top piece — top rows, SAME position and origin as base, different crop
+    const top = this.add.sprite(midX, bottomY, 'rock_bump').setScale(3)
+      .setOrigin(0.5, 1)
+      .setCrop(0, 0, BUMP_W, TOP_ROWS)
+    register(top, midX, y - TILE)   // distinct key (one tile up) so it's its own piece
+    // the base is locked beneath the top — must mine the top off first so the
+    // top is never left floating
+    this.rockMineBlockedBy.set(`${midX},${y}`, `${midX},${y - TILE}`)
+  }
+
+  // Single source of truth for "everything physical on the map." Returns each
+  // occupant as a center + radius so placement systems (gen rock scatter today;
+  // future auto-placement) can ask one question — "where is it occupied?" —
+  // instead of re-walking every array by hand. Built from `obstacles` (which
+  // already aggregates buildings, posts, trees, non-enterables, rocks as tagged
+  // rects) plus honses. `pad` is extra clearance added to every radius so
+  // things keep a ring of space, not a barely-not-touching edge. Add a new
+  // physical category later → make sure it lands in `obstacles`, and it's
+  // covered here automatically.
+  getBlockers(pad = 40): { x: number; y: number; radius: number }[] {
+    const out: { x: number; y: number; radius: number }[] = []
+    for (const o of this.obstacles) {
+      // rect center, and a radius that encloses the rect's half-diagonal
+      const cx = o.x + o.w / 2
+      const cy = o.y + o.h / 2
+      const radius = Math.hypot(o.w, o.h) / 2 + pad
+      out.push({ x: cx, y: cy, radius })
+    }
+    for (const h of state.honses) {
+      out.push({ x: h.x, y: h.y, radius: 20 + pad })
+    }
+    return out
+  }
+
   private addRopeBlocker(aabb: { x: number; y: number; w: number; h: number }) {
     this.matter.add.rectangle(
       aabb.x + aabb.w / 2,
@@ -984,22 +1375,34 @@ export class Overworld extends Phaser.Scene {
   // its animation. `jump` true = a fresh drop, pops up then floats; false =
   // restored from a save, floats immediately. The float baseline (baseY) and
   // a per-item phase live on the sprite via data, read each frame in update().
-  private spawnDroppedSprite(x: number, y: number, type: ItemType, jump: boolean): Phaser.GameObjects.Sprite {
+  private spawnDroppedSprite(x: number, y: number, type: ItemType, jump: boolean, flyFromX?: number): Phaser.GameObjects.Sprite {
     const sprite = this.add.sprite(x, y, ITEMS[type].sprite)
       .setScale(ITEMS[type].scale)
       .setDepth(2)
     sprite.setData('baseY', y)
     sprite.setData('bobPhase', Math.random() * Math.PI * 2)
+    // fresh drops are locked from pickup briefly so they don't vanish underfoot;
+    // restored drops (from save) are immediately collectable.
+    sprite.setData('pickupAt', jump ? Date.now() + Overworld.PICKUP_DELAY_MS : 0)
     if (jump) {
       // not settled yet — the bob loop skips it so it can't fight the tween
       sprite.setData('settled', false)
       sprite.y = y - Overworld.DROP_JUMP_HEIGHT
+      // optional horizontal fly-out: start at flyFromX and arc to the final x
+      // (used by mining so ore visibly bursts away from the rock)
+      if (flyFromX !== undefined) sprite.x = flyFromX
       this.tweens.add({
         targets: sprite,
+        x,
         y,
         duration: Overworld.DROP_JUMP_MS,
         ease: 'Bounce.easeOut',
-        onComplete: () => sprite.setData('settled', true),
+        onComplete: () => {
+          // hand the bob phase off so the float starts exactly at rest (sin=0)
+          // and eases upward from there — no snap between the landing and bob.
+          sprite.setData('bobPhase', -Date.now() * Overworld.DROP_BOB_SPEED)
+          sprite.setData('settled', true)
+        },
       })
     } else {
       sprite.setData('settled', true)
@@ -1007,9 +1410,9 @@ export class Overworld extends Phaser.Scene {
     return sprite
   }
 
-  private dropStack(x: number, y: number, stack: ItemStack) {
+  private dropStack(x: number, y: number, stack: ItemStack, flyFromX?: number) {
     state.droppedItems.push({ x, y, stack })
-    this.droppedSprites.push(this.spawnDroppedSprite(x, y, stack.type, true))
+    this.droppedSprites.push(this.spawnDroppedSprite(x, y, stack.type, true, flyFromX))
     this.logPlacement(stack.type, x, y)
   }
 
@@ -1137,6 +1540,146 @@ export class Overworld extends Phaser.Scene {
     stack.count -= 1
     if (stack.count <= 0) state.inventory[slotIdx] = null
     this.registry.events.emit('inventory-changed')
+    return true
+  }
+
+  // Footprint for a placed crate at (cx, cy). Sprite is 8x8 at scale 2 → 16x16
+  // World-creation half of placing a crate: sprite + obstacle + state entry
+  // with a fresh empty grid, no gameplay checks (mirrors placePost / spawnHonse).
+  // Used by the dev console and for hardcoded map authoring. tryPlaceCrate
+  // handles the gameplay checks separately.
+  spawnCrate(x: number, y: number) {
+    state.placedCrates.push({ x, y, contents: createCrateContents() })
+    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(y + 8).setInteractive()
+    this.attachCrateOpenHandler(sprite, x, y)
+    this.placedCrateSprites.set(`${x},${y}`, sprite)
+    this.obstacles.push(this.makeCrateObstacle(x, y))
+  }
+
+  // on screen, so the obstacle is a 16x16 box centered on it. originX/originY
+  // are stamped so the box can be found and removed by crate position later
+  // (mirrors makePostObstacle).
+  private makeCrateObstacle(cx: number, cy: number) {
+    const SIZE = 16
+    return {
+      x: cx - SIZE / 2,
+      y: cy - SIZE / 2,
+      w: SIZE,
+      h: SIZE,
+      kind: 'crate' as ObstacleKind,
+      originX: cx,
+      originY: cy,
+    }
+  }
+
+  // Try to place a crate at the click position. Selected slot must be a crate.
+  // Range-checked like a post, snapped to the same grid, and refused if it
+  // would land on a plot, world structure, any existing obstacle, or a honse.
+  // Unlike posts, crates don't interlock — they reject overlap with everything,
+  // including other crates. On success the crate gets a fresh empty grid.
+  private tryPlaceCrate(clickX: number, clickY: number): boolean {
+    const slotIdx = state.selectedInventorySlot
+    const stack = state.inventory[slotIdx]
+    if (!stack || stack.type !== 'crate') return false
+    const dx = clickX - this.player.x
+    const dy = clickY - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+
+    const CRATE_GRID = 10
+    const x = Math.round(clickX / CRATE_GRID) * CRATE_GRID
+    const y = Math.round(clickY / CRATE_GRID) * CRATE_GRID
+
+    // refuse if a crate already sits on this exact grid cell
+    if (this.placedCrateSprites.has(`${x},${y}`)) return false
+
+    // refuse if inside any plot footprint
+    for (const v of this.plotViews) {
+      if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) return false
+    }
+    // refuse if inside any world structure footprint (~32px square)
+    for (const s of state.worldStructures) {
+      if (Math.abs(x - s.x) < 32 && Math.abs(y - s.y) < 32) return false
+    }
+    // refuse if the crate would overlap ANY existing obstacle (no interlock)
+    const newObs = this.makeCrateObstacle(x, y)
+    for (const o of this.obstacles) {
+      if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, o.x, o.y, o.w, o.h)) return false
+    }
+    // refuse if it would overlap any honse body
+    for (const h of state.honses) {
+      const b = getHonseBodyAABB(h)
+      if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, b.x, b.y, b.w, b.h)) return false
+    }
+
+    state.placedCrates.push({ x, y, contents: createCrateContents() })
+    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(y + 8).setInteractive()
+    this.attachCrateOpenHandler(sprite, x, y)
+    this.placedCrateSprites.set(`${x},${y}`, sprite)
+    this.obstacles.push(newObs)
+    this.logPlacement('crate', x, y)
+
+    stack.count -= 1
+    if (stack.count <= 0) state.inventory[slotIdx] = null
+    this.registry.events.emit('inventory-changed')
+    return true
+  }
+
+  // Find the placed crate nearest to (x, y) within hit radius, requiring the
+  // player to be within TOOL_RANGE of it, and open it. Returns true if a crate
+  // Wire a placed crate's sprite so clicking it opens the crate. The sprite is
+  // interactive (for the grab cursor), so it catches the click itself rather
+  // than letting it fall through to the world background. Left-click only, and
+  // only when no overworld tool is the active cursor item (a held tool/placeable
+  // takes precedence — same rule that blocks the build menu while a tool is
+  // selected). Single source for all three crate sprite creation sites.
+  private attachCrateOpenHandler(sprite: Phaser.GameObjects.Sprite, x: number, y: number) {
+    sprite.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (!p.leftButtonDown()) return
+      // axe held → destroy the crate (the sprite is interactive, so it catches
+      // this click itself; without routing here the click would never reach the
+      // worldBg axe handler).
+      if (state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+        this.tryAxeCrate(x, y)
+        return
+      }
+      // any other overworld tool held → let it be (don't open)
+      const tool = state.getSelectedTool()
+      const toolHeld = tool !== null && (tool.cursorContexts ?? ['overworld']).includes('overworld')
+      if (toolHeld) return
+      // nothing relevant held → open the crate
+      this.tryOpenCrate(x, y)
+    })
+  }
+
+  // was opened. For E, callers pass the player position (so the player is
+  // trivially in range); for click, the click point (so you must click on/near
+  // the crate AND be standing close enough).
+  private tryOpenCrate(x: number, y: number, hitRadius = 16): boolean {
+    // already open? bail — otherwise the same E/click that closes the panel
+    // (handled in UI) would reopen it the same frame.
+    const ui = this.scene.get('UI') as UI
+    if (ui.isCrateOpen()) return false
+    const hitSq = hitRadius * hitRadius
+    let best = -1
+    let bestDistSq = hitSq
+    for (let i = 0; i < state.placedCrates.length; i++) {
+      const c = state.placedCrates[i]
+      const dx = x - c.x
+      const dy = y - c.y
+      const dSq = dx * dx + dy * dy
+      if (dSq <= bestDistSq) {
+        bestDistSq = dSq
+        best = i
+      }
+    }
+    if (best < 0) return false
+    // player must be close enough to reach it
+    const c = state.placedCrates[best]
+    const pdx = c.x - this.player.x
+    const pdy = c.y - this.player.y
+    if (pdx * pdx + pdy * pdy > TOOL_RANGE * TOOL_RANGE) return false
+
+    this.registry.events.emit('open-crate', best)
     return true
   }
 
@@ -1519,7 +2062,7 @@ export class Overworld extends Phaser.Scene {
     // the logical position in state, so wiggling sprite.y here is harmless.
     const bobNow = Date.now()
     for (const s of this.droppedSprites) {
-      if (!s || !s.getData('settled')) continue
+      if (!s || !s.getData('settled') || s.getData('attracting')) continue
       const baseY = s.getData('baseY') as number
       const phase = s.getData('bobPhase') as number
       s.y = baseY + Math.sin(bobNow * Overworld.DROP_BOB_SPEED + phase) * Overworld.DROP_BOB_AMP
@@ -1533,10 +2076,17 @@ export class Overworld extends Phaser.Scene {
     // as click, context-dependent on whether already mounted. Unlike click,
     // E ignores held tools/rope — it's a dedicated key with no other meaning.
     if (overworldVisible && Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      if (state.mounted !== null) {
+      const ui = this.scene.get('UI') as UI
+      if (ui.isCrateOpen()) {
+        // crate open → E closes it (single owner of the toggle, so the same
+        // keypress can never close-then-reopen)
+        ui.closeCrate()
+      } else if (state.mounted !== null) {
         this.dismount()
-      } else {
-        this.mountNearestHonse()
+      } else if (!this.mountNearestHonse()) {
+        // no honse in range — open the nearest crate within reach (E has no
+        // cursor, so search a radius around the player, not a tight on-sprite hit)
+        this.tryOpenCrate(this.player.x, this.player.y, 75)
       }
     }
 
@@ -1696,6 +2246,18 @@ export class Overworld extends Phaser.Scene {
     const px = this.player.x
     const py = this.player.y
 
+    // auto-close the crate panel if the player walks out of reach. Uses the
+    // same radius as E-open (75) so the open / stay-open boundary is one value.
+    if (overworldVisible) {
+      const ui = this.scene.get('UI') as UI
+      const cratePos = ui.openCratePos()
+      if (cratePos) {
+        const dx = px - cratePos.x
+        const dy = py - cratePos.y
+        if (dx * dx + dy * dy > 75 * 75) ui.closeCrate()
+      }
+    }
+
     // pickup any revealed coins the player has walked over
     if (overworldVisible && state.revealedItems.length > 0) {
       const pickSq = Overworld.PICKUP_RADIUS * Overworld.PICKUP_RADIUS
@@ -1713,14 +2275,49 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // pickup any dropped items the player has walked over
+    // pickup any dropped items the player has walked over. Items within the
+    // larger attract radius slide toward the player (loot magnet) and are
+    // collected once they reach the pickup radius — so ore that landed half
+    // inside a rock still comes to you when you're close enough.
     if (overworldVisible && state.droppedItems.length > 0) {
       const pickSq = Overworld.PICKUP_RADIUS * Overworld.PICKUP_RADIUS
+      const attractSq = Overworld.PICKUP_ATTRACT_RADIUS * Overworld.PICKUP_ATTRACT_RADIUS
       for (let i = state.droppedItems.length - 1; i >= 0; i--) {
         const d = state.droppedItems[i]
-        const dx = d.x - px
-        const dy = d.y - py
-        if (dx * dx + dy * dy > pickSq) continue
+        const sprite = this.droppedSprites[i]
+        // respect the post-drop pickup delay so fresh drops don't vanish underfoot
+        if (sprite && now < (sprite.getData('pickupAt') as number)) continue
+        const dx = px - d.x
+        const dy = py - d.y
+        const distSq = dx * dx + dy * dy
+
+        // outside attract range — leave it floating
+        if (distSq > attractSq) {
+          if (sprite) sprite.setData('attracting', false)
+          continue
+        }
+
+        // within attract range but not yet close enough to collect — slide it
+        // toward the player. Flag it so the bob loop stops fighting its position.
+        if (distSq > pickSq) {
+          if (sprite) {
+            // only magnet what the player can actually take — if there's no
+            // room left for this stack, release it so it sits on the ground
+            // instead of trailing the player forever.
+            if (state.roomFor(d.stack) <= 0) {
+              sprite.setData('attracting', false)
+              continue
+            }
+            sprite.setData('attracting', true)
+            sprite.x += dx * Overworld.PICKUP_ATTRACT_EASE
+            sprite.y += dy * Overworld.PICKUP_ATTRACT_EASE
+            d.x = sprite.x
+            d.y = sprite.y
+          }
+          continue
+        }
+
+        // close enough — collect
         const added = state.inventoryAddAnywhere(d.stack)
         if (added > 0) {
           this.registry.events.emit('inventory-changed')

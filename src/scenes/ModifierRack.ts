@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { state, MODIFIER_SLOTS_PER_PLOT } from '../game/state'
+import { state, MODIFIER_SLOTS_PER_PLOT, isBag } from '../game/state'
 import { type ItemStack } from '../items/types'
 import { type SlotBinding } from '../ui/SlotBinding'
 import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
@@ -58,6 +58,9 @@ export function buildModifierRack(
     slotVisuals.push({ x: rackX, y: slotY, getStack, icon: null, count: null, lastType: null, lastCount: 0 })
 
     const binding = makeStorageBinding({ x: rackX, y: slotY }, getStack, setStack, { onChange: () => {} })
+    // bags can't go in the modifier rack — reject them
+    const baseAccepts = binding.accepts
+    binding.accepts = (itemType) => !isBag(itemType) && baseAccepts(itemType)
     bindings.push(binding)
     dc.register(binding)
 

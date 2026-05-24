@@ -657,6 +657,119 @@ export const ROCK_BUMP: Sprite = [
   [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkM],
 ]
 
+// Stone: a single rounded rock chunk. Reuses the ROCK tile palette
+// (rkL/rkM/rkD) so the carried item stays visually in sync if the rock
+// heaps are ever recolored. 8x8. Must live below the ROCK section because
+// const isn't hoisted — rkL/rkM/rkD are declared there.
+export const ITEM_STONE: Sprite = [
+  [_,_,rkM,rkM,rkM,_,_,_],
+  [_,rkM,rkL,rkL,rkM,rkM,_,_],
+  [rkM,rkL,rkL,rkM,rkM,rkM,rkM,_],
+  [rkM,rkL,rkM,rkM,rkM,rkD,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkD,rkM,rkM,rkM],
+  [rkM,rkM,rkM,rkM,rkM,rkM,rkM,rkD],
+  [_,rkM,rkM,rkD,rkM,rkM,rkD,_],
+  [_,_,rkD,rkM,rkM,rkD,_,_],
+]
+
+// Crate: an 8x8 wooden storage box. Hard outline, plank fill, cross-batten on
+// the face — reads as a crate at item size. Wood-brown palette kept in step
+// with the post particle browns so placed crates sit in the same material
+// family as posts/fences. Declared with its palette just above per the
+// no-hoist rule.
+const crL = '#9C7248'   // light plank
+const crM = '#8B5A2B'   // mid plank
+const crD = '#4A3318'   // dark outline / batten shadow
+export const ITEM_CRATE: Sprite = [
+  [crD,crD,crD,crD,crD,crD,crD,crD],
+  [crD,crM,crL,crM,crM,crL,crM,crD],
+  [crD,crL,crD,crM,crM,crD,crL,crD],
+  [crD,crM,crM,crD,crD,crM,crM,crD],
+  [crD,crM,crM,crD,crD,crM,crM,crD],
+  [crD,crL,crD,crM,crM,crD,crL,crD],
+  [crD,crM,crL,crM,crM,crL,crM,crD],
+  [crD,crD,crD,crD,crD,crD,crD,crD],
+]
+
+// ---- ORES ---- same rounded-chunk shape as ITEM_STONE, recolored per ore.
+// Each has its own light/mid/dark palette. Texas-grounded set:
+// coal, iron (limonite rust), copper, silver, gold.
+
+// Coal: near-black with a faint gray sheen.
+const coL = '#5A5A5A'
+const coM = '#2E2E2E'
+const coD = '#141414'
+export const ITEM_COAL: Sprite = [
+  [_,_,coM,coM,coM,_,_,_],
+  [_,coM,coL,coL,coM,coM,_,_],
+  [coM,coL,coL,coM,coM,coM,coM,_],
+  [coM,coL,coM,coM,coM,coD,coM,coM],
+  [coM,coM,coM,coM,coD,coM,coM,coM],
+  [coM,coM,coM,coM,coM,coM,coM,coD],
+  [_,coM,coM,coD,coM,coM,coD,_],
+  [_,_,coD,coM,coM,coD,_,_],
+]
+
+// Iron: rusty red-brown (limonite, the East Texas ore — literally rust colored).
+const irL = '#B5713F'
+const irM = '#8A4A24'
+const irD = '#552A12'
+export const ITEM_IRON: Sprite = [
+  [_,_,irM,irM,irM,_,_,_],
+  [_,irM,irL,irL,irM,irM,_,_],
+  [irM,irL,irL,irM,irM,irM,irM,_],
+  [irM,irL,irM,irM,irM,irD,irM,irM],
+  [irM,irM,irM,irM,irD,irM,irM,irM],
+  [irM,irM,irM,irM,irM,irM,irM,irD],
+  [_,irM,irM,irD,irM,irM,irD,_],
+  [_,_,irD,irM,irM,irD,_,_],
+]
+
+// Copper: bright orange-brown with a hint of patina.
+const cuL = '#E08A4A'
+const cuM = '#C46A2E'
+const cuD = '#7A3D16'
+export const ITEM_COPPER: Sprite = [
+  [_,_,cuM,cuM,cuM,_,_,_],
+  [_,cuM,cuL,cuL,cuM,cuM,_,_],
+  [cuM,cuL,cuL,cuM,cuM,cuM,cuM,_],
+  [cuM,cuL,cuM,cuM,cuM,cuD,cuM,cuM],
+  [cuM,cuM,cuM,cuM,cuD,cuM,cuM,cuM],
+  [cuM,cuM,cuM,cuM,cuM,cuM,cuM,cuD],
+  [_,cuM,cuM,cuD,cuM,cuM,cuD,_],
+  [_,_,cuD,cuM,cuM,cuD,_,_],
+]
+
+// Silver: pale cool gray-white. The Texas prize metal.
+const siL = '#F0F2F5'
+const siM = '#C2C8D0'
+const siD = '#8A929C'
+export const ITEM_SILVER: Sprite = [
+  [_,_,siM,siM,siM,_,_,_],
+  [_,siM,siL,siL,siM,siM,_,_],
+  [siM,siL,siL,siM,siM,siM,siM,_],
+  [siM,siL,siM,siM,siM,siD,siM,siM],
+  [siM,siM,siM,siM,siD,siM,siM,siM],
+  [siM,siM,siM,siM,siM,siM,siM,siD],
+  [_,siM,siM,siD,siM,siM,siD,_],
+  [_,_,siD,siM,siM,siD,_,_],
+]
+
+// Gold: warm yellow. The jackpot — near-mythical in Texas.
+const goL = '#FFE680'
+const goM = '#E0A92E'
+const goD = '#9C6E14'
+export const ITEM_GOLD: Sprite = [
+  [_,_,goM,goM,goM,_,_,_],
+  [_,goM,goL,goL,goM,goM,_,_],
+  [goM,goL,goL,goM,goM,goM,goM,_],
+  [goM,goL,goM,goM,goM,goD,goM,goM],
+  [goM,goM,goM,goM,goD,goM,goM,goM],
+  [goM,goM,goM,goM,goM,goM,goM,goD],
+  [_,goM,goM,goD,goM,goM,goD,_],
+  [_,_,goD,goM,goM,goD,_,_],
+]
+
 export const ITEM_SHOVEL: Sprite = [
   [_,_,_,_,_,_,svH,_],
   [_,_,_,_,_,svH,_,_],
@@ -679,6 +792,19 @@ export const ITEM_AXE: Sprite = [
   [_,_,svH,_,_,_,_,_],
   [_,svH,_,_,_,_,_,_],
   [svH,_,_,_,_,_,_,_],
+]
+
+// Pickaxe: wood handle corner-to-corner with a narrow pointed head at top-right.
+// Same tool-family palette as shovel and axe (svH handle, svM/svD metal). 8x8.
+export const ITEM_PICKAXE: Sprite = [
+  [_,_,_,svM,svM,svM,svM,svM,_,_,_],
+  [_,_,_,_,_,svM,svD,svD,svD,_,_],
+  [_,_,_,_,svH,svD,_,_,svD,_,_],
+  [_,_,_,svH,_,_,_,_,_,_,_],
+  [_,_,svH,_,_,_,_,_,_,_,_],
+  [_,svH,_,_,_,_,_,_,_,_,_],
+  [svH,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_],
 ]
 
 // Bag: brown leather pouch with drawstring. 8x8.
@@ -1085,6 +1211,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_bread: ITEM_BREAD,
   item_shovel: ITEM_SHOVEL,
   item_axe: ITEM_AXE,
+  item_pickaxe: ITEM_PICKAXE,
   shovel_dig: SHOVEL_DIG,
   dirt_patch: DIRT_PATCH,
   rock_tl: ROCK_TL,
@@ -1121,6 +1248,13 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   cedar_post: CEDAR_POST,
   item_cedar_post: ITEM_CEDAR_POST,
   item_wood: ITEM_WOOD,
+  item_crate: ITEM_CRATE,
+  item_stone: ITEM_STONE,
+  item_coal: ITEM_COAL,
+  item_iron: ITEM_IRON,
+  item_copper: ITEM_COPPER,
+  item_silver: ITEM_SILVER,
+  item_gold: ITEM_GOLD,
   brush_ground: BRUSH_GROUND,
   honse: HONSE,
 }

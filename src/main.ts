@@ -14,8 +14,7 @@ const game = new Phaser.Game({
   pixelArt: true,
   backgroundColor: '#2A2520',
   scale: {
-    mode: Phaser.Scale.ENVELOP,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    mode: Phaser.Scale.RESIZE,
   },
   physics: {
     default: 'matter',
@@ -93,7 +92,13 @@ window.spawnItem = (name: string, x: number, y: number) => {
     case 'honse':
       overworld.spawnHonse(x, y)
       return `spawned honse at ${x}, ${y}`
+    case 'rock':
+      overworld.spawnRockFormation(x, y)
+      return `spawned rock formation at ${x}, ${y}`
+    case 'crate':
+      overworld.spawnCrate(x, y)
+      return `spawned crate at ${x}, ${y}`
     default:
-      return `can't spawn "${name}". spawnable: horse`
+      return `can't spawn "${name}". spawnable: horse, rock`
   }
 }

@@ -76,5 +76,14 @@ export function attachSlotTooltip(
     bg.setVisible(false)
   })
 
+  // When the slot frame is destroyed (panel close), tear down its tooltip too.
+  // Otherwise a tooltip left visible — e.g. E-closing the crate mid-hover, where
+  // no pointerout fires — is orphaned on screen. Ties the tooltip's lifetime to
+  // the slot, so any panel that destroys its slots is cleaned up automatically.
+  slotFrame.once('destroy', () => {
+    text.destroy()
+    bg.destroy()
+  })
+
   return { text, bg }
 }

@@ -95,6 +95,28 @@ export class CursorController {
         }
       }
     }
+    // Crate-destroy cursor — red X when the axe is held over a placed crate
+    // within reach. Mirrors the post-destroy affordance.
+    {
+      const interiorActiveCX = this.scene.scene.manager.isActive('Interior')
+      if (!interiorActiveCX && state.mounted === null
+          && state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+        const overworld = this.scene.scene.manager.getScene('Overworld') as any
+        const playerObj = overworld?.player as Phaser.GameObjects.Sprite | undefined
+        const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+        if (overworld?.isNearCrate && playerObj && cam) {
+          const p = this.scene.input.activePointer
+          const world = cam.getWorldPoint(p.x, p.y)
+          const dx = world.x - playerObj.x
+          const dy = world.y - playerObj.y
+          if (dx * dx + dy * dy <= TOOL_RANGE * TOOL_RANGE && overworld.isNearCrate(world.x, world.y)) {
+            this.setTexture('cursor_x', 2)
+            if (this.cursor.alpha !== 1) this.cursor.setAlpha(1)
+            return
+          }
+        }
+      }
+    }
     // Tool cursor — only show if the selected tool says it's usable in the
     // current scene context. Tools default to overworld-only.
     const tool = state.getSelectedTool()
@@ -173,6 +195,28 @@ export class CursorController {
           const dy = h.y - playerObj.y
           if (dx * dx + dy * dy <= rangeSq) {
             this.setTexture('honse', 1)
+            return
+          }
+        }
+      }
+    }
+    // Crate open affordance — grab cursor when the pointer is over a placed
+    // crate AND the player is within reach. Out of range shows the normal
+    // pointer (no false affordance), matching how tool cursors gate on range.
+    {
+      const interiorActiveC = this.scene.scene.manager.isActive('Interior')
+      if (!interiorActiveC && state.mounted === null && !state.getSelectedTool()) {
+        const overworld = this.scene.scene.manager.getScene('Overworld') as any
+        const playerObj = overworld?.player as Phaser.GameObjects.Sprite | undefined
+        const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+        if (overworld?.isNearCrate && playerObj && cam) {
+          const pt = this.scene.input.activePointer
+          const world = cam.getWorldPoint(pt.x, pt.y)
+          const dx = world.x - playerObj.x
+          const dy = world.y - playerObj.y
+          if (dx * dx + dy * dy <= TOOL_RANGE * TOOL_RANGE && overworld.isNearCrate(world.x, world.y)) {
+            this.setTexture('cursor_grab', 2)
+            if (this.cursor.alpha !== 1) this.cursor.setAlpha(1)
             return
           }
         }

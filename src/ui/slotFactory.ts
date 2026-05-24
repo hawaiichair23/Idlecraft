@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
 import { ITEMS, type ItemStack, type ItemType } from '../items/types'
+import { isBag } from '../game/state'
 import { type SlotBinding } from './SlotBinding'
 import { attachSlotHover, attachSlotTooltip } from './hover'
 
@@ -62,6 +63,9 @@ export function makeStorageBinding(
       const n = Math.min(count, cur.count)
       if (n <= 0) return null
       const taken: ItemStack = { type: cur.type, count: n }
+      // preserve bag contents on the taken stack so moving a bag never drops
+      // its items (bags are maxStack 1, so taking always moves the whole bag)
+      if (cur.contents) taken.contents = cur.contents
       cur.count -= n
       if (cur.count <= 0) setStack(null)
       cb.onChange()
@@ -72,7 +76,10 @@ export function makeStorageBinding(
       const cap = ITEMS[stack.type].maxStack
       if (!cur) {
         const moved = Math.min(cap, stack.count)
-        setStack({ type: stack.type, count: moved })
+        const placed: ItemStack = { type: stack.type, count: moved }
+        // carry bag contents into the destination slot
+        if (stack.contents) placed.contents = stack.contents
+        setStack(placed)
         cb.onChange()
         return moved
       }
@@ -145,5 +152,29 @@ export function makeCrafterInputBinding(
   cb: SlotCallbacks,
 ): SlotBinding {
   // Crafter input is identical to a storage slot: any type, stack same-type.
-  return makeStorageBinding(pos, getStack, setStack, cb)
+  // Bags are rejected — you can't craft with a bag.
+  const binding = makeStorageBinding(pos, getStack, setStack, cb)
+  const baseAccepts = binding.accepts
+  binding.accepts = (itemType) => !isBag(itemType) && baseAccepts(itemType)
+  return binding
+}
+
+// Distribute a stack across a set of slot bindings, Minecraft-style: first
+// merge into existing stacks of the same type, then fill empty/accepting slots.
+// Mutates `stack` (subtracts what was placed). Shared by interior shift-click
+// and the crate panel so both behave identically.
+export function distributeIntoBindings(stack: ItemStack, bindings: SlotBinding[]) {
+  // Pass 1: merge into existing stacks of the same type
+  for (const b of bindings) {
+    if (stack.count <= 0) break
+    const existing = b.peek()
+    if (!existing || existing.type !== stack.type) continue
+    stack.count -= b.offer(stack)
+  }
+  // Pass 2: place into empty/accepting slots
+  for (const b of bindings) {
+    if (stack.count <= 0) break
+    if (!b.accepts(stack.type)) continue
+    stack.count -= b.offer(stack)
+  }
 }

@@ -1,17 +1,15 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { BUILDINGS, BUILDING_LIST, INVENTORY_SIZE, isBag, state, type BuiltType } from '../game/state'
+import { BUILDINGS, BUILDING_LIST, INVENTORY_SIZE, CRATE_SLOTS, isBag, state, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { DragController } from '../ui/DragController'
 import { CursorController } from '../ui/CursorController'
 import type { SlotBinding } from '../ui/SlotBinding'
 import { attachSlotHover, attachSlotTooltip } from '../ui/hover'
+import { makeStorageBinding, distributeIntoBindings } from '../ui/slotFactory'
 import type { Interior } from './Interior'
 
 const BAR_HEIGHT = 40
-// ENVELOP scale mode overflows the screen edges to fill it, cropping anything
-// flush to the top/bottom. Inset the bars by this much so they stay visible.
-const EDGE_INSET = 95
 
 export class UI extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.BitmapText
@@ -22,6 +20,12 @@ export class UI extends Phaser.Scene {
   private invIcons: (Phaser.GameObjects.Sprite | null)[] = []
   private invCounts: (Phaser.GameObjects.BitmapText | null)[] = []
   private invSlotPos: { x: number; y: number }[] = []
+  // hotbar teardown tracking — every object and drag-binding the bar creates,
+  // so a resize can destroy + rebuild the bar cleanly (mirrors BagPanel).
+  private hotbarObjects: Phaser.GameObjects.GameObject[] = []
+  private hotbarBindings: SlotBinding[] = []
+  // top bar + menu shade kept as refs so resize can re-stretch them.
+  private topBar!: Phaser.GameObjects.Rectangle
   // persistent hotbar selection indicator
   private selectionIndicator!: Phaser.GameObjects.Rectangle
   // Minecraft-style item-name label that appears above the selected slot and
@@ -39,6 +43,19 @@ export class UI extends Phaser.Scene {
   private menuContainer!: Phaser.GameObjects.Container
   private menuShade!: Phaser.GameObjects.Rectangle
   private menuPlotIndex: number = -1
+
+  // ---- crate panel (on-field overlay) ----
+  // Index into state.placedCrates for the currently open crate, or -1.
+  private openCrateIndex = -1
+  // All Phaser objects created for the current crate panel — destroyed on close.
+  private crateObjects: Phaser.GameObjects.GameObject[] = []
+  // Bindings registered with the drag controller for this panel — unregistered on close.
+  private crateBindings: SlotBinding[] = []
+  // Per-slot icon and count refs for redraw.
+  private crateIcons: (Phaser.GameObjects.Sprite | null)[] = []
+  private crateCounts: (Phaser.GameObjects.BitmapText | null)[] = []
+  // Shade behind the crate panel — blocks clicks and closes on click.
+  private crateShade: Phaser.GameObjects.Rectangle | null = null
   // per-row text refs, so we can re-tint them when affordability changes
   private menuRowTexts: Record<string, Phaser.GameObjects.BitmapText[]> = {}
 
@@ -48,6 +65,20 @@ export class UI extends Phaser.Scene {
 
   getDragController(): DragController {
     return this.dragController
+  }
+
+  // True while a crate storage panel is open. Overworld reads this to suppress
+  // its own click/E open logic so the same keypress that closes the panel
+  // doesn't immediately reopen it.
+  isCrateOpen(): boolean {
+    return this.openCrateIndex >= 0
+  }
+
+  // Position of the currently open crate, or null if none is open. Lets the
+  // Overworld range-check the player against it each frame to auto-close.
+  openCratePos(): { x: number; y: number } | null {
+    const c = state.placedCrates[this.openCrateIndex]
+    return c ? { x: c.x, y: c.y } : null
   }
 
   preload() {
@@ -68,9 +99,9 @@ export class UI extends Phaser.Scene {
     this.cursorController = new CursorController(this)
 
     // top bar
-    this.add.rectangle(0, EDGE_INSET, w, BAR_HEIGHT, COLORS.uiBarBg).setOrigin(0, 0)
+    this.topBar = this.add.rectangle(0, 0, w, BAR_HEIGHT, COLORS.uiBarBg).setOrigin(0, 0)
     const initialGold = (this.registry.get('gold') as number | undefined) ?? 0
-    this.goldText = this.add.bitmapText(12, EDGE_INSET + BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, 20)
+    this.goldText = this.add.bitmapText(12, BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, 20)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiGold)
 
@@ -118,9 +149,16 @@ export class UI extends Phaser.Scene {
       .setVisible(false)
     this.menuShade.on('pointerdown', () => this.closeMenu())
 
-    // Esc or E closes the build menu if it's open
-    this.input.keyboard!.on('keydown-ESC', () => { if (this.menuContainer.visible) this.closeMenu() })
-    this.input.keyboard!.on('keydown-E', () => { if (this.menuContainer.visible) this.closeMenu() })
+    // Esc closes the build menu or crate panel if open. (E is owned by the
+    // Overworld, which toggles the crate open/closed — kept there to avoid a
+    // two-handler race that would reopen the crate on the same keypress.)
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (this.menuContainer.visible) this.closeMenu()
+      else if (this.openCrateIndex >= 0) this.closeCrate()
+    })
+    this.input.keyboard!.on('keydown-E', () => {
+      if (this.menuContainer.visible) this.closeMenu()
+    })
 
     this.menuContainer = this.add.container(w / 2, h / 2).setVisible(false)
     // Menu contents are built each time the menu opens (in rebuildBuildMenu),
@@ -131,9 +169,36 @@ export class UI extends Phaser.Scene {
       this.openMenu(plotIndex)
     })
 
-    // close the build menu when entering any building interior
+    // listen for crate clicks/E from Overworld
+    this.registry.events.on('open-crate', (crateIndex: number) => {
+      this.openCrate(crateIndex)
+    })
+
+    // close the build menu or crate panel when entering any building interior
     this.registry.events.on('interior-entered', () => {
       if (this.menuContainer.visible) this.closeMenu()
+      if (this.openCrateIndex >= 0) this.closeCrate()
+    })
+
+    // Under RESIZE scale mode the canvas tracks the window, so these hand-placed
+    // UI elements must re-anchor to the new dimensions. The hotbar is fully torn
+    // down and rebuilt (its drag closures capture coords by value, so they have
+    // to be recreated, not just moved); bag panels follow via syncBagPanels.
+    this.scale.on('resize', (gameSize: Phaser.Structs.Size) => {
+      const nw = gameSize.width
+      const nh = gameSize.height
+      this.topBar.setSize(nw, BAR_HEIGHT)
+      this.menuShade.setSize(nw, nh)
+      this.menuContainer.setPosition(nw / 2, nh / 2)
+      this.teardownInventoryBar()
+      this.buildInventoryBar(nw, nh)
+      // bag panels are positioned from the old size too — destroy them so
+      // syncBagPanels recreates each at the new dimensions.
+      for (let i = 0; i < this.bagPanels.length; i++) {
+        this.bagPanels[i]?.destroy()
+        this.bagPanels[i] = null
+      }
+      this.syncBagPanels()
     })
   }
 
@@ -261,18 +326,21 @@ export class UI extends Phaser.Scene {
 
     const barW = layoutW + PAD_X * 2
     const barH = SLOT + PAD_Y * 2
-    const barY = h - barH / 2 - EDGE_INSET   // inset from bottom so ENVELOP overflow doesn't crop it
+    const barY = h - barH / 2
 
-    // 9-sliced menu background as the bar
-    this.add.nineslice(w / 2, barY, 'menu-bg', undefined, barW, barH, 16, 16, 16, 16)
+    // 9-sliced menu background as the bar. Depth 150 keeps the hotbar above the
+    // crate blocker (depth 100) so it stays clickable while a crate is open.
+    const barBg = this.add.nineslice(w / 2, barY, 'menu-bg', undefined, barW, barH, 16, 16, 16, 16).setDepth(150)
+    this.hotbarObjects.push(barBg)
 
     const startX = w / 2 - layoutW / 2 + SLOT / 2
     for (let i = 0; i < INVENTORY_SIZE; i++) {
       const slotIndex = i
       const x = startX + i * (SLOT + GAP)
-      const slotImg = this.add.image(x, barY, 'menu-slot').setInteractive()
-      attachSlotHover(this, slotImg, x, barY)
+      const slotImg = this.add.image(x, barY, 'menu-slot').setInteractive().setDepth(200)
+      const hoverObj = attachSlotHover(this, slotImg, x, barY)
       attachSlotTooltip(this, slotImg, x, barY, () => state.inventory[slotIndex])
+      this.hotbarObjects.push(slotImg, hoverObj)
 
       this.invIcons[slotIndex] = null
       this.invCounts[slotIndex] = null
@@ -315,6 +383,7 @@ export class UI extends Phaser.Scene {
         },
       }
       this.dragController.register(binding)
+      this.hotbarBindings.push(binding)
 
       slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
         if ((p.event as MouseEvent).shiftKey) {
@@ -350,6 +419,22 @@ export class UI extends Phaser.Scene {
       .setTint(0xFFFFFF)
       .setDepth(10001)
       .setVisible(false)
+
+    this.hotbarObjects.push(this.selectionIndicator, this.selectionLabelBg, this.selectionLabel)
+  }
+
+  // Destroy every object and unregister every binding the hotbar created, so
+  // buildInventoryBar can run again on resize without leaking or leaving stale
+  // closures. Slot icons/counts live in invIcons/invCounts and are cleared too.
+  private teardownInventoryBar() {
+    for (const b of this.hotbarBindings) this.dragController.unregister(b)
+    this.hotbarBindings = []
+    for (const obj of this.hotbarObjects) obj.destroy()
+    this.hotbarObjects = []
+    for (const icon of this.invIcons) icon?.destroy()
+    for (const count of this.invCounts) count?.destroy()
+    this.invIcons = []
+    this.invCounts = []
   }
 
   // Create panels for new bags, destroy panels for removed bags. Each panel
@@ -438,11 +523,173 @@ export class UI extends Phaser.Scene {
     this.invIcons[i] = null
     this.invCounts[i] = null
     if (!stack) return
-    this.invIcons[i] = this.add.sprite(x, y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale)
+    this.invIcons[i] = this.add.sprite(x, y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale).setDepth(200)
     if (stack.count > 1) {
       this.invCounts[i] = this.add.bitmapText(x + 23, y + 23, 'main', String(stack.count), 20)
         .setOrigin(1, 1)
         .setTint(COLORS.uiText)
+        .setDepth(201)
+    }
+  }
+
+  // ---- Crate panel ----
+
+  private openCrate(crateIndex: number) {
+    // close any already-open crate first
+    if (this.openCrateIndex >= 0) this.closeCrate()
+    // also close the build menu if open
+    if (this.menuContainer.visible) this.closeMenu()
+
+    this.openCrateIndex = crateIndex
+    const crate = state.placedCrates[crateIndex]
+    if (!crate) return
+
+    const COLS = 6
+    const ROWS = 4
+    const SLOT = 48
+    const SLOT_GAP = 4
+    const PANEL_PAD = 36
+    const TITLE_H = 40
+
+    const w = this.cameras.main.width
+    const h = this.cameras.main.height
+
+    // Invisible click-blocker over the play area only (NOT the hotbar). Closes
+    // the crate on click and absorbs the click so it doesn't reach the world.
+    // The hotbar strip below stays live so items can be dragged/shift-clicked
+    // between inventory and crate.
+    // Full play-area-to-bottom blocker. It sits at a low depth (below the
+    // hotbar and bag panels, which are bumped above it), so those stay
+    // clickable while every empty spot — including the bottom strip beside
+    // the hotbar — hits the blocker and closes the crate.
+    const blockerH = h - UI_BAR_HEIGHT
+    this.crateShade = this.add.rectangle(0, UI_BAR_HEIGHT, w, blockerH, 0x000000, 0)
+      .setOrigin(0, 0)
+      .setInteractive()
+      .setDepth(100)
+    this.crateShade.on('pointerdown', () => this.closeCrate())
+    this.crateObjects.push(this.crateShade)
+
+    // panel dimensions
+    const gridW = COLS * SLOT + (COLS - 1) * SLOT_GAP
+    const gridH = ROWS * SLOT + (ROWS - 1) * SLOT_GAP
+    const panelW = gridW + PANEL_PAD * 2
+    const panelH = PANEL_PAD + TITLE_H + gridH + PANEL_PAD
+
+    const playAreaTop = UI_BAR_HEIGHT
+    const playAreaH = h - UI_BAR_HEIGHT - (h - this.invSlotPos[0].y + SLOT / 2 + 12)
+    const panelX = w / 2
+    const panelY = playAreaTop + playAreaH / 2
+
+    // 9-slice panel background
+    const bg = this.add.nineslice(panelX, panelY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16)
+      .setTint(COLORS.interiorPanel)
+      .setDepth(9001)
+    this.crateObjects.push(bg)
+
+    // title
+    const titleY = panelY - panelH / 2 + PANEL_PAD + 16
+    const title = this.add.bitmapText(panelX, titleY, 'main', 'Crate', 32)
+      .setOrigin(0.5, 0.5)
+      .setTint(COLORS.uiText)
+      .setDepth(9002)
+    this.crateObjects.push(title)
+
+    // slot grid
+    const gridTop = titleY + TITLE_H / 2 + SLOT_GAP
+    const gridLeft = panelX - gridW / 2 + SLOT / 2
+
+    this.crateIcons = Array.from({ length: CRATE_SLOTS }, () => null)
+    this.crateCounts = Array.from({ length: CRATE_SLOTS }, () => null)
+
+    const dc = this.dragController
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const i = r * COLS + c
+        const x = gridLeft + c * (SLOT + SLOT_GAP)
+        const y = gridTop + SLOT / 2 + r * (SLOT + SLOT_GAP)
+
+        const getStack = () => crate.contents[i]
+        const setStack = (s: ItemStack | null) => { crate.contents[i] = s }
+
+        const slotImg = this.add.image(x, y, 'menu-slot')
+          .setTint(COLORS.interiorPanel)
+          .setInteractive()
+          .setDepth(9002)
+        const hoverObj = attachSlotHover(this, slotImg, x, y)
+        ;(hoverObj as Phaser.GameObjects.Rectangle).setDepth(9003)
+        attachSlotTooltip(this, slotImg, x, y, getStack, -44)
+        this.crateObjects.push(slotImg, hoverObj)
+
+        const binding = makeStorageBinding({ x, y }, getStack, setStack, {
+          onChange: () => {
+            this.redrawCrateSlot(i, x, y)
+            // a bag may have moved into/out of this slot — resync bag panels
+            // (destroys the panel for a bag stored in the crate) and hotbar.
+            this.registry.events.emit('inventory-changed')
+          },
+        })
+        this.crateBindings.push(binding)
+        dc.register(binding)
+
+        slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+          if ((p.event as MouseEvent).shiftKey) {
+            // shift-click: move crate slot → inventory
+            const peek = binding.peek()
+            if (!peek) return
+            const stack = binding.take(peek.count)
+            if (!stack) return
+            state.inventoryAddAnywhere(stack)
+            if (stack.count > 0) binding.restore(stack)
+            this.registry.events.emit('inventory-changed')
+            return
+          }
+          dc.handleSlotClick(binding, p)
+        })
+
+        // initial render
+        this.redrawCrateSlot(i, x, y)
+      }
+    }
+  }
+
+  // Public so the Overworld E-key (single owner of the crate toggle) can close.
+  closeCrate() {
+    // unregister all crate bindings from the drag controller
+    const dc = this.dragController
+    for (const b of this.crateBindings) dc.unregister(b)
+    this.crateBindings = []
+    // destroy all crate icons and counts
+    for (const icon of this.crateIcons) icon?.destroy()
+    for (const count of this.crateCounts) count?.destroy()
+    this.crateIcons = []
+    this.crateCounts = []
+    // destroy all panel objects (shade, bg, slots, title)
+    for (const obj of this.crateObjects) obj.destroy()
+    this.crateObjects = []
+    this.crateShade = null
+    this.openCrateIndex = -1
+  }
+
+  private redrawCrateSlot(i: number, x: number, y: number) {
+    this.crateIcons[i]?.destroy()
+    this.crateCounts[i]?.destroy()
+    this.crateIcons[i] = null
+    this.crateCounts[i] = null
+    if (this.openCrateIndex < 0) return
+    const crate = state.placedCrates[this.openCrateIndex]
+    if (!crate) return
+    const stack = crate.contents[i]
+    if (!stack) return
+    this.crateIcons[i] = this.add.sprite(x, y, ITEMS[stack.type].sprite)
+      .setScale(ITEMS[stack.type].scale)
+      .setDepth(9003)
+    if (stack.count > 1) {
+      this.crateCounts[i] = this.add.bitmapText(x + 23, y + 23, 'main', String(stack.count), 20)
+        .setOrigin(1, 1)
+        .setTint(COLORS.uiText)
+        .setDepth(9004)
     }
   }
 
@@ -451,13 +698,21 @@ export class UI extends Phaser.Scene {
   private shiftSendFromInventory(slotIndex: number, _source: SlotBinding) {
     const stack = state.inventory[slotIndex]
     if (!stack) return
-    if (!this.scene.isActive('Interior')) return
 
-    state.inventory[slotIndex] = null
-    const interior = this.scene.get('Interior') as unknown as Interior
-    interior.placeFromInventory(stack)
-    // bounce leftover back into inventory
-    if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    // crate panel open → distribute into the crate's slots
+    if (this.openCrateIndex >= 0) {
+      state.inventory[slotIndex] = null
+      distributeIntoBindings(stack, this.crateBindings)
+      if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    } else if (this.scene.isActive('Interior')) {
+      // building interior open → ask it to place the stack
+      state.inventory[slotIndex] = null
+      const interior = this.scene.get('Interior') as unknown as Interior
+      interior.placeFromInventory(stack)
+      if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    } else {
+      return   // nothing open to send to
+    }
 
     for (let i = 0; i < this.invSlotPos.length; i++) {
       const p = this.invSlotPos[i]
@@ -471,13 +726,20 @@ export class UI extends Phaser.Scene {
     if (!bag.contents) return
     const stack = bag.contents[slotIndex]
     if (!stack) return
-    if (!this.scene.isActive('Interior')) return
 
-    bag.contents[slotIndex] = null
-    const interior = this.scene.get('Interior') as unknown as Interior
-    interior.placeFromInventory(stack)
-    // bounce leftover back anywhere there's room
-    if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    // crate panel open → distribute into the crate's slots
+    if (this.openCrateIndex >= 0) {
+      bag.contents[slotIndex] = null
+      distributeIntoBindings(stack, this.crateBindings)
+      if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    } else if (this.scene.isActive('Interior')) {
+      bag.contents[slotIndex] = null
+      const interior = this.scene.get('Interior') as unknown as Interior
+      interior.placeFromInventory(stack)
+      if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    } else {
+      return
+    }
 
     for (const p of this.bagPanels) p?.redrawAll()
     for (let i = 0; i < this.invSlotPos.length; i++) {
@@ -502,6 +764,8 @@ class BagPanel {
   private counts: (Phaser.GameObjects.BitmapText | null)[] = []
   private slotPos: { x: number; y: number }[] = []
   private bindings: SlotBinding[] = []
+  // top edge Y of this panel (set in constructor) — read by the crate blocker.
+  private topY = 0
 
   constructor(ui: UI, panelIndex: number, w: number, h: number, bag: ItemStack) {
     this.ui = ui
@@ -529,9 +793,13 @@ class BagPanel {
     const barH = SLOT + 12 * 2
     const barY = h - barH / 2
     const panelCenterY = barY + barH / 2 - panelH / 2
+    // top edge of this panel — the crate blocker clips above this so it never
+    // covers (and steals clicks from) the bag panels poking up into the play area.
+    this.topY = panelCenterY - panelH / 2
+
 
     const scene = ui as unknown as Phaser.Scene
-    const bg = scene.add.nineslice(panelCenterX, panelCenterY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16)
+    const bg = scene.add.nineslice(panelCenterX, panelCenterY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16).setDepth(150)
     this.objects.push(bg)
 
     const startX = panelCenterX - (COLS - 1) * (SLOT + GAP) / 2
@@ -546,7 +814,7 @@ class BagPanel {
         this.icons[i] = null
         this.counts[i] = null
 
-        const slotImg = scene.add.image(x, y, 'menu-slot').setInteractive()
+        const slotImg = scene.add.image(x, y, 'menu-slot').setInteractive().setDepth(200)
         const hoverObj = attachSlotHover(scene, slotImg, x, y)
         attachSlotTooltip(scene, slotImg, x, y, () => this.peekSlot(i))
         this.objects.push(slotImg, hoverObj)
@@ -612,7 +880,10 @@ class BagPanel {
     const cap = ITEMS[stack.type].maxStack
     if (!existing) {
       const moved = Math.min(cap, stack.count)
-      this.bag.contents[i] = { type: stack.type, count: moved }
+      const placed: ItemStack = { type: stack.type, count: moved }
+      // carry bag contents into the destination slot (nested bag storage)
+      if (stack.contents) placed.contents = stack.contents
+      this.bag.contents[i] = placed
       return moved
     }
     if (existing.type !== stack.type) return 0
@@ -625,6 +896,11 @@ class BagPanel {
 
   getBag(): ItemStack {
     return this.bag
+  }
+
+  // Top edge Y of this panel — used to clip the crate blocker above it.
+  getTopY(): number {
+    return this.topY
   }
 
   redrawAll() {
@@ -640,11 +916,12 @@ class BagPanel {
     this.counts[i] = null
     if (!stack) return
     const scene = this.ui as unknown as Phaser.Scene
-    this.icons[i] = scene.add.sprite(pos.x, pos.y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale)
+    this.icons[i] = scene.add.sprite(pos.x, pos.y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale).setDepth(200)
     if (stack.count > 1) {
       this.counts[i] = scene.add.bitmapText(pos.x + 23, pos.y + 23, 'main', String(stack.count), 20)
         .setOrigin(1, 1)
         .setTint(COLORS.uiText)
+        .setDepth(201)
     }
   }
 
