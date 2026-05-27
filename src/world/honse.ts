@@ -1,92 +1,140 @@
-// Honses — wild and tamed horses living in the overworld.
-//
-// Data shape stays minimal: position + velocity + idle-mode timer + a home
-// point so she drifts around a range rather than wandering to infinity.
-// Real AI states (graze, flee) will be added as more modes alongside 'idle'.
-// Sprites and obstacle hitboxes remain a scene concern.
 
 export type HonseMode = 'idle'
 
 export interface Honse {
-  x: number          // visual center
-  y: number          // visual center (depth-sorts by feet elsewhere)
-  vx: number         // px/sec
-  vy: number         // px/sec
-  facingRight: boolean    // sprite is drawn facing left; this flips the X axis
-  // ms timestamp before which facing can't change again. Prevents the sprite
-  // from strobing left/right when vx oscillates near zero (e.g. rope-tug fights
-  // with a perpendicular AI walk).
+  x: number         
+  y: number          
+  vx: number      
+  vy: number        
+  facingRight: boolean    // Prevents the sprite from strobing left/right when vx oscillates near zero 
   facingLockedUntil: number
   homeX: number      // anchor for her wander range — she drifts back toward this
   homeY: number
   mode: HonseMode
   // ms timestamp at which the current sub-behavior expires and a new one
-  // should be picked. Zero on a fresh honse means "decide immediately".
+  // should be picked. 
   modeUntil: number
-  // Once she's been ridden, she's tame: she ignores the player's proximity
-  // instead of trying to keep her distance (wild behavior comes later).
   tame: boolean
+  speedMul: number   // per-honse speed multiplier (flee + ride), rolled at spawn
+  tint: number       // body tint color, rolled at spawn (independent of speed)
+  sprite: string     // texture key for this honse
+  tinted: boolean    // whether `tint` is applied to the sprite (false for special coats)
+  spacing: number    // personal-space radius for herd separation, rolled at spawn
+}
+
+// Natural coat colors with spawn weights. Tint is independent of speed — you
+// can't judge a honse by its color. Higher weight = more common; grey/white is
+// deliberately rare.
+const HONSE_COLORS: [number, number][] = [
+  [0x7A4A2E, 8],    // bay (warm mid-brown)
+  [0x1A1A1E, 5],    // black
+  [0x4F5359, 5],    // dark steel grey (cool)
+  [0xC8CDD2, 1],    // grey / white (rare)
+]
+const HONSE_COLOR_TOTAL = HONSE_COLORS.reduce((s, c) => s + c[1], 0)
+
+// Speed multiplier roll. Most honses fall in a normal band (0.7..1.3), but rare
+// outliers roll super-slow or super-fast — the prize/dud catches.
+function rollSpeed(): number {
+  const r = Math.random()
+  if (r < 0.05) return 0.45 + Math.random() * 0.15   // super slow: 0.45 .. 0.60
+  if (r < 0.10) return 1.40 + Math.random() * 0.30   // super fast: 1.40 .. 1.70
+  return 0.70 + Math.random() * 0.60                 // normal: 0.70 .. 1.30
+}
+
+function pickCoat(): number {
+  let r = Math.random() * HONSE_COLOR_TOTAL
+  for (const [color, weight] of HONSE_COLORS) {
+    r -= weight
+    if (r < 0) return color
+  }
+  return HONSE_COLORS[0][0]
+}
+
+export function createHonse(x: number, y: number): Honse {
+  // pick a coat: special untinted sprites roll first, otherwise a tinted base coat
+  let sprite = 'honse'
+  let tinted = true
+  const roll = Math.random()
+  if (roll < 0.12) {
+    sprite = Math.random() < 0.5 ? 'honse_spotted' : 'honse_spotted_brown'
+    tinted = false
+  } else if (roll < 0.24) {
+    sprite = 'honse_palomino'
+    tinted = false
+  } else if (roll < 0.33) {
+    sprite = 'honse_sorrel_socks'
+    tinted = false
+  } else if (roll < 0.55) {
+    sprite = 'honse_brown'
+    tinted = false
+  } else if (roll < 0.68) {
+    sprite = 'honse_chestnut'
+    tinted = false
+  } else if (roll < 0.80) {
+    sprite = 'honse_sorrel'
+    tinted = false
+  }
+  return {
+    x, y,
+    vx: 0, vy: 0,
+    facingRight: false,
+    facingLockedUntil: 0,
+    homeX: x, homeY: y,
+    mode: 'idle', modeUntil: 0,
+    tame: false,
+    speedMul: rollSpeed(),
+    tint: pickCoat(),
+    sprite,
+    tinted,
+    spacing: 32 + Math.random() * 38,   // personal space: 32..70px
+  }
 }
 
 // ---- tuning ----
-const WALK_SPEED = 25
-// Wild honses keep their distance from the player. While the player is
-// inside AVOID_RADIUS, an untamed honse walks directly away. Speed scales
-// linearly with proximity: AVOID_SPEED_MIN at the edge of the radius,
-// AVOID_SPEED_MAX when the player is right on top of her. Faster than idle
-// so a strolling player can't close the gap; slower than a running player
-// so she can still be caught on foot.
-const AVOID_RADIUS = 400
-const AVOID_SPEED_MIN = 40
-const AVOID_SPEED_MAX = 170
-// Idle = mostly standing still, occasionally a short walk in a random
-// direction. Long pauses, short walks. McCarthy unhurried.
+const WALK_SPEED = 75
+// Wild honses keep their distance from the player. 
+const AVOID_RADIUS = 360
+const AVOID_SPEED_MIN = 140
+const AVOID_SPEED_MAX = 480
+
 const IDLE_PAUSE_MIN_MS = 3000
 const IDLE_PAUSE_MAX_MS = 6000
 const IDLE_WALK_MIN_MS = 1000
 const IDLE_WALK_MAX_MS = 3000
-const IDLE_WALK_CHANCE = 0.3   // each decision: chance she walks vs. pauses
-// Home range: outside this radius she biases her walk angle toward home.
-// Inside, she picks any direction. Soft fence, no hard barrier.
+const IDLE_WALK_CHANCE = 0.3  
 const HOME_RADIUS = 200
-// Half-angle (radians) around the home-ward direction when biased.
-// PI/2 = anywhere in the half-circle facing home (gentle). Smaller = more
-// determined return.
+
+// ---- loose herd grouping ----
+// Wild honses band up loosely (not tight like cattle). Each idle honse steers
+// gently toward the average position of other honses within HERD_RADIUS, and
+// pushes off any closer than its own personal-space radius so a band spreads
+// rather than stacks. Both forces are added under player-avoidance — a spooked
+// honse bolts first and regroups after. Weights are deliberately low to keep it
+// loose; each honse's separation distance is its rolled `spacing` field.
+const HERD_RADIUS = 220          // who counts as "nearby" for grouping
+const HERD_COHESION_STRENGTH = 14   // px/s pull toward the local group center
+const HERD_SEPARATION_STRENGTH = 90 // px/s push off a too-close neighbor
+
 const HOME_BIAS_HALF_ANGLE = Math.PI / 2
-// Rope pull: when the rope is attached to a honse and the distance from her
-// neck to the player exceeds this taut threshold, she gets pulled toward the
-// player with strength proportional to how far past taut she is.
+
 const ROPE_TAUT_DIST = 70
-const ROPE_PULL_PER_PX = 1.2   // px/sec of pull per px past taut
-const ROPE_PULL_MAX = 60       // cap on the tug velocity so far-pulls don't yank her at runaway speed
-// Hard wall: she can never end a frame farther than this from her tether
-// anchor. Slightly past the player's leash (140) so the honse side reads as
-// the softer constraint, but still a real cap — without it, a fast-avoiding
-// wild honse can outrun the tug indefinitely.
+const ROPE_PULL_PER_PX = 1.2   
+const ROPE_PULL_MAX = 60       
 const ROPE_LEASH_MAX = 160
-// Minimum ms between facing flips. Stops the sprite from strobing when vx
-// oscillates near zero. She commits to a direction for at least this long.
+
 const FACING_LOCK_MS = 400
 
-// Offset from a honse's center to its neck — where ropes catch and where the
-// rope visibly attaches. Tuned for the 26x15 left-facing sprite at scale 2:
-// head/neck sits on the left side of the sprite, slightly above center.
 export const HONSE_CATCH_OFFSET_X = -16
 export const HONSE_CATCH_OFFSET_Y = -5
 
-// World-space point on the honse where ropes attach. Used by both catch
-// detection (distance check) and anchor lookup (where to pin the rope tip).
-// The offset is mirrored when she's facing right so the rope stays on her
-// neck rather than chasing the visual position from the left-facing sprite.
+// World-space point on the honse where ropes attach. 
 export function getHonseNeckAnchor(h: Honse): { x: number; y: number } {
   const dx = h.facingRight ? -HONSE_CATCH_OFFSET_X : HONSE_CATCH_OFFSET_X
   return { x: h.x + dx, y: h.y + HONSE_CATCH_OFFSET_Y }
 }
 
-// Body collision footprint for a honse — used to block player movement (and
-// honse-vs-world movement). Tighter than the visible sprite: the head sticks
-// forward, the tail hangs, neither blocks. This rect covers only the chunky
-// body+legs area.
+// Body collision footprint for a honse 
 export function getHonseBodyAABB(h: Honse): { x: number; y: number; w: number; h: number } {
   const W = 30
   const H = 12
@@ -95,9 +143,7 @@ export function getHonseBodyAABB(h: Honse): { x: number; y: number; w: number; h
   return { x: h.x - W / 2, y: h.y - H / 2 + 3, w: W, h: H }
 }
 
-// Roll a fresh idle sub-behavior — pause or short walk. When she walks,
-// the angle is uniform-random inside her home range, biased toward home
-// when she's drifted too far.
+// Roll a fresh idle sub-behavior 
 function pickIdleBehavior(h: Honse, now: number) {
   if (Math.random() < IDLE_WALK_CHANCE) {
     const dx = h.homeX - h.x
@@ -125,10 +171,7 @@ function pickIdleBehavior(h: Honse, now: number) {
 }
 
 // Returns the additive velocity contribution from the rope this frame.
-// Zero vector when no tether or when slack (within ROPE_TAUT_DIST). Past taut,
-// pull strength grows linearly with overshoot, capped at ROPE_PULL_MAX.
-// Used by both the AI tick in updateHonses and the mounted-movement branch
-// in the Overworld scene so both feel the same tug.
+// Zero vector when no tether or when slack (within ROPE_TAUT_DIST). 
 export function getHonseRopePull(
   h: Honse,
   tether: { x: number; y: number } | null,
@@ -143,16 +186,66 @@ export function getHonseRopePull(
   return { vx: (dx / dist) * pull, vy: (dy / dist) * pull }
 }
 
-// Per-frame: tick each honse's state machine, then integrate position from
-// velocity. dt in ms. `collidesAt(px, py, ignoreHonseIndex)` is a callback
-// supplied by the scene — when a step would put the honse inside an obstacle
-// (or another honse), the step is skipped for that frame.
-//
 // `getTether(honseIndex)` returns the world position of the other end of any
-// rope this honse is tied to (post, player, another honse) — or null if she
-// isn't tethered. When tethered, the rope tension tugs her toward that point
-// once the distance exceeds ROPE_TAUT_DIST. The tug is additive to her AI
-// velocity for this frame only.
+// rope this honse is tied to 
+// Loose herd steering for one honse: a gentle pull toward the average position
+// of nearby honses (cohesion) plus a push off any that are too close
+// (separation). Scans the herd for neighbors within HERD_RADIUS. Skips the
+// honse itself, the mounted honse, and tamed honses (only the wild band groups
+// up). Returns the additive velocity contribution; zero when it has no
+// neighbors. Pure — reads positions only.
+function getHerdSteer(
+  honses: Honse[],
+  selfIndex: number,
+  mountedIndex: number | null,
+): { vx: number; vy: number } {
+  const self = honses[selfIndex]
+  let sumX = 0, sumY = 0, count = 0
+  let sepX = 0, sepY = 0
+  const radiusSq = HERD_RADIUS * HERD_RADIUS
+  const sep = self.spacing
+  const sepSq = sep * sep
+
+  for (let j = 0; j < honses.length; j++) {
+    if (j === selfIndex || j === mountedIndex) continue
+    const o = honses[j]
+    if (o.tame) continue
+    const dx = o.x - self.x
+    const dy = o.y - self.y
+    const dSq = dx * dx + dy * dy
+    if (dSq > radiusSq || dSq < 0.0001) continue
+
+    // cohesion: accumulate neighbor positions to average later
+    sumX += o.x; sumY += o.y; count++
+
+    // separation: push directly away from any neighbor that's too close,
+    // stronger the closer it is
+    if (dSq < sepSq) {
+      const d = Math.sqrt(dSq)
+      const push = (sep - d) / sep   // 0 at edge → 1 when touching
+      sepX -= (dx / d) * push
+      sepY -= (dy / d) * push
+    }
+  }
+
+  let vx = 0, vy = 0
+  if (count > 0) {
+    // steer toward the local group center
+    const cx = sumX / count
+    const cy = sumY / count
+    let dx = cx - self.x
+    let dy = cy - self.y
+    const d = Math.sqrt(dx * dx + dy * dy)
+    if (d > 0.0001) {
+      vx += (dx / d) * HERD_COHESION_STRENGTH
+      vy += (dy / d) * HERD_COHESION_STRENGTH
+    }
+  }
+  vx += sepX * HERD_SEPARATION_STRENGTH
+  vy += sepY * HERD_SEPARATION_STRENGTH
+  return { vx, vy }
+}
+
 export function updateHonses(
   honses: Honse[],
   dt: number,
@@ -171,10 +264,6 @@ export function updateHonses(
     const h = honses[i]
 
     // Wild-avoidance: untamed honses keep their distance from the player.
-    // While the player is inside AVOID_RADIUS, her velocity points directly
-    // away at a proximity-scaled speed — overrides idle AI for this frame.
-    // Still runs while tethered: she yanks against the rope trying to get
-    // away from you, and the rope-pull below fights her back.
     const tether = getTether(i)
     let avoiding = false
     if (!h.tame && playerPos && !(tether && mountedIndex !== null)) {
@@ -185,7 +274,7 @@ export function updateHonses(
         const dist = Math.sqrt(distSq)
         // proximity 0 = at edge, 1 = right on her
         const proximity = 1 - dist / AVOID_RADIUS
-        const speed = AVOID_SPEED_MIN + (AVOID_SPEED_MAX - AVOID_SPEED_MIN) * proximity
+        const speed = (AVOID_SPEED_MIN + (AVOID_SPEED_MAX - AVOID_SPEED_MIN) * proximity) * h.speedMul
         h.vx = (ax / dist) * speed
         h.vy = (ay / dist) * speed
         avoiding = true
@@ -193,22 +282,28 @@ export function updateHonses(
     }
 
     // mode tick: if the current sub-behavior has expired, pick a new one.
-    // Suppressed while avoiding so her walk/pause timer doesn't expire
-    // mid-flight and snap her into a random direction.
     if (!avoiding && now >= h.modeUntil) {
       pickIdleBehavior(h, now)
     }
 
-    // start with her AI (or avoidance) velocity, then add the rope-pull this frame if any
     let vx = h.vx
     let vy = h.vy
+
+    // loose herd grouping — wild honses drift toward nearby honses and keep
+    // personal space. Only while idling (a fleeing honse bolts, doesn't group)
+    // and only for the untamed band. Applied to the per-frame velocity ONLY —
+    // not written back into h.vx/h.vy — so it's a fresh nudge each frame and
+    // can't compound into a runaway swarm.
+    if (!avoiding && !h.tame) {
+      const steer = getHerdSteer(honses, i, mountedIndex)
+      vx += steer.vx
+      vy += steer.vy
+    }
     const pull = getHonseRopePull(h, tether)
     vx += pull.vx
     vy += pull.vy
 
-    // face the direction she's actually moving this frame (covers both AI
-    // walks and rope-tugs). Zero vx leaves the last facing alone. A short
-    // cooldown after each flip stops the sprite from strobing back and forth.
+    // face the direction she's actually moving this frame
     if (now >= h.facingLockedUntil) {
       let newFacing = h.facingRight
       if (vx > 0.001) newFacing = true
@@ -230,9 +325,7 @@ export function updateHonses(
     }
 
     // hard leash cap: if she ended the frame past the leash, snap her back
-    // to the boundary along the radial line. The pull-tug above is soft and
-    // can be outrun by a fast avoidance velocity — this guarantees she's
-    // never actually beyond the rope.
+    // to the boundary along the radial line.
     if (tether) {
       const rx = h.x - tether.x
       const ry = h.y - tether.y

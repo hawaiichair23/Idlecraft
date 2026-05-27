@@ -1,32 +1,26 @@
 import Phaser from 'phaser'
 import { loadSprites } from '../sprites/loader'
-import { COLORS } from '../colors'
+import { spriteColors } from '../sprites/data'
+import { COLORS, FONT } from '../colors'
 import { UI_BAR_HEIGHT, UI } from './UI'
-import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createCrateContents, type BuiltType } from '../game/state'
+import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createCrateContents, Terrain, TERRAIN_TILE, TERRAIN_COLS, type BuiltType } from '../game/state'
+import { previewCraft, consumeCraft } from '../items/recipes'
 import { ITEMS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
 import { generateWorld } from '../world/gen'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { registerGrabbable } from '../ui/hover'
-import { RopeController } from '../world/ropeController'
-import { updateHonses, getHonseBodyAABB } from '../world/honse'
+import { RopeController, CAT_HONSE } from '../world/ropeController'
+import { updateHonses, getHonseBodyAABB, createHonse } from '../world/honse'
 
-const WORLD_PX = 576 * 8    // 8x canvas size, so player can wander
-// Wood-brown palette for the burst when an axe destroys a post.
-const POST_PARTICLE_COLORS = [0x6B4A2A, 0x8B5A2B, 0x4A3318, 0x9C7248]
+const WORLD_PX = 576 * 8  
 const PLAYER_SPEED = 135
-const MOUNTED_SPEED_MIN = 135   // honse walk speed — same as player on foot
-const MOUNTED_SPEED_MAX = 240   // honse top speed after full ramp
-const MOUNTED_RAMP_MS = 2200    // time to accelerate from min to max
-// How close the player must be to a honse to mount her (center-to-center px).
+const MOUNTED_SPEED_MIN = 135  
+const MOUNTED_SPEED_MAX = 250   
+const MOUNTED_RAMP_MS = 2200   
 const MOUNT_RANGE = 40
-// Max distance (px) from the player at which tools (shovel, posts) can be used.
-// Beyond this the cursor reverts to default and clicks do nothing.
 const TOOL_RANGE = 150
+const CRATE_RANGE = 80
 
-// Weighted loot table for mining a rock tile. Each tile break is an independent
-// roll (variable-ratio reinforcement — the unpredictability is the hook). Texas-
-// grounded ladder: stone is the common floor, gold the near-mythical jackpot.
-// Weights are relative; they don't need to sum to 100.
 const ORE_ROLL_TABLE: { type: ItemType; weight: number }[] = [
   { type: 'stone',  weight: 78 },
   { type: 'coal',   weight: 11 },
@@ -57,19 +51,12 @@ const PLOT_SIZE = 56
 const PLOT_SPACING = 112
 const PLOT_COUNT = PLOT_COLS * PLOT_ROWS
 
-// Sprites are authored at 1px-per-pixel. We render them upscaled to fit plots.
-const SPRITE_SCALE = 3   // 16px sprite → 48px on screen (fits 56px plot)
-const PLAYER_SCALE = 2   // player half-size: 8px sprite → 16px on screen
+const SPRITE_SCALE = 3   
+const PLAYER_SCALE = 2   
 
-// Rope leash: when the rope is attached, the player can't go further than
-// ROPE_LEASH_LENGTH from the anchor. From ROPE_LEASH_SOFT_START fraction
-// outward, outward radial movement is progressively dampened to zero.
 const ROPE_LEASH_LENGTH = 140
 const ROPE_LEASH_SOFT_START = 0.9
 
-// Kind tag for entries in the Overworld's obstacles list. Used by placement
-// validation and any other code that needs to know what a given collision
-// rectangle represents. Add new variants when adding new placeable types.
 type ObstacleKind = 'tree' | 'rock' | 'post' | 'building' | 'solid' | 'crate'
 
 // True if two axis-aligned rectangles overlap. First rect is center+half-extent
@@ -95,42 +82,65 @@ function pointToSegmentDist(px: number, py: number, x1: number, y1: number, x2: 
   return Math.sqrt((px - projX) * (px - projX) + (py - projY) * (py - projY))
 }
 
+// resolveOverworldAction returns one of these, or null (= no action / default cursor).
+// The `kind` drives both the click handler's dispatch and the cursor texture.
+export type OverworldAction =
+  | { kind: 'untie-rope' }
+  | { kind: 'destroy-post' }
+  | { kind: 'destroy-crate' }
+  | { kind: 'destroy-plot' }
+  | { kind: 'destroy-pipe' }
+  | { kind: 'chop-tree'; sprite: string; scale: number }
+  | { kind: 'mine-rock'; sprite: string; scale: number }
+  | { kind: 'dig'; sprite: string; scale: number }
+  | { kind: 'plant-sapling'; sprite: string; scale: number }
+  | { kind: 'place-post'; sprite: string; scale: number }
+  | { kind: 'place-crate'; sprite: string; scale: number }
+  | { kind: 'throw-rope'; sprite: string; scale: number }
+  | { kind: 'tool-generic'; sprite: string; scale: number }
+  | { kind: 'mount'; sprite: string; scale: number; tint: number | null }
+  | { kind: 'open-crate' }
+
+export const ACTION_CURSOR: Record<OverworldAction['kind'], { texture: string; scale: number } | 'tool'> = {
+  'untie-rope':    { texture: 'cursor_x', scale: 2 },
+  'destroy-post':  { texture: 'cursor_x', scale: 2 },
+  'destroy-crate': { texture: 'cursor_x', scale: 2 },
+  'destroy-plot':  { texture: 'cursor_x', scale: 2 },
+  'destroy-pipe':  { texture: 'cursor_x', scale: 2 },
+  'chop-tree':     'tool',
+  'mine-rock':     'tool',
+  'dig':           'tool',
+  'plant-sapling': 'tool',
+  'place-post':    'tool',
+  'place-crate':   'tool',
+  'throw-rope':    'tool',
+  'tool-generic':  'tool',
+  'mount':         'tool',
+  'open-crate':    { texture: 'cursor_grab', scale: 2 },
+}
+
 interface PlotView {
   x: number
   y: number
   priceTag: Phaser.GameObjects.BitmapText
   building: Phaser.GameObjects.Sprite | null
   nameLabel: Phaser.GameObjects.BitmapText | null
-  barBg: Phaser.GameObjects.Rectangle | null
-  barFill: Phaser.GameObjects.Rectangle | null
-  barLabel: Phaser.GameObjects.BitmapText | null
 }
-
-const BAR_W = PLOT_SIZE
-const BAR_H = 14
-const BAR_Y_OFFSET = PLOT_SIZE / 2 + 4   // sit just below the plot
 
 export class Overworld extends Phaser.Scene {
   private player!: Phaser.GameObjects.Sprite
+  private playerShadow!: Phaser.GameObjects.Sprite
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
   private arrows!: Phaser.Types.Input.Keyboard.CursorKeys
   private eKey!: Phaser.Input.Keyboard.Key
-  // Mounted acceleration ramp: tracks how long the honse has been moving in
-  // the current direction. Reversal on either axis resets the timer to zero.
   private mountedRampTime = 0
   private mountedLastDx = 0
   private mountedLastDy = 0
-  // True once honses have been spawned this session (prevents re-spawning every frame)
   private honsesSpawned = false
   private plotViews: PlotView[] = []
-  // Solid obstacles the player can't walk through. World-space AABBs with a
-  // `kind` tag so consumers (placement validation, future hit-tests) can ask
-  // what each rectangle represents instead of cross-referencing parallel
-  // lists. Add new kinds here as new placeable types appear.
+  // Solid obstacles the player can't walk through. 
   private obstacles: { x: number; y: number; w: number; h: number; kind: ObstacleKind; originX?: number; originY?: number }[] = []
   private worldBg!: Phaser.GameObjects.Rectangle
-  // sprite for each currently-revealed buried coin, keyed by `x,y` so we can
-  // destroy it on pickup. Parallel to state.revealedItems.
   private revealedSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // dirt patches left by digging, keyed by `x,y` so we can destroy on undo.
   private dugSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
@@ -140,6 +150,8 @@ export class Overworld extends Phaser.Scene {
   private plantedTreeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // Mature tree sprites, keyed by `x,y`, so chopping can find and fell them.
   private matureTreeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  // Tree shadow sprites, keyed by `x,y`, so felling can destroy the shadow too.
+  private treeShadowSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // Axe hit counts per mature tree, keyed by `x,y`. Resets when the tree fells.
   private treeHits: Map<string, number> = new Map()
   // Rock tile sprites, keyed by `x,y` of each individual tile.
@@ -149,27 +161,56 @@ export class Overworld extends Phaser.Scene {
   private rockContainers: Map<string, Phaser.GameObjects.Container> = new Map()
   // Maps each tile key to its formation's container key.
   private rockTileToFormation: Map<string, string> = new Map()
-  // Mining dependency: a tile here can't be mined until the tile it maps to is
-  // gone. Used for stacked pieces (the bump base is locked under the bump top
-  // so the top can't be left floating). A hit on a locked tile redirects to
-  // its blocker — you're really hitting the piece on top.
+  // Mining dependency: a tile here can't be mined until the tile it maps to is gone.
   private rockMineBlockedBy: Map<string, string> = new Map()
   // Pickaxe hit counts per rock tile, keyed by `x,y`. Resets on depletion.
   private rockHits: Map<string, number> = new Map()
+  private rockBodies: Map<string, MatterJS.BodyType> = new Map()
+  private rockCollision: Map<string, { x: number; y: number; w: number; h: number; kind: ObstacleKind }> = new Map()
+  private rockTileCollision: Map<string, { obs: { x: number; y: number; w: number; h: number; kind: ObstacleKind }; body: MatterJS.BodyType }> = new Map()
   // Player-placed hitching posts, keyed by `x,y`. Future: rope-throw targets.
   private placedPostSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
-  // Player-placed crates, keyed by `x,y`. Each maps to its entry in
-  // state.placedCrates (matched by position); clicking/E near one opens it.
-  private placedCrateSprites: Map<string, Phaser.GameObjects.Sprite> = new Map()
+  private placedPostBodies: Map<string, MatterJS.BodyType> = new Map()
+  // Static rope-blocker bodies for built plots, keyed by plot index. Stored so
+  // destroying a plot can remove its blocker (posts/crates store theirs the
+  // same way). Empty plots have no entry.
+  private plotBlockerBodies: Map<number, MatterJS.BodyType> = new Map()
+  private crateSprites: Phaser.GameObjects.Sprite[] = []
+  // Dynamic Matter bodies for placed crates
+  private crateBodies: MatterJS.BodyType[] = []
+  // Public accessor so the rope controller can link a constraint to a crate body.
+  getCrateBody(index: number): MatterJS.BodyType | null {
+    return this.crateBodies[index] ?? null
+  }
   // Honse sprites — parallel to state.honses by index. Position + depth are
   // synced from state each frame in update().
   private honseSprites: Phaser.GameObjects.Sprite[] = []
-  // Shadow Matter bodies for honses — static rectangles repositioned each frame
-  // so rope segments collide with honses without changing the movement system.
+  // Footprints honses leave as they move. FIFO-capped so they don't grow
+  // unbounded; each also self-destroys after a few minutes.
+  private honseFootprints: Phaser.GameObjects.Rectangle[] = []
+  private honseLastPrint: Map<number, { x: number; y: number }> = new Map()
+  // Dynamic Matter bodies for honses
   private honseBodies: MatterJS.BodyType[] = []
-  // Owns rope physics, catch detection, and the leash-anchor lookup. Built in
-  // create() once the player sprite exists.
+  // Position of the rope segment the mounted honse is touching
+  private honseRopeContactPoint: { x: number; y: number } | null = null
+  // time.now when the contact point was last refreshed. 
+  private honseRopeContactAt = 0
+  private honseRopeLine: { ax: number; ay: number; bx: number; by: number } | null = null
   private rope!: RopeController
+
+  // Pipe placement: two-click flow. First click sets the source plot, second
+  // click sets the destination and creates the connection.
+  private pendingPipeFrom: number | null = null
+  // Pipe transfer timing. Every PIPE_TICK_MS, each pipe moves up to
+  // PIPE_ITEMS_PER_TICK items from its source plot's output to its dest plot's
+  // input. Stops early when the destination is full.
+  private lastPipeTickAt = 0
+  private static PIPE_TICK_MS = 2000
+  private static PIPE_ITEMS_PER_TICK = 1
+  // Visual pipe sprites drawn between connected plots, keyed by "fromPlot-toPlot".
+  private pipeSprites: Map<string, Phaser.GameObjects.Sprite[]> = new Map()
+  // Arrow sprites showing flow direction on each pipe, same key.
+  private pipeArrows: Map<string, Phaser.GameObjects.Sprite> = new Map()
 
   constructor() {
     super('Overworld')
@@ -204,18 +245,27 @@ export class Overworld extends Phaser.Scene {
       const drag = ui.getDragController()
       const isRight = p.rightButtonDown()
 
-      // ---- MOUNT / DISMOUNT ----
-      // While mounted: right-click dismounts unless food is held/selected
-      // (so eat-from-horseback still works). An unarmed left-click also
-      // dismounts. With an active tool (rope, shovel, etc.) held, a
-      // left-click falls through to that tool's handler — you can throw rope,
-      // dig, etc. from horseback.
+      // While mounted: clicks normally dismount, but destructive actions
+      // (untie rope, destroy post/crate/plot, chop, mine) take precedence —
+      // they're targeted, intentional clicks that should work from horseback.
       if (state.mounted !== null) {
         const heldEdible = isRight && drag.isHolding() ? drag.peekEdibleDef() : undefined
         const selectedEdible = isRight ? this.peekSelectedEdibleDef() : undefined
         const rightClickEats = isRight && (heldEdible || selectedEdible)
-        const leftClickDismounts = !isRight && !state.getSelectedTool()
-        if ((isRight && !rightClickEats) || leftClickDismounts) {
+        const leftClickDismounts = !isRight && !state.getSelectedTool() && !drag.isHolding()
+
+        if (!isRight) {
+          const action = this.resolveOverworldAction(p.worldX, p.worldY)
+          if (action && (action.kind === 'untie-rope' || action.kind === 'destroy-post'
+            || action.kind === 'destroy-crate' || action.kind === 'destroy-plot'
+            || action.kind === 'destroy-pipe'
+            || action.kind === 'chop-tree' || action.kind === 'mine-rock')) {
+            // skip dismount — fall through to normal action dispatch
+          } else if (leftClickDismounts) {
+            this.dismount()
+            return
+          }
+        } else if (!rightClickEats) {
           this.dismount()
           return
         }
@@ -223,10 +273,9 @@ export class Overworld extends Phaser.Scene {
       // Not mounted: if the player is close enough to a honse, left-click mounts.
       // Refuse if a rope is in-flight/attached or a tool is selected (those
       // clicks have their own meaning).
-      if (!isRight && !this.rope.isAttached() && !state.getSelectedTool()) {
+      if (!isRight && state.mounted === null && !this.rope.isAttached() && !state.getSelectedTool()) {
         if (this.mountNearestHonse()) return
       }
-
 
       // right-click: eat from held cursor, or from selected hotbar slot
       if (isRight) {
@@ -267,6 +316,8 @@ export class Overworld extends Phaser.Scene {
       }
       // click on a tied rope to untie and destroy it
       if (this.rope.untieAtClick(p.worldX, p.worldY)) return
+      // cancel pending pipe placement if clicking empty ground
+      if (this.pendingPipeFrom !== null) { this.pendingPipeFrom = null }
       if (state.isShovelSelected()) {
         this.tryDig(p.worldX, p.worldY)
         return
@@ -278,10 +329,17 @@ export class Overworld extends Phaser.Scene {
         if (this.tryChop(p.worldX, p.worldY)) return
         if (this.tryAxePost(p.worldX, p.worldY)) return
         if (this.tryAxeCrate(p.worldX, p.worldY)) return
+        if (this.tryDestroyPlot(p.worldX, p.worldY)) return
+        if (this.tryDestroyPipe(p.worldX, p.worldY)) return
       }
-      // pickaxe selected? try to mine a nearby rock formation
+      // pickaxe selected? try to mine a nearby rock formation, then fall back
+      // to the same destroy targets the axe handles (tree / post / crate).
       if (state.inventory[state.selectedInventorySlot]?.type === 'pickaxe') {
         if (this.tryMine(p.worldX, p.worldY)) return
+        if (this.tryAxePost(p.worldX, p.worldY)) return
+        if (this.tryAxeCrate(p.worldX, p.worldY)) return
+        if (this.tryDestroyPlot(p.worldX, p.worldY)) return
+        if (this.tryDestroyPipe(p.worldX, p.worldY)) return
       }
       // post selected? try to place it in the world
       if (this.tryPlacePost(p.worldX, p.worldY)) return
@@ -313,19 +371,44 @@ export class Overworld extends Phaser.Scene {
           .setInteractive()
         registerGrabbable(rect)
 
-        const priceTag = this.add.bitmapText(x, y, 'main', '$', 16)
+        const priceTag = this.add.bitmapText(x, y, 'main', '$', FONT.cost)
           .setOrigin(0.5, 0.5)
           .setTint(COLORS.plotPriceTag)
 
-        const view: PlotView = { x, y, priceTag, building: null, nameLabel: null, barBg: null, barFill: null, barLabel: null }
+        const view: PlotView = { x, y, priceTag, building: null, nameLabel: null }
         this.plotViews.push(view)
 
         rect.on('pointerdown', (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
           const tool = state.getSelectedTool()
-          if (tool && (tool.cursorContexts ?? ['overworld']).includes('overworld')) return   // overworld tool equipped — click is for the tool
-          if (!p.leftButtonDown()) return        // build menu opens on left-click only
-          ev.stopPropagation()  // don't also award click-on-bg gold
-          // only open the build menu if the plot is empty
+          const heldType = state.inventory[state.selectedInventorySlot]?.type
+
+          // Pipe placement: two-click flow on built plots
+          if (heldType === 'pipe' && p.leftButtonDown()) {
+            ev.stopPropagation()
+            if (state.plots[plotIndex].built === 'empty') return
+            // must be within reach of the plot, same as other tools
+            const pdx = view.x - this.player.x
+            const pdy = view.y - this.player.y
+            if (pdx * pdx + pdy * pdy > TOOL_RANGE * TOOL_RANGE) return
+            if (this.pendingPipeFrom === null) {
+              this.pendingPipeFrom = plotIndex
+            } else {
+              if (this.pendingPipeFrom !== plotIndex) {
+                this.connectPipe(this.pendingPipeFrom, plotIndex)
+              }
+              this.pendingPipeFrom = null
+            }
+            return
+          }
+
+          if (tool && (tool.cursorContexts ?? ['overworld']).includes('overworld')) {
+            if (heldType === 'axe' || heldType === 'pickaxe') {
+              this.tryDestroyPlot(p.worldX, p.worldY)
+            }
+            return
+          }
+          if (!p.leftButtonDown()) return
+          ev.stopPropagation()
           if (state.plots[plotIndex].built === 'empty') {
             this.registry.events.emit('open-build-menu', plotIndex)
           }
@@ -405,6 +488,9 @@ export class Overworld extends Phaser.Scene {
       } else if (t.stage === 'stump') {
         const sprite = this.add.sprite(t.x, t.y, 'cottonwood_stump').setScale(3).setDepth(t.y + 18)
         this.matureTreeSprites.set(key, sprite)
+      } else if (t.stage === 'dead') {
+        const sprite = this.add.sprite(t.x, t.y, 'cottonwood_dead').setScale(3).setDepth(t.y + 18)
+        this.matureTreeSprites.set(key, sprite)
       } else {
         // mature
         const sprite = this.add.sprite(t.x, t.y, 'cottonwood').setScale(3).setDepth(t.y + 18)
@@ -415,13 +501,16 @@ export class Overworld extends Phaser.Scene {
     for (const p of state.placedPosts) {
       const sprite = this.add.sprite(p.x, p.y, p.species ?? 'post').setScale(2).setDepth(p.y + 8)
       this.placedPostSprites.set(`${p.x},${p.y}`, sprite)
-      this.obstacles.push(this.makePostObstacle(p.x, p.y))
+      const postObs = this.makePostObstacle(p.x, p.y)
+      this.obstacles.push(postObs)
+      this.placedPostBodies.set(`${p.x},${p.y}`, this.addRopeBlocker(postObs))
     }
     // restore any placed crates already in state (contents persist on the entry)
     for (const c of state.placedCrates) {
       const sprite = this.add.sprite(c.x, c.y, 'item_crate').setScale(2).setDepth(c.y + 8).setInteractive()
-      this.attachCrateOpenHandler(sprite, c.x, c.y)
-      this.placedCrateSprites.set(`${c.x},${c.y}`, sprite)
+      this.attachCrateOpenHandler(sprite)
+      this.crateSprites.push(sprite)
+      this.crateBodies.push(this.matter.add.rectangle(c.x, c.y, 16, 16, { frictionAir: 0.1 }))
       this.obstacles.push(this.makeCrateObstacle(c.x, c.y))
     }
     // restore any revealed-but-uncollected coins
@@ -433,7 +522,7 @@ export class Overworld extends Phaser.Scene {
     for (const s of state.worldStructures) {
       const def = WORLD_STRUCTURES[s.type]
       // y-sort depth uses the building's bottom edge (sprite is 16px @ scale 3)
-      const bottomY = s.y + 24
+      const bottomY = s.y + 24 - 16
       this.add.sprite(s.x, s.y, def.sprite).setScale(def.scale).setDepth(bottomY)
       // shops get a mirrored copy at the same position so the building reads wider
       if (s.type === 'shop' || s.type === 'general_store') {
@@ -456,7 +545,7 @@ export class Overworld extends Phaser.Scene {
         [2120, 3290],
       ]
       for (const [tx, ty] of treePositions) {
-        this.placeTree(tx, ty)
+        this.placeDeadTree(tx, ty)
       }
     }
 
@@ -476,7 +565,7 @@ export class Overworld extends Phaser.Scene {
         // (they have no walk-collision by design, but should block gen scatter)
         this.obstacles.push({ x: yx - 8, y: yy - 8, w: 16, h: 16, kind: 'solid' as ObstacleKind })
       }
-      this.placeTree(3220, 160)
+      this.placeDeadTree(3220, 160)
     }
 
     // ---- OASIS GROVE ---- 10 cottonwoods clustered ~1600px east of plot
@@ -486,8 +575,8 @@ export class Overworld extends Phaser.Scene {
     // fades into the cream rather than ending in a hard square.
     {
       // Center of the grove. All positions are relative to this anchor.
-      const gx = 3900
-      const gy = 2380
+      const gx = 3896
+      const gy = 2376
       // Brush ground: tile 16px square (8×8 sprite at scale 2) across an
       // oval extent. Interior fully filled; perimeter tiles fade out with
       // distance-based probability so the edge dissolves into the cream.
@@ -509,9 +598,10 @@ export class Overworld extends Phaser.Scene {
           if (Math.random() > keepProb) continue
           const x = gx + tx * TILE
           const y = gy + ty * TILE
-          this.add.sprite(x, y, 'brush_ground').setScale(2).setDepth(0.5)
+          this.placeGrassTile(x, y)
         }
       }
+      this.renderTerrainEdges()
       // Trees on top of the brush.
       const grovePositions: [number, number][] = [
         [3780, 2240], [3880, 2200], [3980, 2260], [4060, 2320],
@@ -553,17 +643,24 @@ export class Overworld extends Phaser.Scene {
     }
 
     // ---- HONSES ---- spawn from state. Position + depth resync each frame.
-    this.honseSprites = state.honses.map(h =>
-      this.add.sprite(h.x, h.y, 'honse').setScale(2).setDepth(h.y + 8)
-    )
-    // Shadow Matter bodies so rope segments can't pass through honses.
+    this.honseSprites = state.honses.map(h => {
+      const spr = this.add.sprite(h.x, h.y, h.sprite).setScale(2).setDepth(h.y + 8)
+      if (h.tinted) spr.setTint(h.tint)
+      return spr
+    })
+    // Dynamic Matter bodies for honses, driven by velocity each frame so the
+    // solver moves them — which lets strung ropes physically collide with and
+    // block them. inertia:Infinity locks rotation (top-down sprite shouldn't
+    // spin); frictionAir bleeds residual velocity; restitution adds slight bounce.
+    // (inertia is a valid matter-js option but missing from Phaser's TS type.)
     this.honseBodies = state.honses.map(h =>
-      this.matter.add.rectangle(h.x, h.y + 3, 30, 12, { isStatic: true })
+      this.matter.add.rectangle(h.x, h.y + 3, 30, 12, { inertia: Infinity, frictionAir: 0.05, restitution: 0.6, collisionFilter: { category: CAT_HONSE, mask: 0xFFFFFFFF, group: 0 } } as any)
     )
 
     // player at world center. Depth = y, so sprites south of the player render
     // in front and sprites north render behind (standard overhead y-sort).
     this.player = this.add.sprite(cx, cy, 'player').setScale(PLAYER_SCALE).setDepth(cy)
+    this.playerShadow = this.add.sprite(cx + 4, cy + 10, 'tree_shadow').setScale(1.5).setDepth(cy - 1).setAlpha(0.25)
     this.rope = new RopeController(this, this.player)
     this.rope.onRopeConsumed = () => {
       // Remove one rope from inventory — search by type, not selected slot,
@@ -578,14 +675,53 @@ export class Overworld extends Phaser.Scene {
         }
       }
     }
-    // Static Matter bodies so rope segments bounce off buildings. Trees,
-    // rocks, and posts are deliberately NOT blockers — they're rope targets
-    // (or will be).
+    // Track when the mounted honse's body touches a rope segment. While in
+    // contact, the mounted branch stops forcing her velocity so the solver's
+    // bounce off the rope can actually take effect (otherwise the per-frame
+    // setVelocity overwrites the bounce and she grinds through). Rope segments
+    // carry label 'rope-segment'; the honse is whichever body is in honseBodies.
+    const isRope = (b: MatterJS.BodyType) => b.label === 'rope-segment'
+    const isMountedHonse = (b: MatterJS.BodyType) =>
+      state.mounted !== null && this.honseBodies[state.mounted] === b
+    // Capture the contact normal (pointing roughly from the honse into the
+    // rope) whenever the mounted honse is touching a rope segment. Stored as a
+    // unit-ish vector or null. The mounted branch reads this to cancel only the
+    // INTO-the-rope component of her input — so she bounces and can't push
+    // through, but can always steer back out (no getting stuck inside).
+    const capture = (pairs: any[]) => {
+      for (const p of pairs) {
+        const a = p.bodyA as MatterJS.BodyType
+        const b = p.bodyB as MatterJS.BodyType
+        const aRope = isRope(a), bRope = isRope(b)
+        const aHonse = isMountedHonse(a), bHonse = isMountedHonse(b)
+        if ((aRope && bHonse) || (bRope && aHonse)) {
+          // Geometry, not the collision normal (whose sign is unreliable): the
+          // direction from the rope segment to the honse IS "away from rope".
+          // Store the segment's position; the mounted branch cancels only the
+          // velocity component pointing from honse toward this segment.
+          const rope = aRope ? a : b
+          this.honseRopeContactPoint = { x: rope.position.x, y: rope.position.y }
+          // Rope line endpoints stamped on the segment by the controller (strung
+          // ropes only). Lets the mounted branch cancel across the rope LINE, not
+          // just toward the segment. May be undefined if not yet stamped.
+          const r = rope as any
+          this.honseRopeLine = (r.ropeLineAx !== undefined)
+            ? { ax: r.ropeLineAx, ay: r.ropeLineAy, bx: r.ropeLineBx, by: r.ropeLineBy }
+            : null
+          this.honseRopeContactAt = this.time.now
+          return
+        }
+      }
+    }
+    this.matter.world.on('collisionstart', (e: any) => capture(e.pairs))
+    this.matter.world.on('collisionactive', (e: any) => capture(e.pairs))
+    // Static Matter bodies so rope segments and crates bounce off buildings.
+    // Posts get their own blockers at placement time (see tryPlacePost / restore loop).
     for (const o of this.obstacles) if (o.kind === 'building') this.addRopeBlocker(o)
 
     // camera — viewport starts below the top bar, extends to bottom of canvas
     const cam = this.cameras.main
-    cam.setViewport(0, UI_BAR_HEIGHT, cam.width, cam.height - UI_BAR_HEIGHT)
+    cam.setViewport(0, 0, cam.width, cam.height)
     cam.startFollow(this.player)
     cam.setBounds(0, 0, WORLD_PX, WORLD_PX)
     cam.setZoom(1.08)
@@ -594,7 +730,7 @@ export class Overworld extends Phaser.Scene {
     // change whenever the window does. Re-set the viewport to the new size,
     // keeping the top-bar offset. Bounds/follow/zoom persist across this.
     this.scale.on('resize', (gameSize: Phaser.Structs.Size) => {
-      cam.setViewport(0, UI_BAR_HEIGHT, gameSize.width, gameSize.height - UI_BAR_HEIGHT)
+      cam.setViewport(0, 0, gameSize.width, gameSize.height)
     })
 
     // launch the UI scene on top
@@ -615,6 +751,9 @@ export class Overworld extends Phaser.Scene {
     // standing when they entered (saved in enterInterior).
     this.registry.events.on('interior-exited', () => {
       this.cameras.main.setVisible(true)
+      // Consume the E press that closed the interior so this same keypress
+      // can't bleed into update()'s E poll and immediately mount/open a crate.
+      Phaser.Input.Keyboard.JustDown(this.eKey)
       if (this.preInteriorPos) {
         const bx = this.preInteriorBuildingPos?.x ?? this.preInteriorPos.x
         const by = this.preInteriorBuildingPos?.y ?? this.preInteriorPos.y
@@ -669,22 +808,14 @@ export class Overworld extends Phaser.Scene {
     // honses can't walk through built plots; rope segments bounce off too
     const plotAABB = { x: view.x - 24, y: view.y - 24, w: 48, h: 48, kind: 'building' as ObstacleKind }
     this.obstacles.push(plotAABB)
-    this.addRopeBlocker(plotAABB)
+    this.plotBlockerBodies.set(plotIndex, this.addRopeBlocker(plotAABB))
 
     const def = BUILDINGS[type]
-    // name label above the plot
-    view.nameLabel = this.add.bitmapText(view.x, view.y - PLOT_SIZE / 2 - 4, 'mainSmall', def.name, 15)
+    // name label above the plot — high depth so pipes never draw over it
+    view.nameLabel = this.add.bitmapText(view.x, view.y - PLOT_SIZE / 2 - 4, 'mainSmall', def.name, FONT.desc)
       .setOrigin(0.5, 1)
       .setTint(COLORS.plotPriceTag)
-    // only buildings that produce gold get a progress bar + label
-    if (def.goldPerTick > 0) {
-      const barY = view.y + BAR_Y_OFFSET
-      view.barBg = this.add.rectangle(view.x, barY, BAR_W, BAR_H, COLORS.progressBg).setOrigin(0.5, 0)
-      view.barFill = this.add.rectangle(view.x - BAR_W / 2, barY, 0, BAR_H, COLORS.progressFill).setOrigin(0, 0)
-      view.barLabel = this.add.bitmapText(view.x, barY + BAR_H / 2, 'mainSmall', `${def.goldPerTick} gold`, 13)
-        .setOrigin(0.5, 0.5)
-        .setTint(COLORS.uiText)
-    }
+      .setDepth(100000)
   }
 
   // dig spacing: refuse if click is within this many pixels of an existing dig
@@ -736,14 +867,67 @@ export class Overworld extends Phaser.Scene {
   // true while a dig is in progress — blocks new dig clicks until resolved.
   private digInProgress = false
 
+  // Only way grass should be drawn — keeps specks tied to grass everywhere.
+  private placeGrassTile(x: number, y: number) {
+    state.setTerrainAt(x, y, Terrain.Grass)
+    this.add.sprite(x, y, 'brush_ground').setScale(2).setDepth(0.5)
+    if (Math.random() < 0.15) {
+      this.add.sprite(x + (Math.random() * 28 - 14), y + (Math.random() * 28 - 14), 'brush_speck')
+        .setScale(2).setDepth(0.6)
+    }
+  }
+
+  private renderTerrainEdges() {
+    const T = TERRAIN_TILE
+    for (let r = 0; r < TERRAIN_COLS; r++) {
+      for (let c = 0; c < TERRAIN_COLS; c++) {
+        if (state.terrain[r * TERRAIN_COLS + c] !== Terrain.Grass) continue
+        const x = c * T + T / 2
+        const y = r * T + T / 2
+        // top edge: grass here, not grass above
+        if (r === 0 || state.terrain[(r - 1) * TERRAIN_COLS + c] !== Terrain.Grass) {
+          this.add.sprite(x, y - 4, 'brush_edge_top').setScale(2).setDepth(0.55)
+        }
+        if (c === 0 || state.terrain[r * TERRAIN_COLS + (c - 1)] !== Terrain.Grass) {
+          this.add.sprite(x - 4, y, 'brush_edge_left').setScale(2).setDepth(0.52)
+        }
+        if (c === TERRAIN_COLS - 1 || state.terrain[r * TERRAIN_COLS + (c + 1)] !== Terrain.Grass) {
+          this.add.sprite(x + 4, y, 'brush_edge_right').setScale(2).setDepth(0.52)
+        }
+        if (r === TERRAIN_COLS - 1 || state.terrain[(r + 1) * TERRAIN_COLS + c] !== Terrain.Grass) {
+          this.add.sprite(x, y + 6, 'brush_edge_bottom').setScale(2).setDepth(0.55)
+        }
+      }
+    }
+  }
+
   // Places a mature cottonwood: sprite + trunk obstacle + state entry, welded
   // together so a tree can never be placed without collision and rope physics.
   // All world-tree placement must go through here.
   private placeTree(tx: number, ty: number) {
+    const shadow = this.add.sprite(tx, ty + 26, 'tree_shadow').setScale(3).setDepth(ty + 17).setAlpha(0.3).setOrigin(0.3, 0.5)
+    this.treeShadowSprites.set(`${tx},${ty}`, shadow)
     const sprite = this.add.sprite(tx, ty, 'cottonwood').setScale(3).setDepth(ty + 18)
     this.matureTreeSprites.set(`${tx},${ty}`, sprite)
-    this.obstacles.push(this.makeTreeTrunkObstacle(tx, ty))
+    const trunk = this.makeTreeTrunkObstacle(tx, ty)
+    this.obstacles.push(trunk)
+    // rope (and soon the physics horse) bounces off the trunk
+    this.addRopeBlocker(trunk)
     state.plantedTrees.push({ x: tx, y: ty, kind: 'cottonwood', stage: 'mature' })
+  }
+
+  // Dead cottonwood: same welded placement as placeTree (shadow + trunk obstacle
+  // + rope blocker + state entry), but a leafless sprite and stage 'dead'. Chops
+  // exactly like a mature tree.
+  private placeDeadTree(tx: number, ty: number) {
+    const shadow = this.add.sprite(tx, ty + 26, 'tree_shadow').setScale(3).setDepth(ty + 17).setAlpha(0.3).setOrigin(0.3, 0.5)
+    this.treeShadowSprites.set(`${tx},${ty}`, shadow)
+    const sprite = this.add.sprite(tx, ty, 'cottonwood_dead').setScale(3).setDepth(ty + 18)
+    this.matureTreeSprites.set(`${tx},${ty}`, sprite)
+    const trunk = this.makeTreeTrunkObstacle(tx, ty)
+    this.obstacles.push(trunk)
+    this.addRopeBlocker(trunk)
+    state.plantedTrees.push({ x: tx, y: ty, kind: 'cottonwood', stage: 'dead' })
   }
 
   // Promote a planted sapling to a mature tree. Swaps the walk-through sapling
@@ -775,7 +959,7 @@ export class Overworld extends Phaser.Scene {
     const CHOP_HIT_RADIUS = 18
     const hitSq = CHOP_HIT_RADIUS * CHOP_HIT_RADIUS
     for (const t of state.plantedTrees) {
-      if (t.stage !== 'mature') continue
+      if (t.stage !== 'mature' && t.stage !== 'dead') continue
       // trunk sits ~6px left of the sprite's stored center, so offset the hit test
       const tdx = clickX - (t.x - 6)
       const tdy = clickY - t.y
@@ -808,28 +992,22 @@ export class Overworld extends Phaser.Scene {
 
     const HIT_RADIUS = 24
     const hitSq = HIT_RADIUS * HIT_RADIUS
-    // pick the CLOSEST rock obstacle to the click, not the first within radius —
-    // otherwise a wide neighbor earlier in the array steals clicks meant for the
-    // tile actually under the cursor.
-    let best = -1
+    // pick the CLOSEST rock tile to the click, by sprite position. Mining is
+    // independent of collision — rock tiles aren't in the obstacle array.
+    let bestKey: string | null = null
     let bestDistSq = hitSq
-    for (let i = 0; i < this.obstacles.length; i++) {
-      const o = this.obstacles[i]
-      if (o.kind !== 'rock') continue
-      const odx = clickX - (o.x + o.w / 2)
-      const ody = clickY - (o.y + o.h / 2)
+    for (const k of this.rockSprites.keys()) {
+      const [tx, ty] = k.split(',').map(Number)
+      const odx = clickX - tx
+      const ody = clickY - ty
       const dSq = odx * odx + ody * ody
       if (dSq <= bestDistSq) {
         bestDistSq = dSq
-        best = i
+        bestKey = k
       }
     }
-    if (best >= 0) {
-      const o = this.obstacles[best]
-      const tileX = o.x + 12
-      const tileY = o.y + 12
-      let key = `${tileX},${tileY}`
-      let obstacleIndex = best
+    if (bestKey) {
+      let key = bestKey
 
       // if this tile is locked beneath another, redirect the hit to the
       // blocking tile (you're really hitting the piece on top). Only redirect
@@ -837,10 +1015,6 @@ export class Overworld extends Phaser.Scene {
       const blocker = this.rockMineBlockedBy.get(key)
       if (blocker && this.rockSprites.has(blocker)) {
         key = blocker
-        const [bx, by] = blocker.split(',').map(Number)
-        obstacleIndex = this.obstacles.findIndex(
-          ob => ob.kind === 'rock' && ob.x + 12 === bx && ob.y + 12 === by,
-        )
       }
 
       // shake the whole formation as one rigid body via its container
@@ -866,7 +1040,7 @@ export class Overworld extends Phaser.Scene {
       const hits = (this.rockHits.get(key) ?? 0) + 1
       if (hits >= Overworld.MINE_HITS_TO_DEPLETE) {
         this.rockHits.delete(key)
-        this.depleteTile(key, obstacleIndex)
+        this.depleteTile(key)
       } else {
         this.rockHits.set(key, hits)
       }
@@ -877,27 +1051,57 @@ export class Overworld extends Phaser.Scene {
 
   // Destroy a single mined-out rock tile: remove its sprite, obstacle, and
   // drop stone at its position. The formation shrinks piece by piece.
-  private depleteTile(key: string, obstacleIndex: number) {
-    // remove the obstacle immediately so the player can walk through
-    this.obstacles.splice(obstacleIndex, 1)
+  private depleteTile(key: string) {
+    const formKey = this.rockTileToFormation.get(key)
 
     const sprite = this.rockSprites.get(key)
     if (sprite) {
       const [tx, ty] = key.split(',').map(Number)
+      // burst debris in the tile's own rock colors before it's gone
+      this.spawnParticles(tx, ty, spriteColors(sprite.texture.key))
       sprite.destroy()
       this.rockSprites.delete(key)
 
-      // which way do drops fly? left tile → left, right tile → right,
-      // center column (the bump) → random per drop. Compare tile x to the
-      // formation center x (origin + one TILE, since formations are 3 wide).
-      const formKey = this.rockTileToFormation.get(key)
-      let dir = 0   // -1 left, +1 right, 0 = center (decide per drop below)
-      let dropY = ty   // where drops land — overridden to the base row below
-      // for the center column: bias toward an already-mined (empty) side so
-      // ore doesn't fly into a still-standing neighbor tile. -1 only-left-open,
-      // +1 only-right-open, 0 = both open or both closed (random per drop).
+      if (formKey) {
+        // Remove the old formation-wide collision if it still exists.
+        const rockBody = this.rockBodies.get(formKey)
+        if (rockBody) this.matter.world.remove(rockBody)
+        this.rockBodies.delete(formKey)
+        const collObs = this.rockCollision.get(formKey)
+        if (collObs) {
+          const ci = this.obstacles.indexOf(collObs)
+          if (ci !== -1) this.obstacles.splice(ci, 1)
+        }
+        this.rockCollision.delete(formKey)
+
+        // Remove all existing per-tile collisions for this formation.
+        for (const [tk, fk] of this.rockTileToFormation) {
+          if (fk !== formKey) continue
+          const existing = this.rockTileCollision.get(tk)
+          if (existing) {
+            const ci = this.obstacles.indexOf(existing.obs)
+            if (ci !== -1) this.obstacles.splice(ci, 1)
+            this.matter.world.remove(existing.body)
+            this.rockTileCollision.delete(tk)
+          }
+        }
+
+        // Rebuild per-tile collision for each surviving tile.
+        const TILE = 24
+        for (const [tk, fk] of this.rockTileToFormation) {
+          if (fk !== formKey || !this.rockSprites.has(tk)) continue
+          const [ttx, tty] = tk.split(',').map(Number)
+          const tileObs = { x: ttx - TILE / 2, y: tty - TILE / 2, w: TILE, h: TILE, kind: 'rock' as ObstacleKind }
+          this.obstacles.push(tileObs)
+          const tileBody = this.addRopeBlocker(tileObs)
+          this.rockTileCollision.set(tk, { obs: tileObs, body: tileBody })
+        }
+      }
+
+      let dir = 0   
+      let dropY = ty   
       let centerBias = 0
-      let isolated = false   // no standing neighbor → pop straight up instead
+      let isolated = false  
       if (formKey) {
         const originX = Number(formKey.split(',')[0])
         const baseY = Number(formKey.split(',')[1])
@@ -982,6 +1186,221 @@ export class Overworld extends Phaser.Scene {
     return false
   }
 
+  // ---- Unified action resolver ----
+  // Single source of truth for "what would a left-click at (worldX, worldY)
+  // do right now?" Both the worldBg click handler and the cursor call this,
+  // so the cursor can never show an affordance that disagrees with the click.
+  //
+  // Returns null when no action is feasible (→ default cursor). The `kind`
+  // drives the cursor texture via ACTION_CURSOR below; the handler's
+  // perform() dispatches on `kind` to fire the actual side effects.
+  //
+  // Pure — no side effects. Safe to call every frame from the cursor.
+
+  // --- can* predicates (pure feasibility gates) ---
+
+  canDestroyPost(wx: number, wy: number): number | null {
+    const dx = wx - this.player.x
+    const dy = wy - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return null
+    const hitSq = Overworld.POST_HIT_RADIUS * Overworld.POST_HIT_RADIUS
+    let best: number | null = null
+    let bestDist = Infinity
+    for (let i = 0; i < state.placedPosts.length; i++) {
+      const p = state.placedPosts[i]
+      const pdx = wx - p.x
+      const pdy = wy - p.y
+      const d = pdx * pdx + pdy * pdy
+      if (d <= hitSq && d < bestDist) { best = i; bestDist = d }
+    }
+    return best
+  }
+
+  canDestroyCrate(wx: number, wy: number): number | null {
+    const dx = wx - this.player.x
+    const dy = wy - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return null
+    const hitSq = 26 * 26
+    let best: number | null = null
+    let bestDist = Infinity
+    for (let i = 0; i < state.placedCrates.length; i++) {
+      const c = state.placedCrates[i]
+      const cdx = wx - c.x
+      const cdy = wy - c.y
+      const d = cdx * cdx + cdy * cdy
+      if (d <= hitSq && d < bestDist) { best = i; bestDist = d }
+    }
+    return best
+  }
+
+  // Which built plot is the point over, within tool range? Returns the plot
+  // index or null. Mirrors the plot-footprint test used by tryDig/tryPlacePost.
+  canDestroyPipe(wx: number, wy: number): number | null {
+    const dx = wx - this.player.x
+    const dy = wy - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return null
+    let best: number | null = null
+    let bestDist = Infinity
+    for (let i = 0; i < state.pipes.length; i++) {
+      const pipe = state.pipes[i]
+      const a = this.plotViews[pipe.fromPlot]
+      const b = this.plotViews[pipe.toPlot]
+      const d = pointToSegmentDist(wx, wy, a.x, a.y, b.x, b.y)
+      if (d <= 12 && d < bestDist) { best = i; bestDist = d }
+    }
+    return best
+  }
+
+  // Empty plots return null — only built plots are destroyable.
+  canDestroyPlot(wx: number, wy: number): number | null {
+    const dx = wx - this.player.x
+    const dy = wy - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return null
+    for (let i = 0; i < this.plotViews.length; i++) {
+      if (state.plots[i].built === 'empty') continue
+      const v = this.plotViews[i]
+      if (Math.abs(wx - v.x) < PLOT_SIZE / 2 && Math.abs(wy - v.y) < PLOT_SIZE / 2) return i
+    }
+    return null
+  }
+
+  canOpenCrate(wx: number, wy: number): number | null {
+    const hitSq = 26 * 26
+    let best = -1
+    let bestDistSq = hitSq
+    for (let i = 0; i < state.placedCrates.length; i++) {
+      const c = state.placedCrates[i]
+      const dx = wx - c.x
+      const dy = wy - c.y
+      const dSq = dx * dx + dy * dy
+      if (dSq <= bestDistSq) { bestDistSq = dSq; best = i }
+    }
+    if (best < 0) return null
+    const c = state.placedCrates[best]
+    const pdx = c.x - this.player.x
+    const pdy = c.y - this.player.y
+    if (pdx * pdx + pdy * pdy > CRATE_RANGE * CRATE_RANGE) return null
+    return best
+  }
+
+  canChopTree(wx: number, wy: number): boolean {
+    const dx = wx - this.player.x
+    const dy = wy - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+    const hitSq = 18 * 18
+    for (const t of state.plantedTrees) {
+      if (t.stage !== 'mature' && t.stage !== 'dead') continue
+      const tdx = wx - (t.x - 6)
+      const tdy = wy - t.y
+      if (tdx * tdx + tdy * tdy <= hitSq) return true
+    }
+    return false
+  }
+
+  canMineRock(wx: number, wy: number): boolean {
+    const dx = wx - this.player.x
+    const dy = wy - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+    const hitSq = 24 * 24
+    for (const k of this.rockSprites.keys()) {
+      const [tx, ty] = k.split(',').map(Number)
+      const odx = wx - tx
+      const ody = wy - ty
+      if (odx * odx + ody * ody <= hitSq) return true
+    }
+    return false
+  }
+
+  canMount(): number | null {
+    const rangeSq = MOUNT_RANGE * MOUNT_RANGE
+    for (let i = 0; i < state.honses.length; i++) {
+      const h = state.honses[i]
+      const dx = h.x - this.player.x
+      const dy = h.y - this.player.y
+      if (dx * dx + dy * dy <= rangeSq) return i
+    }
+    return null
+  }
+
+  // The resolver. Context: 'overworld' for world clicks/cursor, 'interior'
+  // for field/workshop (currently only tools matter there — no position
+  // predicates). worldX/worldY are the pointer's world-space coords.
+  resolveOverworldAction(worldX: number, worldY: number): OverworldAction | null {
+    const sel = state.inventory[state.selectedInventorySlot]
+    const heldType = sel?.type ?? null
+    const tool = state.getSelectedTool()
+    const isDestroyTool = heldType === 'axe' || heldType === 'pickaxe'
+
+    // 1. Untie rope (interior segments only — ends excluded elsewhere).
+    // Works mounted or on foot.
+    if (this.rope.isNearTiedRope(worldX, worldY)) {
+      return { kind: 'untie-rope' }
+    }
+
+    // 2. Destroy targets (axe or pickaxe held)
+    if (isDestroyTool) {
+      if (this.canDestroyPost(worldX, worldY) !== null) return { kind: 'destroy-post' }
+      if (this.canDestroyCrate(worldX, worldY) !== null) return { kind: 'destroy-crate' }
+      if (this.canDestroyPlot(worldX, worldY) !== null) return { kind: 'destroy-plot' }
+      if (this.canDestroyPipe(worldX, worldY) !== null) return { kind: 'destroy-pipe' }
+      if (heldType === 'axe' && this.canChopTree(worldX, worldY)) return { kind: 'chop-tree', sprite: tool!.sprite, scale: tool!.scale }
+    }
+
+    // 3. Mine (pickaxe only)
+    if (heldType === 'pickaxe' && this.canMineRock(worldX, worldY)) {
+      return { kind: 'mine-rock', sprite: tool!.sprite, scale: tool!.scale }
+    }
+
+    // 4. Tool-range actions (shovel, sapling, post, crate, rope)
+    if (tool) {
+      const dx = worldX - this.player.x
+      const dy = worldY - this.player.y
+      const reach = heldType === 'crate' ? CRATE_RANGE : TOOL_RANGE
+      const inRange = dx * dx + dy * dy <= reach * reach
+
+      if (heldType === 'shovel' && inRange) {
+        return { kind: 'dig', sprite: tool.sprite, scale: tool.scale }
+      }
+      if (heldType === 'cottonwood_sapling') {
+        if (inRange && this.findPlantableDirtSpot(worldX, worldY)) {
+          return { kind: 'plant-sapling', sprite: tool.sprite, scale: tool.scale }
+        }
+        return null  // sapling held but not over dirt → default cursor
+      }
+      if ((heldType === 'post' || heldType === 'cedar_post') && inRange) {
+        return { kind: 'place-post', sprite: tool.sprite, scale: tool.scale }
+      }
+      if (heldType === 'crate' && inRange) {
+        return { kind: 'place-crate', sprite: tool.sprite, scale: tool.scale }
+      }
+      if (heldType === 'rope') {
+        return { kind: 'throw-rope', sprite: tool.sprite, scale: tool.scale }
+      }
+      // any other tool in range → show its cursor
+      if (inRange) {
+        return { kind: 'tool-generic', sprite: tool.sprite, scale: tool.scale }
+      }
+      return null  // tool held but out of range → default cursor
+    }
+
+    // 5. Mount honse (no tool held, not mounted, rope not attached)
+    if (state.mounted === null && !this.rope.isAttached()) {
+      const mi = this.canMount()
+      if (mi !== null) {
+        const h = state.honses[mi]
+        // cursor shows the hovered honse's own sprite + coat color
+        return { kind: 'mount', sprite: h.sprite, scale: 1, tint: h.tinted ? h.tint : null }
+      }
+    }
+
+    // 6. Open crate (no tool held)
+    if (state.mounted === null) {
+      if (this.canOpenCrate(worldX, worldY) !== null) return { kind: 'open-crate' }
+    }
+
+    return null
+  }
+
   // Axe-destroy a placed post: removes it from state, sprite, and collision,
   // bursts wood particles, and drops the post item where it stood. Returns
   // true if a post was destroyed.
@@ -991,41 +1410,49 @@ export class Overworld extends Phaser.Scene {
     if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
 
     const hitSq = Overworld.POST_HIT_RADIUS * Overworld.POST_HIT_RADIUS
+    let bestIdx = -1
+    let bestDist = Infinity
     for (let i = 0; i < state.placedPosts.length; i++) {
       const p = state.placedPosts[i]
       const pdx = clickX - p.x
       const pdy = clickY - p.y
-      if (pdx * pdx + pdy * pdy > hitSq) continue
-
-      const species = p.species ?? 'post'
-      const key = `${p.x},${p.y}`
-
-      // remove the visual
-      const sprite = this.placedPostSprites.get(key)
-      if (sprite) sprite.destroy()
-      this.placedPostSprites.delete(key)
-
-      // remove the collision body — found by the origin stamped on it, so no
-      // geometry has to be recomputed here.
-      const obsIdx = this.obstacles.findIndex(
-        o => o.kind === 'post' && o.originX === p.x && o.originY === p.y,
-      )
-      if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
-
-      // remove the data
-      state.placedPosts.splice(i, 1)
-
-      this.spawnParticles(p.x, p.y, POST_PARTICLE_COLORS)
-      this.dropStack(p.x, p.y, { type: species, count: 1 })
-      return true
+      const d = pdx * pdx + pdy * pdy
+      if (d <= hitSq && d < bestDist) { bestIdx = i; bestDist = d }
     }
-    return false
+    if (bestIdx === -1) return false
+
+    const p = state.placedPosts[bestIdx]
+    const species = p.species ?? 'post'
+    const key = `${p.x},${p.y}`
+
+    // remove the visual
+    const sprite = this.placedPostSprites.get(key)
+    if (sprite) sprite.destroy()
+    this.placedPostSprites.delete(key)
+
+    const postBody = this.placedPostBodies.get(key)
+    if (postBody) this.matter.world.remove(postBody)
+    this.placedPostBodies.delete(key)
+
+    // remove the collision body — found by the origin stamped on it, so no
+    // geometry has to be recomputed here.
+    const obsIdx = this.obstacles.findIndex(
+      o => o.kind === 'post' && o.originX === p.x && o.originY === p.y,
+    )
+    if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
+
+    // remove the data
+    state.placedPosts.splice(bestIdx, 1)
+
+    // update neighbor sprites (they may switch back from vertical)
+    this.refreshPostNeighbors(p.x, p.y)
+
+    this.spawnParticles(p.x, p.y, spriteColors(species))
+    this.dropStack(p.x, p.y, { type: species, count: 1 })
+    return true
   }
 
-  // Axe-destroy a placed crate: removes it from state, sprite, and collision,
-  // drops the crate item, and spills every stored stack onto the ground around
-  // it (scattered like mined ore — each slot's stack flies out and bobs, ready
-  // to pick back up). Returns true if a crate was destroyed.
+  // Axe-destroy a placed crate
   private tryAxeCrate(clickX: number, clickY: number): boolean {
     const dx = clickX - this.player.x
     const dy = clickY - this.player.y
@@ -1038,16 +1465,18 @@ export class Overworld extends Phaser.Scene {
       const cdy = clickY - c.y
       if (cdx * cdx + cdy * cdy > hitSq) continue
 
-      const key = `${c.x},${c.y}`
       // capture contents + position before we splice the entry away
       const contents = c.contents
       const cx = c.x
       const cy = c.y
 
-      // remove the visual
-      const sprite = this.placedCrateSprites.get(key)
-      if (sprite) sprite.destroy()
-      this.placedCrateSprites.delete(key)
+      // remove the visual (crates are index-aligned to state.placedCrates)
+      this.crateSprites[i]?.destroy()
+      this.crateSprites.splice(i, 1)
+      // remove the physics body
+      const body = this.crateBodies[i]
+      if (body) this.matter.world.remove(body)
+      this.crateBodies.splice(i, 1)
 
       // remove the collision body (found by the stamped origin)
       const obsIdx = this.obstacles.findIndex(
@@ -1058,7 +1487,7 @@ export class Overworld extends Phaser.Scene {
       // remove the data
       state.placedCrates.splice(i, 1)
 
-      this.spawnParticles(cx, cy, POST_PARTICLE_COLORS)
+      this.spawnParticles(cx, cy, spriteColors('item_crate'))
       // the crate itself drops back
       this.dropStack(cx, cy, { type: 'crate', count: 1 })
       // spill every stored stack, scattered around the crate. Pass the actual
@@ -1074,7 +1503,58 @@ export class Overworld extends Phaser.Scene {
     return false
   }
 
-  // Subtle side-to-side shake of a whole tree sprite, settling back to baseX.
+  // Axe/pickaxe-destroy a built plot: tears down the building and reverts the
+  // plot to its empty, buildable state. Spills the plot's contents (producer
+  // output + workshop craft slots) back to the player via state.clearPlot, but
+  // refunds none of the build cost. Returns true if a plot was destroyed.
+  private tryDestroyPlot(clickX: number, clickY: number): boolean {
+    const plotIndex = this.canDestroyPlot(clickX, clickY)
+    if (plotIndex === null) return false
+
+    const view = this.plotViews[plotIndex]
+
+    // capture the building's sprite key before clearPlot wipes it — the debris
+    // particles are sampled from this sprite's own colors.
+    const buildingType = state.plots[plotIndex].built
+
+    // reset state first; it hands back the stacks that were in the plot
+    const spill = state.clearPlot(plotIndex)
+
+    // remove the building sprite
+    if (view.building) { view.building.destroy(); view.building = null }
+    // remove the name label
+    if (view.nameLabel) { view.nameLabel.destroy(); view.nameLabel = null }
+
+    // remove the static rope-blocker Matter body
+    const body = this.plotBlockerBodies.get(plotIndex)
+    if (body) this.matter.world.remove(body)
+    this.plotBlockerBodies.delete(plotIndex)
+
+    // remove the collision obstacle — the plot's footprint is uniquely located
+    // at (view.x - 24, view.y - 24); world structures share kind 'building' but
+    // never sit at a plot's coordinates, so this matches exactly one obstacle.
+    const obsIdx = this.obstacles.findIndex(
+      o => o.kind === 'building' && o.x === view.x - 24 && o.y === view.y - 24,
+    )
+    if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
+
+    // bring the '$' price tag back so the plot reads as buildable again. The
+    // plot's interactive rect (and its open-build-menu handler) was never
+    // removed, so it works again the moment built is 'empty'.
+    view.priceTag = this.add.bitmapText(view.x, view.y, 'main', '$', FONT.cost)
+      .setOrigin(0.5, 0.5)
+      .setTint(COLORS.plotPriceTag)
+
+    this.spawnParticles(view.x, view.y, spriteColors(buildingType))
+
+    // spill the plot's contents, scattered around it (same pattern as crates)
+    for (const stack of spill) {
+      const landX = view.x + (Math.random() - 0.5) * 48
+      const landY = view.y + (Math.random() - 0.5) * 48
+      this.dropStack(landX, landY, stack, view.x)
+    }
+    return true
+  }
   private shakeTree(sprite: Phaser.GameObjects.Sprite, baseX: number) {
     this.tweens.killTweensOf(sprite)
     sprite.x = baseX
@@ -1089,26 +1569,25 @@ export class Overworld extends Phaser.Scene {
     })
   }
 
-  // Fell a mature tree: the stump is revealed at the base while a copy of the
-  // full tree tips over (rotating from its base), slides off, and fades. Marks
-  // the entry 'stump' in state; the trunk obstacle stays (a stump is solid).
+  // Fell a mature tree, stump revealed
   private fellTree(t: { x: number; y: number; stage: string }, sprite?: Phaser.GameObjects.Sprite) {
+    const wasDead = t.stage === 'dead'
     if (sprite) {
       this.tweens.killTweensOf(sprite)
       sprite.x = t.x
       sprite.setTexture('cottonwood_stump')
     }
     t.stage = 'stump'
+    const shadowKey = `${t.x},${t.y}`
+    const shadow = this.treeShadowSprites.get(shadowKey)
+    if (shadow) { shadow.destroy(); this.treeShadowSprites.delete(shadowKey) }
 
-    // falling top: a copy of the tree cropped to just the upper portion (the
-    // part above the stump), pivoting at the cut line where it meets the stump.
-    // Tree is 16 rows; stump is the bottom 5, so the top is rows 0–10 (11 rows).
-    // The cut line sits at 11/16 = 0.6875 down the full frame, and on screen at
-    // t.y + 9 (stump top: t.y + 24 bottom − 15px stump height).
-    const dir = Math.random() < 0.5 ? -1 : 1   // 50/50 left or right
+
+    // Falling top
+    const dir = Math.random() < 0.5 ? -1 : 1   
     const CUT_ROW = 11
     const cutFrac = CUT_ROW / 16
-    const falling = this.add.sprite(t.x, t.y + 9, 'cottonwood')
+    const falling = this.add.sprite(t.x, t.y + 9, wasDead ? 'cottonwood_dead' : 'cottonwood')
       .setScale(3)
       .setOrigin(0.5, cutFrac)        // pivot at the cut line
       .setCrop(0, 0, 12, CUT_ROW)     // show only the top 11 rows
@@ -1117,9 +1596,6 @@ export class Overworld extends Phaser.Scene {
     this.tweens.chain({
       targets: falling,
       onComplete: () => {
-        // tree's down — scatter 4 logs in a horizontal row where the top came
-        // to rest. Sprites are 16px wide (8px × scale 2), so space centers ~18px
-        // apart to keep them from overlapping.
         const lx = t.x + dir * 16
         const ly = t.y + 13
         const spread = [[-27, -2], [-9, 1], [9, -1], [27, 2]]
@@ -1148,9 +1624,6 @@ export class Overworld extends Phaser.Scene {
     })
   }
 
-  // Trunk footprint for a full-size cottonwood at (tx, ty). Sprite is 16px
-  // tall at scale 3 (48px on screen), trunk occupies the bottom ~18px center.
-  // Returns an AABB sized to the trunk only — canopy is non-blocking.
   private makeTreeTrunkObstacle(tx: number, ty: number) {
     const TRUNK_W = 12
     const TRUNK_H = 16
@@ -1165,13 +1638,9 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  // Base footprint for a hitching post at (px, py). Sprite is 8x8 at scale 2
-  // → 16x16 on screen. Both H legs share a small base near the ground; the
-  // AABB covers that base so the player can't walk through.
   private makePostObstacle(px: number, py: number) {
     const POST_W = 15
     const POST_H = 5
-    // Sprite bottom edge sits at py + 8 (8px sprite tall, scale 2, default origin)
     const bottomY = py + 4
     return {
       x: px - POST_W / 2,
@@ -1179,22 +1648,14 @@ export class Overworld extends Phaser.Scene {
       w: POST_W,
       h: POST_H,
       kind: 'post' as ObstacleKind,
-      // origin of the post this box belongs to, so it can be found and removed
-      // by post position without recomputing the geometry above.
       originX: px,
       originY: py,
     }
   }
 
-  // Half-extent used when checking whether the player's center collides.
-  // Player sprite is 8×8 at scale 2 = 16×16 on screen; ~5px around center
-  // is the historically-tuned tight check.
   private static PLAYER_HALF = 5
 
-  // Is a dismount spot blocked by something the player would get stuck in?
-  // Checks the same solid obstacles the player collides with (skips 'building',
-  // which the player walks through) and all honses EXCEPT the one just
-  // dismounted — standing beside your own horse is fine.
+  // Change dismount location if above/under it
   private solidBlockedAt(px: number, py: number, ignoreHonseIndex: number): boolean {
     const half = Overworld.PLAYER_HALF
     for (const o of this.obstacles) {
@@ -1209,9 +1670,6 @@ export class Overworld extends Phaser.Scene {
     return false
   }
 
-  // Mount the nearest honse within range. Returns true if a honse was mounted.
-  // Shared by click-to-mount and the E key. Caller is responsible for its own
-  // guards (e.g. not while holding a tool).
   mountNearestHonse(): boolean {
     const rangeSq = MOUNT_RANGE * MOUNT_RANGE
     for (let i = 0; i < state.honses.length; i++) {
@@ -1226,10 +1684,6 @@ export class Overworld extends Phaser.Scene {
     return false
   }
 
-  // Dismount: tame the honse and step the player off the saddle. South is the
-  // natural spot; if it's blocked by a solid obstacle, go north instead so the
-  // player never lands stuck. The dismounted honse is ignored by the check —
-  // standing next to your own horse is fine. Shared by click and the E key.
   dismount() {
     if (state.mounted === null) return
     const dismountedIdx = state.mounted
@@ -1241,11 +1695,6 @@ export class Overworld extends Phaser.Scene {
     this.player.y = this.solidBlockedAt(this.player.x, south, dismountedIdx) ? north : south
   }
 
-  // True if a player-sized AABB centered at (px, py) overlaps any static
-  // obstacle (trees, rocks, posts) or any honse body. When called by a
-  // honse's own movement code, pass that honse's index in ignoreHonseIndex
-  // so she doesn't collide with herself; the call ALSO checks building
-  // footprints, which the player passes through on purpose.
   private collidesAt(px: number, py: number, ignoreHonseIndex?: number): boolean {
     const half = Overworld.PLAYER_HALF
     const isHonse = ignoreHonseIndex !== undefined
@@ -1258,63 +1707,29 @@ export class Overworld extends Phaser.Scene {
       const b = getHonseBodyAABB(state.honses[i])
       if (aabbOverlap(px, py, half, b.x, b.y, b.w, b.h)) return true
     }
-    // Taut ropes block honses (not the player — a person can duck under a rope)
-    if (isHonse) {
-      const ROPE_BLOCK_DIST = 6
-      for (const seg of this.rope.getTautRopeLines()) {
-        if (pointToSegmentDist(px, py, seg.x1, seg.y1, seg.x2, seg.y2) < ROPE_BLOCK_DIST) return true
-      }
-    }
     return false
   }
 
-  // Create a static Matter rectangle matching an AABB so rope segments bounce
-  // off it. Called for every world obstacle and building so the rope can't
-  // pass through trees, rocks, posts, or buildings.
-  // Render a rock formation at (x, y) from a row of tile sprite keys, register
-  // its collision footprint, and add a rope blocker over it. The y-sort depth
-  // is the formation's bottom edge so the player walks behind/in front of it
-  // correctly. The 'rock_bump' tile is anchored to its base (origin 0.5,1) so
-  // it rises above the row instead of straddling the baseline. Callable
-  // anywhere — gen drives placement; the console can spawn one for testing.
   spawnRockFormation(x: number, y: number) {
     const TILE = 24
-    const bottomY = y + TILE / 2
+    const bottomY = y + TILE / 2   // bump sprite anchor (vertical position)
+    const sortDepth = bottomY - 16 // render order, offset so player draws in front
     const formKey = `${x},${y}`
-    const container = this.add.container(0, 0).setDepth(bottomY)
+    const container = this.add.container(0, 0).setDepth(sortDepth)
     this.rockContainers.set(formKey, container)
-
-    // register one mineable tile: a sprite (already created/positioned by the
-    // caller), plus its collision obstacle and lookup maps. Returns nothing.
     const register = (sprite: Phaser.GameObjects.Sprite, tx: number, ty: number) => {
-      sprite.setDepth(bottomY)
+      sprite.setDepth(sortDepth)
       container.add(sprite)
       const key = `${tx},${ty}`
       this.rockSprites.set(key, sprite)
       this.rockTileToFormation.set(key, formKey)
-      this.obstacles.push({
-        x: tx - TILE / 2,
-        y: ty - TILE / 2,
-        w: TILE,
-        h: TILE,
-        kind: 'rock' as ObstacleKind,
-      })
-      this.addRopeBlocker({ x: tx - TILE / 2, y: ty - TILE / 2, w: TILE, h: TILE })
     }
 
-    // left tile
     register(this.add.sprite(x, y, 'rock_tl').setScale(3), x, y)
-    // right tile
     register(this.add.sprite(x + TILE * 2, y, 'rock_tr').setScale(3), x + TILE * 2, y)
 
-    // middle: the bump (8×11) split into two stacked mineable pieces using the
-    // same sprite cropped to top rows and bottom rows. No new art. Both sprites
-    // sit at the IDENTICAL position/origin — only their crop differs — so the
-    // two crops reconstruct the whole bump seamlessly (it's literally the same
-    // sprite drawn twice, each masked to a different slice).
     const midX = x + TILE
-    const BUMP_W = 8, BUMP_H = 11, TOP_ROWS = 5  // top 5 rows, bottom 6 rows
-    // base piece — bottom rows
+    const BUMP_W = 8, BUMP_H = 11, TOP_ROWS = 5  
     const base = this.add.sprite(midX, bottomY, 'rock_bump').setScale(3)
       .setOrigin(0.5, 1)
       .setCrop(0, TOP_ROWS, BUMP_W, BUMP_H - TOP_ROWS)
@@ -1323,25 +1738,18 @@ export class Overworld extends Phaser.Scene {
     const top = this.add.sprite(midX, bottomY, 'rock_bump').setScale(3)
       .setOrigin(0.5, 1)
       .setCrop(0, 0, BUMP_W, TOP_ROWS)
-    register(top, midX, y - TILE)   // distinct key (one tile up) so it's its own piece
-    // the base is locked beneath the top — must mine the top off first so the
-    // top is never left floating
+    register(top, midX, y - TILE)   
     this.rockMineBlockedBy.set(`${midX},${y}`, `${midX},${y - TILE}`)
+    this.rockBodies.set(formKey, this.addRopeBlocker({ x: x - TILE / 2, y: y - TILE / 2, w: TILE * 3, h: TILE }))
+    const collObs = { x: x - TILE / 2, y: y - TILE / 2, w: TILE * 3, h: TILE, kind: 'rock' as ObstacleKind }
+    this.obstacles.push(collObs)
+    this.rockCollision.set(formKey, collObs)
   }
 
-  // Single source of truth for "everything physical on the map." Returns each
-  // occupant as a center + radius so placement systems (gen rock scatter today;
-  // future auto-placement) can ask one question — "where is it occupied?" —
-  // instead of re-walking every array by hand. Built from `obstacles` (which
-  // already aggregates buildings, posts, trees, non-enterables, rocks as tagged
-  // rects) plus honses. `pad` is extra clearance added to every radius so
-  // things keep a ring of space, not a barely-not-touching edge. Add a new
-  // physical category later → make sure it lands in `obstacles`, and it's
-  // covered here automatically.
+  // Single source of truth for everything physical on the map
   getBlockers(pad = 40): { x: number; y: number; radius: number }[] {
     const out: { x: number; y: number; radius: number }[] = []
     for (const o of this.obstacles) {
-      // rect center, and a radius that encloses the rect's half-diagonal
       const cx = o.x + o.w / 2
       const cy = o.y + o.h / 2
       const radius = Math.hypot(o.w, o.h) / 2 + pad
@@ -1353,8 +1761,8 @@ export class Overworld extends Phaser.Scene {
     return out
   }
 
-  private addRopeBlocker(aabb: { x: number; y: number; w: number; h: number }) {
-    this.matter.add.rectangle(
+  private addRopeBlocker(aabb: { x: number; y: number; w: number; h: number }): MatterJS.BodyType {
+    return this.matter.add.rectangle(
       aabb.x + aabb.w / 2,
       aabb.y + aabb.h / 2,
       aabb.w,
@@ -1363,18 +1771,11 @@ export class Overworld extends Phaser.Scene {
     )
   }
 
-  // Drop a stack at world position (x, y). Spawns a sprite and adds to state.
-  // Dev helper: logs the final world coordinate of a player-placed item to the
-  // console, so spots can be read off and hardcoded permanently into the map.
   private logPlacement(label: string, x: number, y: number) {
     console.log(`[place] ${label} @ ${Math.round(x)}, ${Math.round(y)}`)
   }
 
-  // Creates the sprite for a dropped item and returns it. The caller owns
-  // array placement and state.droppedItems — this only builds the visual and
-  // its animation. `jump` true = a fresh drop, pops up then floats; false =
-  // restored from a save, floats immediately. The float baseline (baseY) and
-  // a per-item phase live on the sprite via data, read each frame in update().
+  // Creates the sprite for a dropped item and returns it.
   private spawnDroppedSprite(x: number, y: number, type: ItemType, jump: boolean, flyFromX?: number): Phaser.GameObjects.Sprite {
     const sprite = this.add.sprite(x, y, ITEMS[type].sprite)
       .setScale(ITEMS[type].scale)
@@ -1391,16 +1792,26 @@ export class Overworld extends Phaser.Scene {
       // optional horizontal fly-out: start at flyFromX and arc to the final x
       // (used by mining so ore visibly bursts away from the rock)
       if (flyFromX !== undefined) sprite.x = flyFromX
+      // Horizontal fly-out eases smoothly to a stop (no sideways bounce).
+      if (flyFromX !== undefined) {
+        this.tweens.add({
+          targets: sprite,
+          x,
+          duration: Overworld.DROP_JUMP_MS,
+          ease: 'Quad.easeOut',
+        })
+      }
+      // Vertical landing hop bounces, then hands off to the float bob.
       this.tweens.add({
         targets: sprite,
-        x,
         y,
         duration: Overworld.DROP_JUMP_MS,
         ease: 'Bounce.easeOut',
         onComplete: () => {
-          // hand the bob phase off so the float starts exactly at rest (sin=0)
-          // and eases upward from there — no snap between the landing and bob.
-          sprite.setData('bobPhase', -Date.now() * Overworld.DROP_BOB_SPEED)
+          // hand off at the bob's trough (sin = -1) so it starts at rest with
+          // zero vertical velocity, then eases upward — no reversal jerk.
+          sprite.setData('baseY', y + Overworld.DROP_BOB_AMP)
+          sprite.setData('bobPhase', -Date.now() * Overworld.DROP_BOB_SPEED - Math.PI / 2)
           sprite.setData('settled', true)
         },
       })
@@ -1470,8 +1881,6 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  // Try to plant a sapling at click position. The selected hotbar slot must be
-  // a sapling, and the click must be near a dirt patch. Returns true if planted.
   private trySaplingPlant(clickX: number, clickY: number): boolean {
     const slotIdx = state.selectedInventorySlot
     const stack = state.inventory[slotIdx]
@@ -1484,11 +1893,6 @@ export class Overworld extends Phaser.Scene {
     return planted
   }
 
-  // Try to place a hitching post at click position. The selected hotbar slot
-  // must be a post or cedar_post — both behave identically (collision, rope
-  // catch, snap) but render with their species sprite. The spot must be
-  // clear of plots, world structures, existing obstacles, and honse bodies.
-  // Position snaps to POST_GRID so consecutive placements line up.
   private tryPlacePost(clickX: number, clickY: number): boolean {
     const slotIdx = state.selectedInventorySlot
     const stack = state.inventory[slotIdx]
@@ -1502,12 +1906,8 @@ export class Overworld extends Phaser.Scene {
     const x = Math.round(clickX / POST_GRID) * POST_GRID
     const y = Math.round(clickY / POST_GRID) * POST_GRID
 
-    // refuse if a post already occupies this exact grid cell. (Touching/
-    // overlapping posts are fine — that's how fence lines interlock — but
-    // stacking one directly on another is not.)
+    // refuse if a post already occupies this exact grid cell. 
     if (this.placedPostSprites.has(`${x},${y}`)) return false
-
-
 
     // refuse if inside any plot footprint
     for (const v of this.plotViews) {
@@ -1517,9 +1917,7 @@ export class Overworld extends Phaser.Scene {
     for (const s of state.worldStructures) {
       if (Math.abs(x - s.x) < 32 && Math.abs(y - s.y) < 32) return false
     }
-    // refuse if the post's base would overlap any existing obstacle EXCEPT
-    // other posts — fence-to-fence touching is allowed on purpose so players
-    // can build continuous fence lines where the H-shapes interlock visually.
+    // refuse if the post's base would overlap any existing obstacle except other posts
     const newObs = this.makePostObstacle(x, y)
     for (const o of this.obstacles) {
       if (o.kind === 'post') continue
@@ -1530,12 +1928,18 @@ export class Overworld extends Phaser.Scene {
       const b = getHonseBodyAABB(h)
       if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, b.x, b.y, b.w, b.h)) return false
     }
+    const half = Overworld.PLAYER_HALF
+    if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h,
+      this.player.x - half, this.player.y - half, half * 2, half * 2)) return false
 
     state.placedPosts.push({ x, y, species })
-    const sprite = this.add.sprite(x, y, species).setScale(2).setDepth(y + 8)
+    const tex = this.resolvePostTexture(x, y, species)
+    const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(y + 8)
     this.placedPostSprites.set(`${x},${y}`, sprite)
     this.obstacles.push(newObs)
+    this.placedPostBodies.set(`${x},${y}`, this.addRopeBlocker(newObs))
     this.logPlacement(species, x, y)
+    this.refreshPostNeighbors(x, y)
 
     stack.count -= 1
     if (stack.count <= 0) state.inventory[slotIdx] = null
@@ -1543,22 +1947,15 @@ export class Overworld extends Phaser.Scene {
     return true
   }
 
-  // Footprint for a placed crate at (cx, cy). Sprite is 8x8 at scale 2 → 16x16
-  // World-creation half of placing a crate: sprite + obstacle + state entry
-  // with a fresh empty grid, no gameplay checks (mirrors placePost / spawnHonse).
-  // Used by the dev console and for hardcoded map authoring. tryPlaceCrate
-  // handles the gameplay checks separately.
   spawnCrate(x: number, y: number) {
     state.placedCrates.push({ x, y, contents: createCrateContents() })
     const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(y + 8).setInteractive()
-    this.attachCrateOpenHandler(sprite, x, y)
-    this.placedCrateSprites.set(`${x},${y}`, sprite)
+    this.attachCrateOpenHandler(sprite)
+    this.crateSprites.push(sprite)
+    this.crateBodies.push(this.matter.add.rectangle(x, y, 16, 16, { frictionAir: 0.1 }))
     this.obstacles.push(this.makeCrateObstacle(x, y))
   }
 
-  // on screen, so the obstacle is a 16x16 box centered on it. originX/originY
-  // are stamped so the box can be found and removed by crate position later
-  // (mirrors makePostObstacle).
   private makeCrateObstacle(cx: number, cy: number) {
     const SIZE = 16
     return {
@@ -1572,25 +1969,21 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  // Try to place a crate at the click position. Selected slot must be a crate.
-  // Range-checked like a post, snapped to the same grid, and refused if it
-  // would land on a plot, world structure, any existing obstacle, or a honse.
-  // Unlike posts, crates don't interlock — they reject overlap with everything,
-  // including other crates. On success the crate gets a fresh empty grid.
   private tryPlaceCrate(clickX: number, clickY: number): boolean {
     const slotIdx = state.selectedInventorySlot
     const stack = state.inventory[slotIdx]
     if (!stack || stack.type !== 'crate') return false
     const dx = clickX - this.player.x
     const dy = clickY - this.player.y
-    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+  
+    if (dx * dx + dy * dy > CRATE_RANGE * CRATE_RANGE) return false
 
     const CRATE_GRID = 10
     const x = Math.round(clickX / CRATE_GRID) * CRATE_GRID
     const y = Math.round(clickY / CRATE_GRID) * CRATE_GRID
 
     // refuse if a crate already sits on this exact grid cell
-    if (this.placedCrateSprites.has(`${x},${y}`)) return false
+    if (state.placedCrates.some(c => c.x === x && c.y === y)) return false
 
     // refuse if inside any plot footprint
     for (const v of this.plotViews) {
@@ -1613,8 +2006,9 @@ export class Overworld extends Phaser.Scene {
 
     state.placedCrates.push({ x, y, contents: createCrateContents() })
     const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(y + 8).setInteractive()
-    this.attachCrateOpenHandler(sprite, x, y)
-    this.placedCrateSprites.set(`${x},${y}`, sprite)
+    this.attachCrateOpenHandler(sprite)
+    this.crateSprites.push(sprite)
+    this.crateBodies.push(this.matter.add.rectangle(x, y, 16, 16, { frictionAir: 0.1 }))
     this.obstacles.push(newObs)
     this.logPlacement('crate', x, y)
 
@@ -1624,21 +2018,13 @@ export class Overworld extends Phaser.Scene {
     return true
   }
 
-  // Find the placed crate nearest to (x, y) within hit radius, requiring the
-  // player to be within TOOL_RANGE of it, and open it. Returns true if a crate
-  // Wire a placed crate's sprite so clicking it opens the crate. The sprite is
-  // interactive (for the grab cursor), so it catches the click itself rather
-  // than letting it fall through to the world background. Left-click only, and
-  // only when no overworld tool is the active cursor item (a held tool/placeable
-  // takes precedence — same rule that blocks the build menu while a tool is
-  // selected). Single source for all three crate sprite creation sites.
-  private attachCrateOpenHandler(sprite: Phaser.GameObjects.Sprite, x: number, y: number) {
+  private attachCrateOpenHandler(sprite: Phaser.GameObjects.Sprite) {
     sprite.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!p.leftButtonDown()) return
-      // axe held → destroy the crate (the sprite is interactive, so it catches
-      // this click itself; without routing here the click would never reach the
-      // worldBg axe handler).
-      if (state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+      const x = sprite.x
+      const y = sprite.y
+      const heldType = state.inventory[state.selectedInventorySlot]?.type
+      if (heldType === 'axe' || heldType === 'pickaxe') {
         this.tryAxeCrate(x, y)
         return
       }
@@ -1651,12 +2037,7 @@ export class Overworld extends Phaser.Scene {
     })
   }
 
-  // was opened. For E, callers pass the player position (so the player is
-  // trivially in range); for click, the click point (so you must click on/near
-  // the crate AND be standing close enough).
   private tryOpenCrate(x: number, y: number, hitRadius = 16): boolean {
-    // already open? bail — otherwise the same E/click that closes the panel
-    // (handled in UI) would reopen it the same frame.
     const ui = this.scene.get('UI') as UI
     if (ui.isCrateOpen()) return false
     const hitSq = hitRadius * hitRadius
@@ -1673,11 +2054,10 @@ export class Overworld extends Phaser.Scene {
       }
     }
     if (best < 0) return false
-    // player must be close enough to reach it
     const c = state.placedCrates[best]
     const pdx = c.x - this.player.x
     const pdy = c.y - this.player.y
-    if (pdx * pdx + pdy * pdy > TOOL_RANGE * TOOL_RANGE) return false
+    if (pdx * pdx + pdy * pdy > CRATE_RANGE * CRATE_RANGE) return false
 
     this.registry.events.emit('open-crate', best)
     return true
@@ -1690,57 +2070,278 @@ export class Overworld extends Phaser.Scene {
     this.addRopeBlocker(obs)
   }
 
-  // Spawn a wild honse at a world position: state entry + sprite + shadow
-  // Matter body (so rope segments physically interact with her). The single
-  // source of truth for "a honse exists" — used by the twine-craft spawn and
-  // available for hardcoded placements or dev tools.
+  // Spawn a wild honse at a world position 
   spawnHonse(x: number, y: number) {
-    state.honses.push({
-      x, y,
-      vx: 0, vy: 0,
-      facingRight: false,
-      facingLockedUntil: 0,
-      homeX: x, homeY: y,
-      mode: 'idle', modeUntil: 0,
-      tame: false,
-    })
-    this.honseSprites.push(
-      this.add.sprite(x, y, 'honse').setScale(2).setDepth(y + 8)
-    )
+    const honse = createHonse(x, y)
+    state.honses.push(honse)
+    const spr = this.add.sprite(x, y, honse.sprite).setScale(2).setDepth(y + 8)
+    if (honse.tinted) spr.setTint(honse.tint)
+    this.honseSprites.push(spr)
     this.honseBodies.push(
-      this.matter.add.rectangle(x, y + 3, 30, 12, { isStatic: true })
+      this.matter.add.rectangle(x, y + 3, 30, 12, { inertia: Infinity, frictionAir: 0.05, restitution: 0.6, collisionFilter: { category: CAT_HONSE, mask: 0xFFFFFFFF, group: 0 } } as any)
     )
   }
 
-  // World-creation half of placing a post: sprite + obstacle + state entry,
-  // welded together (same role placeTree plays for trees). Used for hardcoded
-  // startup placement; tryPlacePost handles the gameplay checks separately.
   private placePost(x: number, y: number, species: 'post' | 'cedar_post') {
     state.placedPosts.push({ x, y, species })
-    const sprite = this.add.sprite(x, y, species).setScale(2).setDepth(y + 8)
+    const tex = this.resolvePostTexture(x, y, species)
+    const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(y + 8)
     this.placedPostSprites.set(`${x},${y}`, sprite)
     this.obstacles.push(this.makePostObstacle(x, y))
+    this.refreshPostNeighbors(x, y)
   }
 
-  // ---- ROPE THROW ----
-  // All rope state and physics live in src/world/ropeController.ts. The scene
-  // holds one RopeController (this.rope), calls its throw() on click, calls
-  // its update() each frame, and reads getLeashAnchor() for player movement.
+  // ---- Pipe placement ----
 
+  private connectPipe(fromPlot: number, toPlot: number) {
+    // Don't duplicate an existing connection
+    if (state.pipes.some(p => p.fromPlot === fromPlot && p.toPlot === toPlot)) return
 
+    // Consume one pipe from inventory
+    const slotIdx = state.selectedInventorySlot
+    const stack = state.inventory[slotIdx]
+    if (!stack || stack.type !== 'pipe') return
+    stack.count -= 1
+    if (stack.count <= 0) state.inventory[slotIdx] = null
+    this.registry.events.emit('inventory-changed')
 
+    // Store the connection
+    state.pipes.push({ fromPlot, toPlot })
 
+    // Draw the visual
+    this.drawPipe(fromPlot, toPlot)
+  }
 
+  private drawPipe(fromPlot: number, toPlot: number) {
+    const fromView = this.plotViews[fromPlot]
+    const toView = this.plotViews[toPlot]
+    const key = `${fromPlot}-${toPlot}`
 
-  // Lower-level: given a sapling stack, try planting one near (clickX, clickY).
-  // Mutates the stack (count -= 1) on success but does NOT clear empty slots
-  // or emit events — callers handle cleanup since the stack may live in
-  // inventory or on the cursor (drag held).
-  // Single source of truth for "is there a dirt patch within plant range of
-  // this point?" Used by both tryPlantFromStack (to plant) and the cursor (to
-  // show the plant affordance), so the cursor can never disagree with whether
-  // a plant would actually succeed. Returns the matched dug spot (with its
-  // index + key) or null. Pure — no side effects.
+    const dx = toView.x - fromView.x
+    const dy = toView.y - fromView.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    const angle = Math.atan2(dy, dx)
+
+    // Pipe sprite is 12x8 native at scale 2 = 24x16 on screen.
+    // Tile them along the line between the two plot centers.
+    const pipeLen = 24
+    const count = Math.max(1, Math.round(dist / pipeLen))
+    const stepX = dx / count
+    const stepY = dy / count
+
+    const sprites: Phaser.GameObjects.Sprite[] = []
+    for (let i = 0; i < count; i++) {
+      const sx = fromView.x + stepX * (i + 0.5)
+      const sy = fromView.y + stepY * (i + 0.5)
+      const spr = this.add.sprite(sx, sy, 'item_pipe')
+        .setScale(2)
+        .setRotation(angle)
+        .setDepth(sy)
+      sprites.push(spr)
+    }
+    this.pipeSprites.set(key, sprites)
+
+    // Arrow at midpoint showing flow direction.
+    // When the pipe points left/up, the rotation flips the shading upside down,
+    // so use the pre-flipped sprite to keep light-on-top consistent.
+    const midX = (fromView.x + toView.x) / 2
+    const midY = (fromView.y + toView.y) / 2
+    const flipped = Math.abs(angle) > Math.PI / 2
+    const chevronKey = flipped ? 'pipe_chevron_flip' : 'pipe_chevron'
+    const arrow = this.add.sprite(midX, midY, chevronKey)
+      .setScale(2)
+      .setRotation(angle)
+      .setDepth(midY + 1)
+    this.pipeArrows.set(key, arrow)
+  }
+
+  // ---- Pipe item transfer ----
+
+  // Drives all pipes. Called from update() on the PIPE_TICK_MS cadence.
+  private runPipeTicks(now: number) {
+    if (now - this.lastPipeTickAt < Overworld.PIPE_TICK_MS) return
+    this.lastPipeTickAt = now
+
+    // Plots that received items this tick can't be drained until next tick,
+    // so an item visibly lands in a storage before moving on (no same-tick
+    // pass-through when pipes are chained storage → storage).
+    const receivedThisTick = new Set<number>()
+
+    for (const pipe of state.pipes) {
+      const from = state.plots[pipe.fromPlot]
+      const to = state.plots[pipe.toPlot]
+      if (!from || !to || from.built === 'empty' || to.built === 'empty') continue
+
+      // don't pull from a plot that was just filled by another pipe this tick
+      if (receivedThisTick.has(pipe.fromPlot)) continue
+
+      // What type does the source have available to move?
+      const avail = this.pipePeekSource(pipe.fromPlot)
+      if (!avail) continue
+
+      // How many of that type can we move this tick?
+      const want = Math.min(Overworld.PIPE_ITEMS_PER_TICK, avail.count)
+      // How many will the destination accept?
+      const accepted = this.pipePushToPlot(pipe.toPlot, avail.type, want)
+      if (accepted > 0) {
+        this.pipeTakeFromSource(pipe.fromPlot, accepted)
+        receivedThisTick.add(pipe.toPlot)
+      }
+    }
+  }
+
+  // Peek at what the source plot can send: returns {type, count} or null.
+  // mill/well → output; workshop → craftOutput; storage → first non-empty slot.
+  private pipePeekSource(plotIndex: number): { type: ItemType; count: number } | null {
+    const plot = state.plots[plotIndex]
+    if (plot.built === 'mill' || plot.built === 'well') {
+      return plot.output ? { type: plot.output.type, count: plot.output.count } : null
+    }
+    if (plot.built === 'workshop') {
+      return plot.craftOutput ? { type: plot.craftOutput.type, count: plot.craftOutput.count } : null
+    }
+    if (plot.built === 'storage' && plot.storageContents) {
+      for (const s of plot.storageContents) {
+        if (s && s.count > 0) return { type: s.type, count: s.count }
+      }
+    }
+    return null
+  }
+
+  // Remove `count` items from the source plot's output location.
+  private pipeTakeFromSource(plotIndex: number, count: number) {
+    const plot = state.plots[plotIndex]
+    let remaining = count
+    const drain = (slot: ItemStack | null | undefined): ItemStack | null => {
+      if (!slot) return null
+      const take = Math.min(slot.count, remaining)
+      slot.count -= take
+      remaining -= take
+      return slot.count <= 0 ? null : slot
+    }
+    if (plot.built === 'mill' || plot.built === 'well') {
+      plot.output = drain(plot.output)
+    } else if (plot.built === 'workshop') {
+      plot.craftOutput = drain(plot.craftOutput)
+    } else if (plot.built === 'storage' && plot.storageContents) {
+      // drain from the first non-empty slot of the moved type
+      for (let i = 0; i < plot.storageContents.length && remaining > 0; i++) {
+        const s = plot.storageContents[i]
+        if (s && s.count > 0) plot.storageContents[i] = drain(s)
+      }
+    }
+  }
+
+  // Push up to `count` of `type` into the dest plot's input location.
+  // Returns how many were actually accepted.
+  // workshop → craftInputs (matching slot first, then empty); storage → grid.
+  // mill/well reject all input.
+  private pipePushToPlot(plotIndex: number, type: ItemType, count: number): number {
+    const plot = state.plots[plotIndex]
+    const cap = ITEMS[type].maxStack
+    let remaining = count
+    let accepted = 0
+
+    if (plot.built === 'workshop') {
+      if (!plot.craftInputs) plot.craftInputs = [null, null]
+      const inputs = plot.craftInputs
+      // top up a matching slot first
+      for (let i = 0; i < inputs.length && remaining > 0; i++) {
+        const s = inputs[i]
+        if (s && s.type === type && s.count < cap) {
+          const room = cap - s.count
+          const move = Math.min(room, remaining)
+          s.count += move; remaining -= move; accepted += move
+        }
+      }
+      // then fill an empty slot
+      for (let i = 0; i < inputs.length && remaining > 0; i++) {
+        if (inputs[i] === null) {
+          const move = Math.min(cap, remaining)
+          inputs[i] = { type, count: move }
+          remaining -= move; accepted += move
+        }
+      }
+      return accepted
+    }
+
+    if (plot.built === 'storage' && plot.storageContents) {
+      const slots = plot.storageContents
+      // top up matching slots
+      for (let i = 0; i < slots.length && remaining > 0; i++) {
+        const s = slots[i]
+        if (s && s.type === type && s.count < cap) {
+          const room = cap - s.count
+          const move = Math.min(room, remaining)
+          s.count += move; remaining -= move; accepted += move
+        }
+      }
+      // then empty slots
+      for (let i = 0; i < slots.length && remaining > 0; i++) {
+        if (slots[i] === null) {
+          const move = Math.min(cap, remaining)
+          slots[i] = { type, count: move }
+          remaining -= move; accepted += move
+        }
+      }
+      return accepted
+    }
+
+    // mill/well/field don't accept piped input
+    return 0
+  }
+
+  private tryDestroyPipe(clickX: number, clickY: number): boolean {
+    const idx = this.canDestroyPipe(clickX, clickY)
+    if (idx === null) return false
+    this.removePipe(idx)
+    return true
+  }
+
+  removePipe(pipeIndex: number) {
+    const pipe = state.pipes[pipeIndex]
+    if (!pipe) return
+    const key = `${pipe.fromPlot}-${pipe.toPlot}`
+
+    // Destroy visuals
+    const sprites = this.pipeSprites.get(key)
+    if (sprites) { for (const s of sprites) s.destroy(); this.pipeSprites.delete(key) }
+    const arrow = this.pipeArrows.get(key)
+    if (arrow) { arrow.destroy(); this.pipeArrows.delete(key) }
+
+    // Remove data
+    state.pipes.splice(pipeIndex, 1)
+
+    // Refund a pipe item
+    state.inventoryAddAnywhere({ type: 'pipe', count: 1 })
+    this.registry.events.emit('inventory-changed')
+  }
+
+  // Determine if a post at (x,y) should use the vertical sprite variant.
+  // Vertical = has a neighbor directly above or below (same x, y ± 10)
+  // but NOT left or right (x ± 10, same y).
+  private resolvePostTexture(x: number, y: number, species: 'post' | 'cedar_post'): string {
+    const hasAbove = this.placedPostSprites.has(`${x},${y - 10}`)
+    const hasBelow = this.placedPostSprites.has(`${x},${y + 10}`)
+    if (hasAbove || hasBelow) return species === 'cedar_post' ? 'cedar_post_v' : 'post_v'
+    return species
+  }
+
+  // After placing/removing a post, update the sprites of its vertical neighbors
+  // in case they need to switch between horizontal and vertical variants.
+  private refreshPostNeighbors(x: number, y: number) {
+    const neighbors = [`${x},${y - 10}`, `${x},${y + 10}`, `${x - 10},${y}`, `${x + 10},${y}`]
+    for (const key of neighbors) {
+      const spr = this.placedPostSprites.get(key)
+      if (!spr) continue
+      const [nx, ny] = key.split(',').map(Number)
+      const entry = state.placedPosts.find(p => p.x === nx && p.y === ny)
+      if (!entry) continue
+      const tex = this.resolvePostTexture(nx, ny, entry.species ?? 'post')
+      spr.setTexture(tex)
+    }
+  }
+
   findPlantableDirtSpot(clickX: number, clickY: number): { index: number; x: number; y: number; key: string } | null {
     // dirt patches use the dig offset, so compare in offset-applied coords
     const x = clickX + Overworld.DIG_OFFSET_X
@@ -1763,6 +2364,8 @@ export class Overworld extends Phaser.Scene {
 
     const spot = this.findPlantableDirtSpot(clickX, clickY)
     if (!spot) return false
+
+
 
     const dirtSprite = this.dugSprites.get(spot.key)
     if (dirtSprite) { dirtSprite.destroy(); this.dugSprites.delete(spot.key) }
@@ -1790,7 +2393,7 @@ export class Overworld extends Phaser.Scene {
     const undoSq = Overworld.DIG_MIN_SPACING * Overworld.DIG_MIN_SPACING
     for (let i = state.plantedTrees.length - 1; i >= 0; i--) {
       const t = state.plantedTrees[i]
-      if (t.stage !== 'sapling') continue   // only saplings can be dug up; mature trees are felled with an axe
+      if (t.stage !== 'sapling') continue  
       const dx = x - t.x
       const dy = y - t.y
       if (dx * dx + dy * dy >= undoSq) continue
@@ -1812,18 +2415,12 @@ export class Overworld extends Phaser.Scene {
       return
     }
 
-    // existing dirt patch nearby? Two cases, in order:
-    //   1. a dropped item is on/near it → bury that item, remove the patch
-    //   2. empty patch → undo the dig
     for (let i = state.dugSpots.length - 1; i >= 0; i--) {
       const d = state.dugSpots[i]
       const dx = x - d.x
       const dy = y - d.y
       if (dx * dx + dy * dy >= undoSq) continue
 
-      // case 1: bury — find the topmost dropped item near this patch.
-      // Move it into state.buriedStacks and remove the patch entirely; the
-      // ground looks clean again. Re-digging here will reveal it.
       const burySq = Overworld.PLANT_HIT_RADIUS * Overworld.PLANT_HIT_RADIUS
       let buriedSomething = false
       for (let j = state.droppedItems.length - 1; j >= 0; j--) {
@@ -1880,8 +2477,7 @@ export class Overworld extends Phaser.Scene {
       .setScale(2)
       .setDepth(3)
 
-    // continuous dirt particles while the shovel is planted
-    const DIRT_COLORS = [0x5A3D1F, 0x7A5230, 0x3D2A14, 0x8B5A2B]
+    const DIRT_COLORS = COLORS.dirtDig
     let wave = 0
     const particleTimer = this.time.addEvent({
       delay: 400,   // big burst every 0.4s while planted
@@ -1911,8 +2507,7 @@ export class Overworld extends Phaser.Scene {
         revealed = true
         break
       }
-      // if no coin was revealed, try a player-buried stack instead.
-      // The stack drops on the ground at the dig site; walk over to pick up.
+
       if (!revealed) {
         for (let i = state.buriedStacks.length - 1; i >= 0; i--) {
           const b = state.buriedStacks[i]
@@ -1934,9 +2529,6 @@ export class Overworld extends Phaser.Scene {
     this.revealedSprites.set(`${x},${y}`, sprite)
   }
 
-  // Burst of specks at a position. Each particle flies outward, lands, sits
-  // for a moment, then snaps away (no fade — pixel game). Caller picks the
-  // palette; wave (default 0) pushes each successive burst a bit farther.
   private spawnParticles(x: number, y: number, colors: number[], wave = 0) {
     const PARTICLE_COUNT = 12
     for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -1955,7 +2547,6 @@ export class Overworld extends Phaser.Scene {
         duration: 400 + Math.random() * 100,
         ease: 'Quad.easeOut',
         onComplete: () => {
-          // snap to pixel grid and sit, then destroy
           p.setPosition(landX, landY)
           this.time.delayedCall(300, () => p.destroy())
         },
@@ -1965,7 +2556,7 @@ export class Overworld extends Phaser.Scene {
 
   private spawnGoldFloat(x: number, y: number, amount: number) {
     const startY = y - 12   // start above the source so the text doesn't overlap it
-    const txt = this.add.bitmapText(x, startY, 'mainSmall', `+${amount} gold`, 16)
+    const txt = this.add.bitmapText(x, startY, 'mainSmall', `+${amount} gold`, FONT.cost)
       .setOrigin(0.5, 1)
       .setTint(COLORS.uiGold)
     this.tweens.add({
@@ -1986,11 +2577,13 @@ export class Overworld extends Phaser.Scene {
     const growMs = Overworld.SAPLING_GROW_MS / Math.max(0.01, state.timeMultiplier)
     for (const t of state.plantedTrees) {
       if (t.stage !== 'sapling' || t.plantedAt === undefined) continue
+      // Salt basin won't let a sapling take — it only matures on grass.
+      if (state.terrainAt(t.x, t.y) !== Terrain.Grass) continue
       if (Date.now() - t.plantedAt >= growMs) this.growSapling(t)
     }
 
-    // Spawn honses when twine is first crafted
-    if (state.hasCraftedTwine && !this.honsesSpawned && state.honses.length === 0) {
+    // Spawn honses when hemp is first harvested
+    if (state.hasHarvestedHemp && !this.honsesSpawned && state.honses.length === 0) {
       this.honsesSpawned = true
       const spawns: [number, number][] = [[2700, 2240], [2780, 2300], [2640, 2190]]
       for (const [sx, sy] of spawns) {
@@ -1998,8 +2591,6 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // step honses, then sync sprite position + depth (do this before the
-    // rope update so attached ropes read the honse's new position this frame)
     updateHonses(
       state.honses,
       dt,
@@ -2008,8 +2599,7 @@ export class Overworld extends Phaser.Scene {
       state.mounted,
       { x: this.player.x, y: this.player.y },
     )
-    // A wild honse can wander out of the game area. When she does, send her
-    // back to where she spawned.
+    // Teleport horse back to spawn if left game area
     for (const h of state.honses) {
       if (h.tame) continue
       if (h.x < 8 || h.x > WORLD_PX - 8 || h.y < 8 || h.y > WORLD_PX - 8) {
@@ -2019,9 +2609,8 @@ export class Overworld extends Phaser.Scene {
         h.vy = 0
       }
     }
-    // if any honse is overlapping the player, shove the player out along the
-    // axis of least overlap. She's a big animal and doesn't notice you.
-    // Skip while mounted — the player is intentionally on top of the honse.
+
+    // Horse shove player
     if (state.mounted === null) {
       const half = Overworld.PLAYER_HALF
       for (const h of state.honses) {
@@ -2048,18 +2637,76 @@ export class Overworld extends Phaser.Scene {
       const h = state.honses[i]
       const s = this.honseSprites[i]
       if (!s) continue
+      const mb = this.honseBodies[i]
+      if (mb) {
+        if (i !== state.mounted) {
+          if (mb.isSleeping) { mb.isSleeping = false; (mb as any).sleepCounter = 0 }
+          this.matter.body.setVelocity(mb, { x: h.x - mb.position.x, y: (h.y + 3) - mb.position.y })
+        }
+
+        h.x = mb.position.x
+        h.y = mb.position.y - 3
+      }
       s.x = h.x
       s.y = h.y
       s.setDepth(h.y + 8)
-      // sprite is authored facing LEFT, so flipX=true makes her face right
       s.setFlipX(h.facingRight)
-      // sync shadow Matter body so rope segments collide with honse
-      const mb = this.honseBodies[i]
-      if (mb) this.matter.body.setPosition(mb, { x: h.x, y: h.y + 3 }, false)
+
+      // footprints: drop one every ~12px of travel while moving
+      const last = this.honseLastPrint.get(i)
+      if (!last) {
+        this.honseLastPrint.set(i, { x: h.x, y: h.y })
+      } else {
+        const pdx = h.x - last.x
+        const pdy = h.y - last.y
+        if (pdx * pdx + pdy * pdy >= 36 * 36) {
+          const print = this.add.rectangle(h.x, h.y + 10, 3, 3, COLORS.honseFootprint, 0.7).setDepth(2)
+          this.honseFootprints.push(print)
+          this.time.delayedCall(180000, () => {
+            const idx = this.honseFootprints.indexOf(print)
+            if (idx !== -1) this.honseFootprints.splice(idx, 1)
+            print.destroy()
+          })
+          if (this.honseFootprints.length > 120) {
+            this.honseFootprints.shift()?.destroy()
+          }
+          this.honseLastPrint.set(i, { x: h.x, y: h.y })
+        }
+      }
     }
 
-    // Float bob for settled dropped items. Visual only — pickup and depth read
-    // the logical position in state, so wiggling sprite.y here is harmless.
+    // Sync dynamic crate bodies 
+    for (let i = 0; i < this.crateBodies.length; i++) {
+      const body = this.crateBodies[i]
+      if (!body || body.isSleeping) continue
+      const c = state.placedCrates[i]
+      if (!c) continue
+      const bx = body.position.x
+      const by = body.position.y
+      // find the obstacle by its current origin (matches c.x/c.y before update)
+      const obs = this.obstacles.find(
+        o => o.kind === 'crate' && o.originX === c.x && o.originY === c.y
+      )
+      // update state entry
+      c.x = bx
+      c.y = by
+      // update sprite
+      const sprite = this.crateSprites[i]
+      if (sprite) {
+        sprite.x = bx
+        sprite.y = by
+        sprite.setDepth(by + 8)
+      }
+      // update obstacle AABB
+      if (obs) {
+        obs.x = bx - 8
+        obs.y = by - 8
+        obs.originX = bx
+        obs.originY = by
+      }
+    }
+
+    // Float bob for settled dropped items
     const bobNow = Date.now()
     for (const s of this.droppedSprites) {
       if (!s || !s.getData('settled') || s.getData('attracting')) continue
@@ -2068,13 +2715,10 @@ export class Overworld extends Phaser.Scene {
       s.y = baseY + Math.sin(bobNow * Overworld.DROP_BOB_SPEED + phase) * Overworld.DROP_BOB_AMP
     }
 
-    // update the rope controller (catch detection, anchor pinning, redraw)
     this.rope.update()
 
 
-    // E key: mount the nearest honse / dismount the current one. Same actions
-    // as click, context-dependent on whether already mounted. Unlike click,
-    // E ignores held tools/rope — it's a dedicated key with no other meaning.
+    // Mount/dismount the nearest honse
     if (overworldVisible && Phaser.Input.Keyboard.JustDown(this.eKey)) {
       const ui = this.scene.get('UI') as UI
       if (ui.isCrateOpen()) {
@@ -2086,13 +2730,12 @@ export class Overworld extends Phaser.Scene {
       } else if (!this.mountNearestHonse()) {
         // no honse in range — open the nearest crate within reach (E has no
         // cursor, so search a radius around the player, not a tight on-sprite hit)
-        this.tryOpenCrate(this.player.x, this.player.y, 75)
+        this.tryOpenCrate(this.player.x, this.player.y, CRATE_RANGE)
       }
     }
 
     // movement only when overworld is the active view
     if (overworldVisible && state.mounted !== null) {
-      // MOUNTED: player input drives the honse; player sprite locks to saddle.
       const h = state.honses[state.mounted]
       const mountedIdx = state.mounted
       let dx = 0
@@ -2104,8 +2747,6 @@ export class Overworld extends Phaser.Scene {
       if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2 }
 
       // Acceleration ramp: honse starts at walk speed and builds to gallop
-      // over MOUNTED_RAMP_MS while holding a direction. Reversing on either
-      // axis resets the ramp — she has to slow down before going the other way.
       const reversedX = dx !== 0 && this.mountedLastDx !== 0 && Math.sign(dx) !== Math.sign(this.mountedLastDx)
       const reversedY = dy !== 0 && this.mountedLastDy !== 0 && Math.sign(dy) !== Math.sign(this.mountedLastDy)
       if (reversedX || reversedY) {
@@ -2121,17 +2762,8 @@ export class Overworld extends Phaser.Scene {
       this.mountedLastDy = dy
 
       const rampFrac = this.mountedRampTime / MOUNTED_RAMP_MS
-      const speed = MOUNTED_SPEED_MIN + (MOUNTED_SPEED_MAX - MOUNTED_SPEED_MIN) * rampFrac
-      const step = (speed * dt) / 1000
-      // rope leash (hard wall, same as the player on foot): dampen outward
-      // motion approaching the limit, then snap back if she slipped past.
-      // Two cases while mounted:
-      //   A. The honse herself is tethered (e.g. tied to a post before you
-      //      mounted her) — leash anchor is her tether.
-      //   B. The rider threw a rope from horseback and it caught something —
-      //      leash anchor is the player-rope's other end.
-      // Either way the math is the same; the honse position is what gets
-      // bounded since the rider is locked to her.
+      const speed = (MOUNTED_SPEED_MIN + (MOUNTED_SPEED_MAX - MOUNTED_SPEED_MIN) * rampFrac) * h.speedMul
+
       const tether = this.rope.getHonseTetherAnchor(mountedIdx) ?? (this.rope.isAttached() ? this.rope.getLeashAnchor() : null)
       if (tether && (dx !== 0 || dy !== 0)) {
         const rx = h.x - tether.x
@@ -2152,20 +2784,61 @@ export class Overworld extends Phaser.Scene {
           }
         }
       }
-      const nextX = Phaser.Math.Clamp(h.x + dx * step, 8, WORLD_PX - 8)
-      if (!this.collidesAt(nextX, h.y, mountedIdx)) h.x = nextX
-      const nextY = Phaser.Math.Clamp(h.y + dy * step, 8, WORLD_PX - 8)
-      if (!this.collidesAt(h.x, nextY, mountedIdx)) h.y = nextY
-      // hard cap: if somehow past leash, snap her back to the circle
-      if (tether) {
-        const rx = h.x - tether.x
-        const ry = h.y - tether.y
+ 
+      const mb = this.honseBodies[mountedIdx]
+      if (mb) {
+
+        if (mb.isSleeping) { mb.isSleeping = false; (mb as any).sleepCounter = 0 }
+        let vx = (dx * speed) / 60
+        let vy = (dy * speed) / 60
+        // If she's touching a rope, cancel velocity partially
+        const cp = (this.time.now - this.honseRopeContactAt <= 120) ? this.honseRopeContactPoint : null
+        if (cp) {
+          let ix = cp.x - mb.position.x
+          let iy = cp.y - mb.position.y
+          const ilen = Math.sqrt(ix * ix + iy * iy)
+          if (ilen > 0.0001) {
+            ix /= ilen; iy /= ilen
+  
+            let nx = ix, ny = iy   
+            const line = this.honseRopeLine
+            if (line) {
+              const lx = line.bx - line.ax, ly = line.by - line.ay
+              const llen = Math.sqrt(lx * lx + ly * ly)
+              if (llen > 0.0001) {
+                // perpendicular to the line
+                let px = -ly / llen, py = lx / llen
+                // orient it to point the same way as the segment dir (into rope)
+                if (px * ix + py * iy < 0) { px = -px; py = -py }
+                nx = px; ny = py
+              }
+            }
+            // Blend 50/50: half segment-based (deform), half line-based (barrier).
+            const bx = (ix + nx) * 0.5, by = (iy + ny) * 0.5
+            const blen = Math.sqrt(bx * bx + by * by)
+            if (blen > 0.0001) {
+              const cancelX = bx / blen, cancelY = by / blen
+              const into = vx * cancelX + vy * cancelY
+              if (into > 0) { vx -= into * cancelX; vy -= into * cancelY }
+            }
+          }
+        }
+        this.matter.body.setVelocity(mb, { x: vx, y: vy })
+      }
+
+      if (tether && mb) {
+        const rx = mb.position.x - tether.x
+        const ry = (mb.position.y - 3) - tether.y
         const distSq = rx * rx + ry * ry
         const maxSq = ROPE_LEASH_LENGTH * ROPE_LEASH_LENGTH
         if (distSq > maxSq) {
           const dist = Math.sqrt(distSq)
-          h.x = tether.x + (rx / dist) * ROPE_LEASH_LENGTH
-          h.y = tether.y + (ry / dist) * ROPE_LEASH_LENGTH
+          const outX = rx / dist, outY = ry / dist   // unit vector away from tether
+          const v = mb.velocity
+          const outward = v.x * outX + v.y * outY     // >0 means moving further out
+          if (outward > 0) {
+            this.matter.body.setVelocity(mb, { x: v.x - outward * outX, y: v.y - outward * outY })
+          }
         }
       }
       // update her facing from input direction
@@ -2189,10 +2862,7 @@ export class Overworld extends Phaser.Scene {
       if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2 }
       // axis-separated movement so the player can slide along obstacle edges
       const collidesAt = (px: number, py: number): boolean => this.collidesAt(px, py)
-      // rope leash: when attached to a post or honse, dampen movement that
-      // would increase distance from the anchor. The tangential (sideways)
-      // component is left alone; only the outward radial component is scaled
-      // down, smoothly going to zero as the player approaches max leash length.
+      // rope leash: when attached to a post or honse, dampen movement 
       if (this.rope.isAttached() && (dx !== 0 || dy !== 0)) {
         const anchor = this.rope.getLeashAnchor()
         if (anchor !== null) {
@@ -2218,6 +2888,22 @@ export class Overworld extends Phaser.Scene {
           }
         }
       }
+      // Pushable crates: if the player is moving into a placed crate, shove Matter body
+      if (dx !== 0 || dy !== 0) {
+        const half = Overworld.PLAYER_HALF
+        for (let ci = 0; ci < state.placedCrates.length; ci++) {
+          const c = state.placedCrates[ci]
+          const body = this.crateBodies[ci]
+          if (!body) continue
+          const npx = this.player.x + dx * step
+          const npy = this.player.y + dy * step
+          if (aabbOverlap(npx, npy, half, c.x - 8, c.y - 8, 16, 16)) {
+            if (body.isSleeping) { body.isSleeping = false; (body as any).sleepCounter = 0 }
+            const pushSpeed = ((state.playerSpeedOverride ?? PLAYER_SPEED) / 60) * 1.1   // slightly faster than her so she stays in contact
+            this.matter.body.setVelocity(body, { x: dx * pushSpeed, y: dy * pushSpeed })
+          }
+        }
+      }
       const nextX = Phaser.Math.Clamp(this.player.x + dx * step, 8, WORLD_PX - 8)
       if (!collidesAt(nextX, this.player.y)) this.player.x = nextX
       const nextY = Phaser.Math.Clamp(this.player.y + dy * step, 8, WORLD_PX - 8)
@@ -2237,24 +2923,23 @@ export class Overworld extends Phaser.Scene {
           }
         }
       }
-      // Y-sort by feet, not center, so player passes in front of buildings
-      // when their feet are below the building's bottom edge.
-      this.player.setDepth(this.player.y + 8)
+      this.player.setDepth(this.player.y - 8)
+      this.playerShadow.setPosition(this.player.x + 4, this.player.y + 8)
+      this.playerShadow.setDepth(this.player.y - 9)
     }
 
     const now = Date.now()
     const px = this.player.x
     const py = this.player.y
 
-    // auto-close the crate panel if the player walks out of reach. Uses the
-    // same radius as E-open (75) so the open / stay-open boundary is one value.
+    // auto-close the crate panel if the player walks out of reach. 
     if (overworldVisible) {
       const ui = this.scene.get('UI') as UI
       const cratePos = ui.openCratePos()
       if (cratePos) {
         const dx = px - cratePos.x
         const dy = py - cratePos.y
-        if (dx * dx + dy * dy > 75 * 75) ui.closeCrate()
+        if (dx * dx + dy * dy > CRATE_RANGE * CRATE_RANGE) ui.closeCrate()
       }
     }
 
@@ -2275,10 +2960,7 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // pickup any dropped items the player has walked over. Items within the
-    // larger attract radius slide toward the player (loot magnet) and are
-    // collected once they reach the pickup radius — so ore that landed half
-    // inside a rock still comes to you when you're close enough.
+    // pickup any dropped items the player has walked over with loot magnet
     if (overworldVisible && state.droppedItems.length > 0) {
       const pickSq = Overworld.PICKUP_RADIUS * Overworld.PICKUP_RADIUS
       const attractSq = Overworld.PICKUP_ATTRACT_RADIUS * Overworld.PICKUP_ATTRACT_RADIUS
@@ -2297,13 +2979,9 @@ export class Overworld extends Phaser.Scene {
           continue
         }
 
-        // within attract range but not yet close enough to collect — slide it
-        // toward the player. Flag it so the bob loop stops fighting its position.
         if (distSq > pickSq) {
           if (sprite) {
-            // only magnet what the player can actually take — if there's no
-            // room left for this stack, release it so it sits on the ground
-            // instead of trailing the player forever.
+            // only magnet what the player can actually take 
             if (state.roomFor(d.stack) <= 0) {
               sprite.setData('attracting', false)
               continue
@@ -2317,24 +2995,19 @@ export class Overworld extends Phaser.Scene {
           continue
         }
 
-        // close enough — collect
         const added = state.inventoryAddAnywhere(d.stack)
         if (added > 0) {
           this.registry.events.emit('inventory-changed')
         }
         if (d.stack.count <= 0) {
-          // fully picked up — destroy sprite and remove from world
           state.droppedItems.splice(i, 1)
           this.droppedSprites[i]?.destroy()
           this.droppedSprites.splice(i, 1)
         }
-        // if d.stack.count > 0, inventory full — leave on ground, will retry next frame
       }
     }
 
-    // first pass: door zone check. We have to look at all plots before clearing
-    // the post-exit door guard — otherwise a far-away plot's "not in zone" would
-    // clear the flag while the player is still standing in the exited plot's door.
+    // Door zone check
     let inAnyDoorZone = false
     for (let i = 0; i < state.plots.length; i++) {
       const plot = state.plots[i]
@@ -2368,54 +3041,15 @@ export class Overworld extends Phaser.Scene {
     }
     if (!inAnyDoorZone) this.doorCheckBlocked = false
 
-    // town discovery — flip the flag the first time the player wanders near a town
-    if (overworldVisible) {
-      for (const t of TOWNS) {
-        if (state.discoveredTowns.has(t.id)) continue
-        const dx = px - t.x
-        const dy = py - t.y
-        if (dx * dx + dy * dy < t.radius * t.radius) {
-          state.discoveredTowns.add(t.id)
-          this.registry.events.emit('town-discovered', t.id)
-        }
-      }
-    }
-
     for (let i = 0; i < state.plots.length; i++) {
       const plot = state.plots[i]
       if (plot.built === 'empty') continue
       const def = BUILDINGS[plot.built]
-      const view = this.plotViews[i]
 
-      if (def.goldPerTick > 0) {
-        // time-based ticking: how many full ticks have elapsed since lastTickAt?
-        const goldTickMs = getEffectiveTickMs(def.tickMs, plot.level)
-        const levelGold = def.goldPerTick * Math.pow(2, plot.level - 1)
-        // keep bar label in sync with current level
-        if (view.barLabel) view.barLabel.setText(`${levelGold} gold`)
-        const elapsed = now - plot.lastTickAt
-        const fullTicks = Math.floor(elapsed / goldTickMs)
-        if (fullTicks > 0) {
-          const gold = levelGold * fullTicks
-          state.addGold(gold, this.registry)
-          plot.lastTickAt += fullTicks * goldTickMs
-          if (overworldVisible) {
-            this.spawnGoldFloat(view.x, view.y - PLOT_SIZE / 2, gold)
-          }
-        }
-        // progress bar: fraction of the current tick (always update so it stays right)
-        if (view.barFill) {
-          const frac = ((now - plot.lastTickAt) % goldTickMs) / goldTickMs
-          view.barFill.width = BAR_W * frac
-        }
-      }
-
-      // item production (mill→flour, well→water) — separate cadence from gold
       if (def.producesItem && def.itemTickMs) {
         const itemTick = getEffectiveTickMs(def.itemTickMs, plot.level)
         const cap = getStorageCap(plot.level)
-        // "blocked" means we can't add to this slot: full of our own item,
-        // or holding a different item the player put there.
+
         const blockedSameType = plot.output !== null && plot.output.type === def.producesItem && plot.output.count >= cap
         const blockedDiffType = plot.output !== null && plot.output.type !== def.producesItem
         const slotFull = blockedSameType || blockedDiffType
@@ -2440,6 +3074,44 @@ export class Overworld extends Phaser.Scene {
           }
         }
       }
+
+      // ---- workshop auto-craft tick ----
+      // When a workshop has a valid recipe in its inputs and room in its output
+      // slot, it crafts automatically on a timer (so piped-in inputs produce
+      // output unattended). Manual click-crafting in the interior still works.
+      if (plot.built === 'workshop') {
+        const preview = previewCraft(i)
+        if (preview === null) {
+          // no valid recipe — hold the timer so crafting starts fresh
+          plot.lastItemTickAt = now
+        } else {
+          // check output slot has room for this craft's result
+          const cap = ITEMS[preview.type].maxStack
+          const out = plot.craftOutput
+          const blockedDiffType = !!out && out.type !== preview.type
+          const blockedFull = !!out && out.type === preview.type && out.count + preview.count > cap
+          if (blockedDiffType || blockedFull) {
+            plot.lastItemTickAt = now
+          } else {
+            const craftMs = getEffectiveTickMs(BUILDINGS.workshop.tickMs, plot.level)
+            const elapsed = now - plot.lastItemTickAt
+            if (elapsed >= craftMs) {
+              const result = consumeCraft(i)
+              if (result) {
+                if (plot.craftOutput && plot.craftOutput.type === result.type) {
+                  plot.craftOutput.count += result.count
+                } else {
+                  plot.craftOutput = result
+                }
+              }
+              plot.lastItemTickAt += craftMs
+            }
+          }
+        }
+      }
     }
+
+    // ---- pipe item transfer ----
+    this.runPipeTicks(now)
   }
 }

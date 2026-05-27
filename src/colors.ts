@@ -1,4 +1,14 @@
 // Named colors used throughout the game. Hex numbers Phaser wants, not strings.
+// Font sizes. Centralized so the look changes in one place — change a value
+// here and every label using it updates. Tuned for the current bitmap font.
+export const FONT = {
+  desc: 14,    // item descriptions
+  cost: 16,    // cost / price numbers
+  name: 18,    // item names, row labels
+  title: 24,   // panel titles
+  count: 20,   // stack-count numbers on slots
+} as const
+
 export const COLORS = {
   // world & background
   worldBg: 0xF5F0E1,        // cream
@@ -23,11 +33,20 @@ export const COLORS = {
   // menu — disabled (unaffordable) row text
   menuDisabled: 0xD8D2C0,   // cool light gray-cream
 
-  // slot hover — applied as a tint (multiply) to brighten the slot + its
-  // contents when the pointer is over it. Slightly above white-tint to keep
-  // a faint warm cast.
+  // slot hover color
   slotHover: 0xFFFFE8,
 
   // interior panel tint — applied to 9-slice backgrounds inside buildings
   interiorPanel: 0x8A8690,
+
+  // generic
+  black: 0x000000,          // bars, shades, overlays
+  white: 0xFFFFFF,          // selection outline, plain white text
+  countShadow: 0xB0B0B0,    // multiply drop-shadow behind stack counts
+  upgradeGreen: 0x44CC44,   // "next level" stat preview text
+
+  // world detail
+  dirtDig: [0x5A3D1F, 0x7A5230, 0x3D2A14, 0x8B5A2B], // shovel-dug dirt debris
+  honseFootprint: 0x6B5438, // faint tracks left by honses
+  treeShadow: 0x000000,     // soft shadow cast under trees
 }

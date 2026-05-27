@@ -1,7 +1,7 @@
 // Items in the game. Each ItemType is a string id; ITEMS maps id → metadata.
 // New items: add an entry to ItemType, ITEMS, and (if needed) a sprite.
 
-export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'axe' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post' | 'cedar_post' | 'wood' | 'stone' | 'pickaxe' | 'coal' | 'iron' | 'copper' | 'silver' | 'gold' | 'crate'
+export type ItemType = 'flour' | 'water' | 'bread' | 'shovel' | 'axe' | 'bag' | 'medium_bag' | 'sausage' | 'kolache' | 'leather' | 'twine' | 'sugar_cane' | 'sugar' | 'pastry' | 'cottonwood_sapling' | 'hemp' | 'hemp_seed' | 'rope' | 'post' | 'cedar_post' | 'wood' | 'stone' | 'pickaxe' | 'coal' | 'iron' | 'copper' | 'silver' | 'gold' | 'crate' | 'pipe' | 'wheel'
 
 export interface ItemDef {
   name: string
@@ -63,6 +63,8 @@ export const ITEMS: Record<ItemType, ItemDef> = {
   copper:             { name: 'Copper Ore',          sprite: 'item_copper',             maxStack: 64, scale: 2 },
   silver:             { name: 'Silver Ore',          sprite: 'item_silver',             maxStack: 64, scale: 2 },
   gold:               { name: 'Gold Ore',            sprite: 'item_gold',               maxStack: 64, scale: 2 },
+  pipe:               { name: 'Pipe',                sprite: 'item_pipe',               maxStack: 64, scale: 2, sellPrice: 20, activeTool: true, cursorContexts: ['overworld'] },
+  wheel:              { name: 'Wheel',               sprite: 'item_wheel',              maxStack: 64, scale: 2, sellPrice: 12 },
 }
 
 // A stack of a single item type. Slots hold one of these (or null).

@@ -24,9 +24,20 @@ import { getHonseNeckAnchor } from './honse'
 
 // ---- tuning ----
 const ROPE_SEGMENTS = 20
-const ROPE_SEGMENT_RADIUS = 3
+const ROPE_SEGMENT_COLLISION_RADIUS = 3
 const ROPE_SEGMENT_SPACING = 6
-const ROPE_THROW_SPEED = 50
+
+// Collision categories. Everything in the world defaults to category 1 and a
+// mask of "collide with all" (rocks, buildings, player, rope). The honse gets
+// her own bit so the rope can choose whether to collide with her: rope segments
+// always collide with the world (bit 1) but include the honse bit in their mask
+// ONLY when strung between two posts. That keeps the rope solid against rocks/
+// buildings while a held/in-flight rope passes the honse cleanly.
+export const CAT_WORLD = 0x0001
+export const CAT_HONSE = 0x0002
+const ROPE_THROW_SPEED = 60
+const ROPE_TRANSITION_THROW_SPEED = 40
+const ROPE_THROW_MOUNTED_MULT = 2.5   // mounted throws fire harder so the rope leads a galloping mount
 const ROPE_LIFETIME_MS = 2000          // unattached rope auto-cleanup
 const ROPE_COLOR = 0x8B5A2B
 const ROPE_THICKNESS = 3
@@ -42,6 +53,7 @@ export type RopeEnd =
     | { kind: 'player' }
     | { kind: 'post'; x: number; y: number }
     | { kind: 'honse'; index: number }
+    | { kind: 'crate'; index: number }
 
 // ---- internal rope record ----
 interface Rope {
@@ -56,12 +68,24 @@ interface Rope {
     // velocity, hasn't settled). When the tip catches, this is cleared.
     // Used to know which side runs catch detection in update().
     cleanupTimer: Phaser.Time.TimerEvent | null
+    // When attached to a crate, a Matter constraint links the tip to the crate
+    // body so the solver tows it. The tip is NOT teleport-pinned in that case
+    // (the constraint owns it). Stored so we can remove it when the rope dies.
+    crateConstraint: MatterJS.ConstraintType | null
+    crateConstraintA: MatterJS.ConstraintType | null
 }
 
 export class RopeController {
     private scene: Phaser.Scene
     private player: Phaser.GameObjects.Sprite
     private ropes: Rope[] = []
+    // Player's per-frame velocity, measured from position deltas. A thrown rope
+    // inherits this so it leads ahead when you throw while moving (mounted).
+    private playerVX = 0
+    private playerVY = 0
+    private lastPlayerX = 0
+    private lastPlayerY = 0
+    private hasLastPlayerPos = false
     // Called when one rope is spent: either fully strung (second throw caught)
     // or despawned in flight (missed). Fires exactly once per rope.
     onRopeConsumed: (() => void) | null = null
@@ -85,6 +109,10 @@ export class RopeController {
     private endPos(end: RopeEnd): { x: number; y: number } | null {
         if (end.kind === 'player') return { x: this.player.x, y: this.player.y }
         if (end.kind === 'post') return { x: end.x, y: end.y }
+        if (end.kind === 'crate') {
+            const c = state.placedCrates[end.index]
+            return c ? { x: c.x, y: c.y } : null
+        }
         const h = state.honses[end.index]
         if (!h) return null
         return getHonseNeckAnchor(h)
@@ -165,7 +193,11 @@ export class RopeController {
         const tolSq = ROPE_CLICK_TOLERANCE * ROPE_CLICK_TOLERANCE
         for (const rope of this.ropes) {
             if (rope.endB === null) continue   // can't untie an in-flight rope
-            for (const b of rope.bodies) {
+            // Mirror untieAtClick: skip the 3 segments at each end so the
+            // dissolve cursor only shows where a click would actually untie
+            // (the rope's body), not over the tied object itself.
+            for (let i = 3; i < rope.bodies.length - 3; i++) {
+                const b = rope.bodies[i]
                 const dx = b.position.x - x
                 const dy = b.position.y - y
                 if (dx * dx + dy * dy <= tolSq) return true
@@ -179,7 +211,12 @@ export class RopeController {
         let best: { rope: Rope; distSq: number } | null = null
         for (const rope of this.ropes) {
             if (rope.endB === null) continue   // can't untie an in-flight rope
-            for (const b of rope.bodies) {
+            // Skip the 3 segments at each end: they sit on/near the objects the
+            // rope is tied to (crate / post / honse), so clicking those objects
+            // to use them would otherwise dissolve the rope. Only the rope's
+            // body (interior segments) dissolves on click.
+            for (let i = 3; i < rope.bodies.length - 3; i++) {
+                const b = rope.bodies[i]
                 const dx = b.position.x - clickX
                 const dy = b.position.y - clickY
                 const d2 = dx * dx + dy * dy
@@ -233,9 +270,10 @@ export class RopeController {
         const matter = (this.scene as any).matter as Phaser.Physics.Matter.MatterPhysics
         const bodies: MatterJS.BodyType[] = []
         for (let i = 0; i < ROPE_SEGMENTS; i++) {
-            const body = matter.add.circle(this.player.x, this.player.y, ROPE_SEGMENT_RADIUS, {
+            const body = matter.add.circle(this.player.x, this.player.y, ROPE_SEGMENT_COLLISION_RADIUS, {
                 frictionAir: 0.02,
                 density: 0.001,
+                label: 'rope-flight',
             })
             bodies.push(body)
         }
@@ -245,7 +283,11 @@ export class RopeController {
             constraints.push(c as any)
         }
         const tip = bodies[bodies.length - 1]
-        matter.body.setVelocity(tip, { x: dx * ROPE_THROW_SPEED, y: dy * ROPE_THROW_SPEED })
+        const throwSpeed = ROPE_THROW_SPEED * (state.mounted !== null ? ROPE_THROW_MOUNTED_MULT : 1)
+        matter.body.setVelocity(tip, {
+            x: dx * throwSpeed + this.playerVX,
+            y: dy * throwSpeed + this.playerVY,
+        })
 
         const rope: Rope = {
             bodies,
@@ -257,6 +299,8 @@ export class RopeController {
                 if (this.onRopeConsumed) this.onRopeConsumed()
                 this.removeRope(rope)
             }),
+            crateConstraint: null,
+            crateConstraintA: null,
         }
         this.ropes.push(rope)
         return true
@@ -266,6 +310,7 @@ export class RopeController {
     // launched toward (toX, toY) and the chain's segment order is flipped so
     // the launched end is the tip and the anchored end is segment 0.
     private transitionThrow(rope: Rope, toX: number, toY: number): boolean {
+        const matter = (this.scene as any).matter as Phaser.Physics.Matter.MatterPhysics
         // figure out which end is the player. The OTHER end is what the rope
         // is staying anchored to.
         const playerIsEndA = rope.endA.kind === 'player'
@@ -290,12 +335,35 @@ export class RopeController {
         // (in flight). Air friction goes back to flight values so the throw arcs.
         rope.endA = anchorEnd
         rope.endB = null
+        // If the old endB crate constraint exists, clean it up — that end is
+        // now endA or gone. Same for any prior endA crate constraint.
+        if (rope.crateConstraint) {
+            matter.world.removeConstraint(rope.crateConstraint as any)
+            rope.crateConstraint = null
+        }
+        if (rope.crateConstraintA) {
+            matter.world.removeConstraint(rope.crateConstraintA as any)
+            rope.crateConstraintA = null
+        }
+        // If the new endA is a crate, link segment 0 to it with a soft
+        // constraint instead of teleport-pinning (same approach as endB crates).
+        if (anchorEnd.kind === 'crate') {
+            const crateBody = (this.scene as any).getCrateBody?.(anchorEnd.index)
+            if (crateBody) {
+                rope.crateConstraintA = matter.add.constraint(
+                    rope.bodies[0] as any, crateBody as any, 8, 0.2
+                ) as any
+            }
+        }
         for (const b of rope.bodies) (b as any).frictionAir = 0.02
 
         // launch the new tip
         const tip = rope.bodies[rope.bodies.length - 1]
-        const matter = (this.scene as any).matter as Phaser.Physics.Matter.MatterPhysics
-        matter.body.setVelocity(tip, { x: dx * ROPE_THROW_SPEED, y: dy * ROPE_THROW_SPEED })
+        const throwSpeed = ROPE_TRANSITION_THROW_SPEED
+        matter.body.setVelocity(tip, {
+            x: dx * throwSpeed + this.playerVX,
+            y: dy * throwSpeed + this.playerVY,
+        })
 
         // restart the in-flight lifetime timer
         if (rope.cleanupTimer) { rope.cleanupTimer.remove(false); rope.cleanupTimer = null }
@@ -309,11 +377,76 @@ export class RopeController {
     // Per-frame: pin each rope's endpoints, run catch detection on any rope
     // with endB === null, redraw all lines.
     update() {
+        // measure the player's velocity from position delta (when mounted this is
+        // the honse's velocity, since the player locks to the saddle). A thrown
+        // rope inherits it so it leads ahead while moving.
+        if (this.hasLastPlayerPos) {
+            this.playerVX = this.player.x - this.lastPlayerX
+            this.playerVY = this.player.y - this.lastPlayerY
+        }
+        this.lastPlayerX = this.player.x
+        this.lastPlayerY = this.player.y
+        this.hasLastPlayerPos = true
+
         const matter = (this.scene as any).matter as Phaser.Physics.Matter.MatterPhysics
         for (const rope of this.ropes) {
-            // pin segment 0 to endA
+            // Tag segments by anchor state every frame (single source of truth):
+            // only a fully-strung rope (both ends anchored) should act as an
+            // obstacle for honses. In-flight ropes (endB === null) get an inert
+            // label so the honse collision listener ignores them — she only
+            // collides with rope strung between two points.
+            // A rope is an obstacle to honses ONLY when BOTH ends are fixed world
+            // anchors. The only fixed end kind is 'post' (placed posts AND trees,
+            // which are caught as posts). Player = held, crate = draggable, honse
+            // = walks/may be your mount — none of those are fixed, so a rope with
+            // any such end never collides with a honse. No other scenario blocks her.
+            const isFixedEnd = (e: RopeEnd | null): boolean => e !== null && e.kind === 'post'
+            const strung = isFixedEnd(rope.endA) && isFixedEnd(rope.endB)
+            const segLabel = strung ? 'rope-segment' : 'rope-flight'
+            // Segments stay solid (so they bounce off rocks/buildings = CAT_WORLD).
+            // The honse bit is in their collision mask ONLY when strung, so a
+            // held/in-flight rope passes the honse but a post-to-post rope blocks
+            // her. No isSensor — that made the rope pass through everything.
+            const mask = strung ? (CAT_WORLD | CAT_HONSE) : CAT_WORLD
+            for (const b of rope.bodies) {
+                b.label = segLabel
+                b.collisionFilter.mask = mask
+            }
+            // When strung between two posts, stiffen the inter-segment constraints
+            // so the chain resists bending into a U around the honse and holds its
+            // line as a barrier. Back to the throw-tuned springiness when not strung.
+            const stiffness = strung ? 1 : 0.9
+            for (const c of rope.constraints) (c as any).stiffness = stiffness
+            // Also make the segments heavy when strung so a horse-mass body can't
+            // just shove the near-weightless chain aside and wrap it into a U.
+            // Light again when not strung so the throw arcs as before. setDensity
+            // recalculates mass; only re-set when the value actually changes.
+            const wantDensity = strung ? 0.7 : 0.001
+            for (const b of rope.bodies) {
+                if ((b as any).density !== wantDensity) matter.body.setDensity(b, wantDensity)
+                // High restitution when strung so contact pings the honse back
+                // instead of letting her grind into the chain.
+                ;(b as any).restitution = strung ? 0.9 : 0
+            }
+            // When strung, stamp the rope's two endpoint positions onto each
+            // segment so the honse collision listener can read the rope's LINE
+            // direction (post→post), not just the contacted segment point. The
+            // mounted branch blends segment-based and line-based cancel for a
+            // rope that both deforms locally and holds as a barrier.
+            if (strung) {
+                const la = this.endPos(rope.endA)
+                const lb = this.endPos(rope.endB!)
+                if (la && lb) {
+                    for (const b of rope.bodies) {
+                        ;(b as any).ropeLineAx = la.x; (b as any).ropeLineAy = la.y
+                        ;(b as any).ropeLineBx = lb.x; (b as any).ropeLineBy = lb.y
+                    }
+                }
+            }
+            // pin segment 0 to endA (skip crates — they're dynamic bodies;
+            // teleporting them fights the solver. Use a constraint instead.)
             const aPos = this.endPos(rope.endA)
-            if (aPos) {
+            if (aPos && rope.endA!.kind !== 'crate') {
                 matter.body.setPosition(rope.bodies[0], aPos, false)
                 matter.body.setVelocity(rope.bodies[0], { x: 0, y: 0 })
             }
@@ -326,11 +459,27 @@ export class RopeController {
                     rope.endB = newEnd
                     if (rope.cleanupTimer) { rope.cleanupTimer.remove(false); rope.cleanupTimer = null }
                     for (const b of rope.bodies) (b as any).frictionAir = ROPE_ATTACHED_FRICTION_AIR
+                    // Crate caught: link the tip to the crate's body so the
+                    // solver tows it. The tip is no longer teleport-pinned (see
+                    // below) — the constraint is the sole owner of the tip now.
+                    if (newEnd.kind === 'crate') {
+                        const crateBody = (this.scene as any).getCrateBody?.(newEnd.index)
+                        if (crateBody) {
+                            // Soft, slightly-springy link: low stiffness so the
+                            // tug-of-war between the rope chain and the crate
+                            // body is absorbed instead of snapping (no jitter).
+                            rope.crateConstraint = matter.add.constraint(
+                                tip as any, crateBody as any, 8, 0.2
+                            ) as any
+                        }
+                    }
                 }
             }
 
-            // pin tip to endB if attached
-            if (rope.endB !== null) {
+            // pin tip to endB if attached — but NOT for crate ends. A crate is
+            // towed by its constraint; teleport-pinning the tip would override
+            // the solver each frame and the two would fight (jitter).
+            if (rope.endB !== null && rope.endB.kind !== 'crate') {
                 const bPos = this.endPos(rope.endB)
                 if (bPos) {
                     matter.body.setPosition(tip, bPos, false)
@@ -363,6 +512,15 @@ export class RopeController {
             const dy = y - p.y
             if (dx * dx + dy * dy <= postR2) return { kind: 'post', x: p.x, y: p.y }
         }
+        // Crates use their own end kind so the rope reads the crate's live
+        // position each frame (it moves when dragged). Index-addressed.
+        for (let i = 0; i < state.placedCrates.length; i++) {
+            const c = state.placedCrates[i]
+            if (fromEnd.kind === 'crate' && fromEnd.index === i) continue
+            const dx = x - c.x
+            const dy = y - c.y
+            if (dx * dx + dy * dy <= postR2) return { kind: 'crate', index: i }
+        }
         // Trees catch the same way posts do — anchor is 8px below the tree's
         // visual center, around the lower trunk where a rope would actually wrap.
         for (const t of state.plantedTrees) {
@@ -389,24 +547,13 @@ export class RopeController {
 
     private removeRope(rope: Rope) {
         const matter = (this.scene as any).matter as Phaser.Physics.Matter.MatterPhysics
+        if (rope.crateConstraint) { matter.world.remove(rope.crateConstraint); rope.crateConstraint = null }
+        if (rope.crateConstraintA) { matter.world.remove(rope.crateConstraintA); rope.crateConstraintA = null }
         for (const b of rope.bodies) matter.world.remove(b)
         rope.graphics.destroy()
         if (rope.cleanupTimer) { rope.cleanupTimer.remove(false); rope.cleanupTimer = null }
         const idx = this.ropes.indexOf(rope)
         if (idx >= 0) this.ropes.splice(idx, 1)
-    }
-
-    // Returns endpoints of all taut ropes (both ends attached). Used by
-    // collision checks so honses can't walk through strung ropes.
-    getTautRopeLines(): { x1: number; y1: number; x2: number; y2: number }[] {
-        const lines: { x1: number; y1: number; x2: number; y2: number }[] = []
-        for (const r of this.ropes) {
-            if (!r.endB) continue
-            const a = this.endPos(r.endA)
-            const b = this.endPos(r.endB)
-            if (a && b) lines.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y })
-        }
-        return lines
     }
 
     // Tear down every rope. Used for full reset (e.g. scene shutdown).

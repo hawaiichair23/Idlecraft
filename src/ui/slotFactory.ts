@@ -41,6 +41,30 @@ export function makeSlotImage(scene: Phaser.Scene, opts: SlotImageOptions): Phas
   return slotImg
 }
 
+// Stack-count label with a dark drop-shadow, like Minecraft. Anchored to the
+// bottom-right of a slot centered at (x, y). Returns a container holding the
+// shadow + main number so callers store/destroy one object. Used everywhere a
+// stack count is drawn so the size and shadow stay identical across all slots.
+export const COUNT_SIZE = 20
+export function makeCountLabel(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  count: number,
+  depth?: number,
+): Phaser.GameObjects.Container {
+  const shadow = scene.add.bitmapText(x + 25, y + 25, 'main', String(count), COUNT_SIZE)
+    .setOrigin(1, 1)
+    .setTint(COLORS.countShadow)
+    .setBlendMode(Phaser.BlendModes.MULTIPLY)
+  const main = scene.add.bitmapText(x + 23, y + 23, 'main', String(count), COUNT_SIZE)
+    .setOrigin(1, 1)
+    .setTint(COLORS.uiText)
+  const group = scene.add.container(0, 0, [shadow, main])
+  if (depth !== undefined) group.setDepth(depth)
+  return group
+}
+
 // Generic storage slot — accepts any item, stacks same-type up to maxStack.
 // Used by inventory slots and modifier rack slots. Bounce-back (restore) is
 // the same as offer.

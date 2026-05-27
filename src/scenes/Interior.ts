@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
-import { COLORS } from '../colors'
-import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, MODIFIER_SLOTS_PER_PLOT, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
+import { COLORS, FONT } from '../colors'
+import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, getStorageSlotCount, STORAGE_COLS, MODIFIER_SLOTS_PER_PLOT, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
 import { type WorldStructureType } from '../world/structures'
@@ -9,7 +9,7 @@ import type { UI } from './UI'
 import type { SlotBinding } from '../ui/SlotBinding'
 import type { SlotVisual } from './InteriorTypes'
 import { registerGrabbable } from '../ui/hover'
-import { makeSlotImage, makeStorageBinding, distributeIntoBindings } from '../ui/slotFactory'
+import { makeSlotImage, makeStorageBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
 import { buildProducerInterior } from './ProducerInterior'
 import { buildWorkshopInterior } from './WorkshopInterior'
 import { buildShopInterior } from './ShopInterior'
@@ -41,6 +41,8 @@ export class Interior extends Phaser.Scene {
   }
 
   private bindings: SlotBinding[] = []
+  // Set when a workshop interior is built; rebuilds its Production tab in place.
+  private rebuildWorkshopProduction: (() => void) | null = null
   private slotVisuals: SlotVisual[] = []
   private moduleUpdates: (() => void)[] = []
   private moduleCleanups: (() => void)[] = []
@@ -79,6 +81,7 @@ export class Interior extends Phaser.Scene {
       mill: INTERIOR_PALETTES.mill,
       well: INTERIOR_PALETTES.well,
       workshop: INTERIOR_PALETTES.workshop,
+      storage: INTERIOR_PALETTES.storage,
     }
     if (this.interiorData.source === 'plot') {
       if (this.interiorData.buildingType === 'field') {
@@ -199,6 +202,7 @@ export class Interior extends Phaser.Scene {
                 const hempStack: ItemStack = { type: 'hemp', count: 1 }
                 const hempAdded = state.inventoryAddAnywhere(hempStack)
                 if (hempAdded <= 0) return  // no room — don't harvest
+                state.hasHarvestedHemp = true   // first harvest triggers honse spawns
                 cell.state = 'empty'
                 cell.plantedAt = 0
                 rebuildMask()
@@ -284,7 +288,7 @@ export class Interior extends Phaser.Scene {
       const back = this.add.rectangle(50, UI_BAR_HEIGHT + 30, 80, 32, COLORS.uiBarBg)
         .setInteractive()
       registerGrabbable(back)
-      this.add.bitmapText(50, UI_BAR_HEIGHT + 30, 'main', 'Back', 16)
+      this.add.bitmapText(50, UI_BAR_HEIGHT + 30, 'main', 'Back', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
       back.on('pointerdown', () => this.exit())
       this.input.keyboard!.on('keydown-ESC', () => this.exit())
@@ -351,7 +355,13 @@ export class Interior extends Phaser.Scene {
     // ---- panel dimensions ----
     const TAB_BAR_H = 36
     const TITLE_H = 44
-    const CONTENT_H = 160
+    // Storage needs a taller content area to fit its slot grid.
+    let CONTENT_H = 160
+    if (buildingType === 'storage') {
+      const slotCount = getStorageSlotCount(plot.level)
+      const rows = Math.ceil(slotCount / STORAGE_COLS)
+      CONTENT_H = rows * SLOT + (rows - 1) * SLOT_GAP + 24
+    }
     const panelH = PANEL_PAD + TITLE_H + TAB_BAR_H + CONTENT_H + PANEL_PAD
 
     const playAreaTop = UI_BAR_HEIGHT
@@ -365,15 +375,17 @@ export class Interior extends Phaser.Scene {
 
     // ---- title ----
     const titleY = panelY - panelH / 2 + PANEL_PAD + 14
-    this.add.bitmapText(panelX, titleY, 'main', def.name, 28)
+    this.add.bitmapText(panelX, titleY, 'main', def.name, FONT.title)
       .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-    const titleLevelText = this.add.bitmapText(panelX, titleY + 22, 'mainSmall', `Level ${plot.level}`, 16)
+    const titleLevelText = this.add.bitmapText(panelX, titleY + 22, 'mainSmall', `Level ${plot.level}`, FONT.desc)
       .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
 
     // ---- tab bar ----
-    // Workshops skip Upgrades and Modifiers — those tabs are hidden for them.
+    // Workshops skip Modifiers but get an Upgrades tab.
     const tabNames = buildingType === 'workshop'
-      ? ['Production', 'Info']
+      ? ['Production', 'Upgrades', 'Info']
+      : buildingType === 'storage'
+      ? ['Storage', 'Upgrades', 'Info']
       : ['Production', 'Upgrades', 'Modifiers', 'Info']
     const tabY = panelY - panelH / 2 + PANEL_PAD + TITLE_H + TAB_BAR_H / 2
     const tabW = (PANEL_W - PANEL_PAD * 2) / tabNames.length
@@ -388,7 +400,7 @@ export class Interior extends Phaser.Scene {
     const tabStartX = panelX - PANEL_W / 2 + PANEL_PAD + tabW / 2
     for (let i = 0; i < tabNames.length; i++) {
       const tx = tabStartX + i * tabW
-      const label = this.add.bitmapText(tx, tabY, 'mainSmall', tabNames[i], 16)
+      const label = this.add.bitmapText(tx, tabY, 'mainSmall', tabNames[i], FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText).setInteractive()
       registerGrabbable(label)
       tabLabels.push(label)
@@ -404,19 +416,77 @@ export class Interior extends Phaser.Scene {
     const productionContainer = this.add.container(0, 0)
     tabContainers.push(productionContainer)
     if (buildingType === 'workshop') {
-      const handle = buildWorkshopInterior(this, plotIndex, panelX, contentY, onSlotShiftClick, onCraftAllShiftClick, productionContainer)
+      let handle = buildWorkshopInterior(this, plotIndex, panelX, contentY, onSlotShiftClick, onCraftAllShiftClick, productionContainer)
       this.bindings.push(...handle.bindings)
       this.slotVisuals.push(...handle.slotVisuals)
+      this.moduleUpdates.push(handle.update)
       this.moduleCleanups.push(handle.onCleanup)
+      // Rebuild the Production tab in place (e.g. after an upgrade grows the
+      // craft grid) without restarting the scene or changing the active tab.
+      // Tears down the old handle's bindings/visuals/update/cleanup cleanly.
+      const ui = this.scene.get('UI') as UI
+      const dc = ui.getDragController()
+      this.rebuildWorkshopProduction = () => {
+        for (const b of handle.bindings) {
+          dc.unregister(b)
+          const i = this.bindings.indexOf(b); if (i >= 0) this.bindings.splice(i, 1)
+        }
+        for (const sv of handle.slotVisuals) {
+          const i = this.slotVisuals.indexOf(sv); if (i >= 0) this.slotVisuals.splice(i, 1)
+        }
+        const ui2 = this.moduleUpdates.indexOf(handle.update); if (ui2 >= 0) this.moduleUpdates.splice(ui2, 1)
+        const ci = this.moduleCleanups.indexOf(handle.onCleanup); if (ci >= 0) this.moduleCleanups.splice(ci, 1)
+        handle.onCleanup()
+        productionContainer.removeAll(true)
+        handle = buildWorkshopInterior(this, plotIndex, panelX, contentY, onSlotShiftClick, onCraftAllShiftClick, productionContainer)
+        this.bindings.push(...handle.bindings)
+        this.slotVisuals.push(...handle.slotVisuals)
+        this.moduleUpdates.push(handle.update)
+        this.moduleCleanups.push(handle.onCleanup)
+      }
     } else if (buildingType === 'mill' || buildingType === 'well') {
       const handle = buildProducerInterior(this, buildingType, plotIndex, panelX, contentY, onSlotShiftClick, productionContainer)
       this.bindings.push(...handle.bindings)
       this.slotVisuals.push(...handle.slotVisuals)
       this.moduleUpdates.push(handle.update)
+    } else if (buildingType === 'storage') {
+      // Storage tab: crate-like grid of slots
+      const slotCount = getStorageSlotCount(plot.level)
+      const cols = STORAGE_COLS
+      const rows = Math.ceil(slotCount / cols)
+      const gridW = cols * SLOT + (cols - 1) * SLOT_GAP
+      const gridH = rows * SLOT + (rows - 1) * SLOT_GAP
+      const gridStartX = panelX - gridW / 2 + SLOT / 2
+      const gridStartY = contentY - gridH / 2 + SLOT / 2
+
+      const ui = this.scene.get('UI') as UI
+      const dc = ui.getDragController()
+
+      for (let i = 0; i < slotCount; i++) {
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        const slotX = gridStartX + col * (SLOT + SLOT_GAP)
+        const slotY = gridStartY + row * (SLOT + SLOT_GAP)
+        const getStack = () => plot.storageContents![i] ?? null
+        const slotImg = makeSlotImage(this, { x: slotX, y: slotY, peek: getStack, tooltipOffsetY: -44 })
+        const setStack = (s: ItemStack | null) => { plot.storageContents![i] = s }
+        this.slotVisuals.push({ x: slotX, y: slotY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container: productionContainer })
+
+        const binding = makeStorageBinding({ x: slotX, y: slotY }, getStack, setStack, { onChange: () => {} })
+        this.bindings.push(binding)
+        dc.register(binding)
+
+        productionContainer.add(slotImg)
+
+        slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+          if ((p.event as MouseEvent).shiftKey) { onSlotShiftClick(binding); return }
+          dc.handleSlotClick(binding, p)
+        })
+      }
     }
 
-    // -- UPGRADES tab (1) -- skipped for workshops
-    if (buildingType !== 'workshop') {
+    // -- UPGRADES tab (1) -- built for all building types
+    {
       const upgradesContainer = this.add.container(0, 0).setVisible(false)
       tabContainers.push(upgradesContainer)
       const contentTop = contentY - CONTENT_H / 2
@@ -424,28 +494,28 @@ export class Interior extends Phaser.Scene {
       const startY = contentTop + 20
       const leftX = panelX - PANEL_W / 2 + PANEL_PAD + 12
 
-      const levelText = this.add.bitmapText(panelX, startY, 'mainSmall', '', 20)
+      const levelText = this.add.bitmapText(panelX, startY, 'mainSmall', '', FONT.name)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiGold)
-      const levelNextText = this.add.bitmapText(panelX, startY, 'mainSmall', '', 20)
-        .setOrigin(0.5, 0.5).setTint(0x44CC44)
+      const levelNextText = this.add.bitmapText(panelX, startY, 'mainSmall', '', FONT.name)
+        .setOrigin(0.5, 0.5).setTint(COLORS.upgradeGreen)
 
-      const speedStatText = this.add.bitmapText(panelX, startY + lineH, 'mainSmall', '', 18)
+      const speedStatText = this.add.bitmapText(panelX, startY + lineH, 'mainSmall', '', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-      const speedNextText = this.add.bitmapText(panelX, startY + lineH, 'mainSmall', '', 18)
-        .setOrigin(0.5, 0.5).setTint(0x44CC44)
+      const speedNextText = this.add.bitmapText(panelX, startY + lineH, 'mainSmall', '', FONT.desc)
+        .setOrigin(0.5, 0.5).setTint(COLORS.upgradeGreen)
 
-      const storageStatText = this.add.bitmapText(panelX, startY + lineH * 2, 'mainSmall', '', 18)
+      const storageStatText = this.add.bitmapText(panelX, startY + lineH * 2, 'mainSmall', '', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-      const storageNextText = this.add.bitmapText(panelX, startY + lineH * 2, 'mainSmall', '', 18)
-        .setOrigin(0.5, 0.5).setTint(0x44CC44)
+      const storageNextText = this.add.bitmapText(panelX, startY + lineH * 2, 'mainSmall', '', FONT.desc)
+        .setOrigin(0.5, 0.5).setTint(COLORS.upgradeGreen)
 
       const btnY = startY + lineH * 3 + 12
       const coinSprite = this.add.sprite(panelX - 80, btnY, 'gold_coin').setScale(2)
-      const costText = this.add.bitmapText(panelX - 64, btnY, 'mainSmall', '', 18)
+      const costText = this.add.bitmapText(panelX - 64, btnY, 'mainSmall', '', FONT.desc)
         .setOrigin(0, 0.5).setTint(COLORS.uiGold)
       const btn = this.add.rectangle(panelX + 60, btnY, 140, 36, COLORS.uiBarBg).setInteractive()
       registerGrabbable(btn)
-      const btnLabel = this.add.bitmapText(panelX + 60, btnY, 'mainSmall', 'UPGRADE', 20)
+      const btnLabel = this.add.bitmapText(panelX + 60, btnY, 'mainSmall', 'UPGRADE', FONT.name)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiGold)
 
       upgradesContainer.add([
@@ -472,8 +542,13 @@ export class Interior extends Phaser.Scene {
 
         const curCap = getStorageCap(lvl)
         const nextCap = getStorageCap(next)
-        storageStatText.setText(`Storage: ${curCap}  ->  `).setOrigin(0, 0.5).setX(leftX)
-        storageNextText.setText(`${nextCap}`).setOrigin(0, 0.5).setX(leftX + storageStatText.width)
+        if (buildingType === 'workshop') {
+          storageStatText.setText('Unlocks 2x2 crafting').setOrigin(0, 0.5).setX(leftX)
+          storageNextText.setText('')
+        } else {
+          storageStatText.setText(`Storage: ${curCap}  ->  `).setOrigin(0, 0.5).setX(leftX)
+          storageNextText.setText(`${nextCap}`).setOrigin(0, 0.5).setX(leftX + storageStatText.width)
+        }
 
         costText.setText(`${getUpgradeCost(lvl)}g`)
       }
@@ -484,14 +559,20 @@ export class Interior extends Phaser.Scene {
         const cost = getUpgradeCost(plot.level)
         if (state.trySpend(cost, this.registry)) {
           plot.level++
+          // Workshop reaching level 2 grows its 2 craft slots into a 2x2 grid.
+          // Existing contents stay in the first two slots; two empty slots append.
+          if (buildingType === 'workshop' && plot.level === 2 && plot.craftInputs && plot.craftInputs.length < 4) {
+            while (plot.craftInputs.length < 4) plot.craftInputs.push(null)
+            this.rebuildWorkshopProduction?.()
+          }
           titleLevelText.setText(`Level ${plot.level}`)
           refreshUpgradeText()
         }
       })
     }
 
-    // -- MODIFIERS tab (2) -- skipped for workshops
-    if (buildingType !== 'workshop') {
+    // -- MODIFIERS tab (2) -- skipped for workshops and storage
+    if (buildingType !== 'workshop' && buildingType !== 'storage') {
       const modifiersContainer = this.add.container(0, 0).setVisible(false)
       tabContainers.push(modifiersContainer)
       const MOD_COLS = 4
@@ -541,13 +622,13 @@ export class Interior extends Phaser.Scene {
       infoContainer.add(artSprite)
 
       const descY = startY + 46
-      const descText = this.add.bitmapText(leftX, descY, 'mainSmall', def.description, 16)
+      const descText = this.add.bitmapText(leftX, descY, 'mainSmall', def.description, FONT.desc)
         .setOrigin(0, 0.5).setTint(COLORS.uiText).setMaxWidth(PANEL_W - PANEL_PAD * 2 - 24)
       infoContainer.add(descText)
 
       if (def.itemTickMs) {
         const cycleText = this.add.bitmapText(leftX, descY + lineH, 'mainSmall',
-          `Cycle Time: ${(getEffectiveTickMs(def.itemTickMs, plot.level) / 1000).toFixed(1)}s`, 16)
+          `Cycle Time: ${(getEffectiveTickMs(def.itemTickMs, plot.level) / 1000).toFixed(1)}s`, FONT.desc)
           .setOrigin(0, 0.5).setTint(COLORS.uiText)
         infoContainer.add(cycleText)
         this.moduleUpdates.push(() => {
@@ -559,7 +640,7 @@ export class Interior extends Phaser.Scene {
       const storageCount = () => plot.output?.count ?? 0
       const storageCap = () => getStorageCap(plot.level)
       const storageText = this.add.bitmapText(leftX, descY + lineH * 2, 'mainSmall',
-        `Storage: ${storageCount()}/${storageCap()}`, 16)
+        `Storage: ${storageCount()}/${storageCap()}`, FONT.desc)
         .setOrigin(0, 0.5).setTint(COLORS.uiText)
       infoContainer.add(storageText)
       this.moduleUpdates.push(() => {
@@ -597,14 +678,28 @@ export class Interior extends Phaser.Scene {
 
   private craftAllToInventory() {
     if (this.interiorData.source !== 'plot') return
+    const plotIndex = this.interiorData.plotIndex
     let madeAny = false
+
+    // First, move any stored auto-crafted output into inventory.
+    const plot = state.plots[plotIndex]
+    if (plot.craftOutput) {
+      const added = state.inventoryAddAnywhere({ type: plot.craftOutput.type, count: plot.craftOutput.count })
+      if (added > 0) {
+        plot.craftOutput.count -= added
+        if (plot.craftOutput.count <= 0) plot.craftOutput = null
+        madeAny = true
+      }
+    }
+
+    // Then craft from inputs until they run out or inventory is full.
     while (true) {
-      const preview = previewCraft(this.interiorData.plotIndex)
+      const preview = previewCraft(plotIndex)
       if (!preview) break
       const tentative: ItemStack = { type: preview.type, count: preview.count }
       const added = state.inventoryAddAnywhere(tentative)
       if (added <= 0) break
-      consumeCraft(this.interiorData.plotIndex)
+      consumeCraft(plotIndex)
       madeAny = true
     }
     if (madeAny) {
@@ -629,8 +724,7 @@ export class Interior extends Phaser.Scene {
       v.icon = this.add.sprite(v.x, v.y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale)
       v.container?.add(v.icon)
       if (stack.count > 1) {
-        v.count = this.add.bitmapText(v.x + 23, v.y + 23, 'main', String(stack.count), 20)
-          .setOrigin(1, 1).setTint(COLORS.uiText)
+        v.count = makeCountLabel(this, v.x, v.y, stack.count)
         v.container?.add(v.count)
       }
     }

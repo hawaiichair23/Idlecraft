@@ -7,10 +7,20 @@ import { ITEMS } from '../items/types'
 import type { WorldStructure } from '../world/structures'
 import type { Honse } from '../world/honse'
 
-export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field'
+export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage'
 export type BuiltType = Exclude<BuildingType, 'empty'>
 
 export const MAX_GOLD = 999_999
+
+// Terrain grid. One byte per TERRAIN_TILE-square cell covering the world, the
+// ground-truth map every system reads and writes: gen seeds it, the renderer
+// draws from it, planting reads it, fertilizing writes it. Salt=0 so a zeroed
+// array is an all-salt basin by default; other terrains are written in.
+export const Terrain = { Salt: 0, Grass: 1, Water: 2, CrackedDirt: 3 } as const
+export type Terrain = (typeof Terrain)[keyof typeof Terrain]
+export const TERRAIN_TILE = 16
+// World is 576*8 = 4608px square (mirror of WORLD_PX in Overworld) → 288 tiles.
+export const TERRAIN_COLS = (576 * 8) / TERRAIN_TILE
 
 export const MODIFIER_SLOTS_PER_PLOT = 8
 
@@ -19,6 +29,10 @@ export const GENERAL_STORE_SLOTS = 24
 
 // World-placed crate storage: 6 columns × 4 rows, same grid as the store.
 export const CRATE_SLOTS = 24
+
+// Storage building: base 24 slots (6×4), grows with level.
+export const STORAGE_BASE_SLOTS = 24
+export const STORAGE_COLS = 6
 
 // Field grid: 5×2 plantable cells per field plot.
 export const FIELD_COLS = 5
@@ -65,6 +79,9 @@ export interface PlotState {
   // field-only: per-cell state for the 5×5 planting grid. undefined for
   // non-field plots; initialized when a field is built.
   fieldCells?: FieldCell[]
+  // storage-only: item grid contents. undefined for non-storage plots;
+  // initialized when a storage building is built. Size grows with level.
+  storageContents?: (ItemStack | null)[]
 }
 
 export interface BuildingDef {
@@ -82,9 +99,10 @@ export const BUILDINGS: Record<BuiltType, BuildingDef> = {
   well:    { name: 'Well',    description: 'Extracts groundwater.',     cost: 30, tickMs: 8000, goldPerTick: 0, producesItem: 'water', itemTickMs: 16000 },
   workshop: { name: 'Workshop', description: 'Crafts materials into products.', cost: 50, tickMs: 6000, goldPerTick: 0 },
   field:   { name: 'Field',   description: 'Plant and harvest crops.', cost: 100, tickMs: 0, goldPerTick: 0 },
+  storage: { name: 'Storage', description: 'Stores items.', cost: 100, tickMs: 0, goldPerTick: 0 },
 }
 
-export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field']
+export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field', 'storage']
 
 // Upgrade cost: 25, 50, 100, 200, …
 export function getUpgradeCost(level: number): number {
@@ -102,6 +120,11 @@ export function getEffectiveTickMs(base: number, level: number): number {
 // Building output slot capacity: 16, 32, 64, 128, …
 export function getStorageCap(level: number): number {
   return 16 * Math.pow(2, level - 1)
+}
+
+// Storage building slot count by level: 24, 30, 36, 42, …  (+6 per level = one extra row)
+export function getStorageSlotCount(level: number): number {
+  return STORAGE_BASE_SLOTS + (level - 1) * STORAGE_COLS
 }
 
 export const INVENTORY_SIZE = 5
@@ -127,7 +150,7 @@ export function createCrateContents(): (ItemStack | null)[] {
 }
 
 class GameState {
-  gold = 30
+  gold = 9999
   plots: PlotState[] = []
   // Fixed world buildings (shop, church, etc.) — not owned, not bought, no ticks.
   worldStructures: WorldStructure[] = []
@@ -160,7 +183,7 @@ class GameState {
   // `plantedAt` is the Date.now() stamp set when a sapling is planted; the
   // overworld grows it to mature once enough time has elapsed. Only saplings
   // carry it — mature/stump and hand-placed trees leave it undefined.
-  plantedTrees: { x: number; y: number; kind: 'cottonwood'; stage: 'sapling' | 'mature' | 'stump'; plantedAt?: number }[] = []
+  plantedTrees: { x: number; y: number; kind: 'cottonwood'; stage: 'sapling' | 'mature' | 'stump' | 'dead'; plantedAt?: number }[] = []
   // Hitching posts placed by the player. Each entry is a sprite in the world
   // and an obstacle in collision. `species` chooses which sprite to render —
   // 'post' (weathered cottonwood gray) or 'cedar_post' (warm cedar brown).
@@ -170,6 +193,10 @@ class GameState {
   // a post) plus its own storage grid in `contents` (CRATE_SLOTS long). The
   // contents persist for the play session — open the crate to take/put items.
   placedCrates: { x: number; y: number; contents: (ItemStack | null)[] }[] = []
+  // Pipe connections between plots. Each pipe links a source plot's output
+  // to a destination plot's input. Items flow automatically on tick.
+  // fromPlot/toPlot are indices into the plots array.
+  pipes: { fromPlot: number; toPlot: number }[] = []
   // Honses in the world. Position is the visual center; sprite/collision/rope
   // hitboxes derive from this. Stationary for now — movement comes later.
   honses: Honse[] = []
@@ -187,6 +214,10 @@ class GameState {
   // future menu can display it for sharing or set it before init() to replay
   // a specific world. 0 until init() runs.
   worldSeed = 0
+
+  // Terrain grid (see Terrain/TERRAIN_TILE above). Allocated in init().
+  terrain: Uint8Array = new Uint8Array(TERRAIN_COLS * TERRAIN_COLS)
+
 
   // General store sell-grid contents — items dragged in here are sold on click.
   // Persists across closing the menu so the player can leave/return mid-trade.
@@ -207,8 +238,9 @@ class GameState {
   // Set to true the first time rope is crafted. Unlocks the rope listing in
   // the Tool Shop — the player must discover the recipe before they can buy.
   hasCraftedRope = false
-  // Set to true the first time twine is crafted. Triggers honse spawns.
-  hasCraftedTwine = false
+  // Set to true the first time hemp is harvested from a field. Triggers honse
+  // spawns in the overworld.
+  hasHarvestedHemp = false
   // Set to true the first time a post is crafted. Unlocks the post listing
   // in the Tool Shop.
   hasCraftedPost = false
@@ -264,8 +296,24 @@ class GameState {
     return n
   }
 
+  // Read the terrain type at a world-pixel position. Out-of-bounds reads as Salt.
+  terrainAt(x: number, y: number): Terrain {
+    const c = Math.floor(x / TERRAIN_TILE)
+    const r = Math.floor(y / TERRAIN_TILE)
+    if (c < 0 || r < 0 || c >= TERRAIN_COLS || r >= TERRAIN_COLS) return Terrain.Salt
+    return this.terrain[r * TERRAIN_COLS + c] as Terrain
+  }
+
+  // Write the terrain type at a world-pixel position. Out-of-bounds is a no-op.
+  setTerrainAt(x: number, y: number, t: Terrain) {
+    const c = Math.floor(x / TERRAIN_TILE)
+    const r = Math.floor(y / TERRAIN_TILE)
+    if (c < 0 || r < 0 || c >= TERRAIN_COLS || r >= TERRAIN_COLS) return
+    this.terrain[r * TERRAIN_COLS + c] = t
+  }
+
   init(plotCount: number) {
-    this.gold = 20
+    this.gold = 9999
     // Roll this world's seed. generateWorld reads state.worldSeed, so the
     // whole layout derives from this one number. Random per new game today;
     // a future menu can set worldSeed before calling init() to replay a world.
@@ -297,16 +345,24 @@ class GameState {
     this.revealedItems = []
     this.droppedItems = []
     this.plantedTrees = []
+    this.terrain = new Uint8Array(TERRAIN_COLS * TERRAIN_COLS)
     this.placedPosts = []
     this.placedCrates = []
+    this.pipes = []
     // honses spawn dynamically when twine is first crafted — start empty
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    // DEV: seed a pickaxe for testing mining
+    // DEV: seed items for testing
+    const bag: ItemStack = { type: 'bag', count: 1, contents: [
+      { type: 'rope', count: 32 },
+      { type: 'post', count: 32 },
+      { type: 'pipe', count: 32 },
+      null,
+    ]}
     this.inventory[0] = { type: 'pickaxe', count: 1 }
-    // DEV: seed a crate for testing storage
     this.inventory[1] = { type: 'crate', count: 1 }
+    this.inventory[2] = bag
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -495,7 +551,40 @@ class GameState {
     if (type === 'field') {
       plot.fieldCells = makeEmptyFieldCells()
     }
+    if (type === 'storage') {
+      plot.storageContents = Array.from({ length: getStorageSlotCount(1) }, () => null)
+    }
     return true
+  }
+
+  // Inverse of placeBuilding: tear a built plot back down to 'empty'. Returns
+  // every item stack that was sitting in the plot (producer output + workshop
+  // craft slots) so the caller can spill them back to the player — destroying
+  // a plot refunds its contents but not its build cost. Field growth state is
+  // not items, so it's simply discarded. Modifiers aren't built out yet, so
+  // they're reset but not spilled. No-op (returns []) on an empty plot.
+  clearPlot(plotIndex: number): ItemStack[] {
+    const plot = this.plots[plotIndex]
+    if (!plot || plot.built === 'empty') return []
+
+    const spill: ItemStack[] = []
+    if (plot.output) spill.push(plot.output)
+    if (plot.craftInputs) for (const s of plot.craftInputs) if (s) spill.push(s)
+    if (plot.craftOutput) spill.push(plot.craftOutput)
+    if (plot.storageContents) for (const s of plot.storageContents) if (s) spill.push(s)
+
+    plot.built = 'empty'
+    plot.level = 1
+    plot.lastTickAt = 0
+    plot.lastItemTickAt = 0
+    plot.output = null
+    plot.craftInputs = undefined
+    plot.craftOutput = undefined
+    plot.fieldCells = undefined
+    plot.storageContents = undefined
+    plot.modifiers = Array.from({ length: MODIFIER_SLOTS_PER_PLOT }, () => null)
+
+    return spill
   }
 }
 

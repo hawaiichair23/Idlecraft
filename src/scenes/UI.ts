@@ -1,12 +1,12 @@
 import Phaser from 'phaser'
-import { COLORS } from '../colors'
+import { COLORS, FONT } from '../colors'
 import { BUILDINGS, BUILDING_LIST, INVENTORY_SIZE, CRATE_SLOTS, isBag, state, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { DragController } from '../ui/DragController'
 import { CursorController } from '../ui/CursorController'
 import type { SlotBinding } from '../ui/SlotBinding'
 import { attachSlotHover, attachSlotTooltip } from '../ui/hover'
-import { makeStorageBinding, distributeIntoBindings } from '../ui/slotFactory'
+import { makeStorageBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
 import type { Interior } from './Interior'
 
 const BAR_HEIGHT = 40
@@ -18,7 +18,7 @@ export class UI extends Phaser.Scene {
 
   // inventory visuals — one entry per slot, with refs we redraw on change
   private invIcons: (Phaser.GameObjects.Sprite | null)[] = []
-  private invCounts: (Phaser.GameObjects.BitmapText | null)[] = []
+  private invCounts: (Phaser.GameObjects.GameObject | null)[] = []
   private invSlotPos: { x: number; y: number }[] = []
   // hotbar teardown tracking — every object and drag-binding the bar creates,
   // so a resize can destroy + rebuild the bar cleanly (mirrors BagPanel).
@@ -27,7 +27,7 @@ export class UI extends Phaser.Scene {
   // top bar + menu shade kept as refs so resize can re-stretch them.
   private topBar!: Phaser.GameObjects.Rectangle
   // persistent hotbar selection indicator
-  private selectionIndicator!: Phaser.GameObjects.Rectangle
+  private selectionIndicator!: Phaser.GameObjects.Sprite
   // Minecraft-style item-name label that appears above the selected slot and
   // fades out after a moment. Reused across selections.
   private selectionLabel!: Phaser.GameObjects.BitmapText
@@ -53,7 +53,7 @@ export class UI extends Phaser.Scene {
   private crateBindings: SlotBinding[] = []
   // Per-slot icon and count refs for redraw.
   private crateIcons: (Phaser.GameObjects.Sprite | null)[] = []
-  private crateCounts: (Phaser.GameObjects.BitmapText | null)[] = []
+  private crateCounts: (Phaser.GameObjects.GameObject | null)[] = []
   // Shade behind the crate panel — blocks clicks and closes on click.
   private crateShade: Phaser.GameObjects.Rectangle | null = null
   // per-row text refs, so we can re-tint them when affordability changes
@@ -99,9 +99,9 @@ export class UI extends Phaser.Scene {
     this.cursorController = new CursorController(this)
 
     // top bar
-    this.topBar = this.add.rectangle(0, 0, w, BAR_HEIGHT, COLORS.uiBarBg).setOrigin(0, 0)
+    this.topBar = this.add.rectangle(0, 0, w, BAR_HEIGHT, COLORS.black).setOrigin(0, 0).setAlpha(0.95)
     const initialGold = (this.registry.get('gold') as number | undefined) ?? 0
-    this.goldText = this.add.bitmapText(12, BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, 20)
+    this.goldText = this.add.bitmapText(12, BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, FONT.name)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiGold)
 
@@ -143,7 +143,7 @@ export class UI extends Phaser.Scene {
 
     // ---- build menu ----
     // full-screen click shade behind menu, blocks pointers + closes on click
-    this.menuShade = this.add.rectangle(0, 0, w, h, 0x000000, 0.4)
+    this.menuShade = this.add.rectangle(0, 0, w, h, COLORS.black, 0.4)
       .setOrigin(0, 0)
       .setInteractive()
       .setVisible(false)
@@ -238,7 +238,7 @@ export class UI extends Phaser.Scene {
     const topRowY = -((rowCount - 1) / 2) * (ROW_H + ROW_GAP)
     const title = this.add.bitmapText(0, topRowY - ROW_H / 2 - 18, 'main', 'Build', 20)
       .setOrigin(0.5, 0.5)
-      .setTint(0xFFFFFF)
+      .setTint(COLORS.white)
     this.menuContainer.add(title)
 
     const iconX = -ROW_W / 2 + ICON_W / 2
@@ -398,25 +398,22 @@ export class UI extends Phaser.Scene {
       this.redrawInventorySlot(slotIndex, x, barY)
     }
 
-    // persistent hotbar selection indicator — hollow square over the selected slot
-    const SELECTION_SIZE = 56
-    const SELECTION_STROKE = 3
-    const SELECTION_COLOR = 0xffffff
+    // persistent hotbar selection indicator — rounded hollow frame sprite
     const SELECTION_DEPTH = 9999
     const first = this.invSlotPos[state.selectedInventorySlot]
-    this.selectionIndicator = this.add.rectangle(first.x, first.y, SELECTION_SIZE, SELECTION_SIZE)
-      .setStrokeStyle(SELECTION_STROKE, SELECTION_COLOR)
-      .setFillStyle()
+    this.selectionIndicator = this.add.sprite(first.x, first.y, 'select_frame')
+      .setScale(2)
+      .setTint(COLORS.white)
       .setDepth(SELECTION_DEPTH)
 
     // Minecraft-style item name label — shown briefly when selection changes.
     // Matches the slot tooltip style for visual consistency.
-    this.selectionLabelBg = this.add.rectangle(first.x, first.y - 48, 10, 10, 0x000000, 0.75)
+    this.selectionLabelBg = this.add.rectangle(first.x, first.y - 48, 10, 10, COLORS.black, 0.75)
       .setDepth(10000)
       .setVisible(false)
-    this.selectionLabel = this.add.bitmapText(first.x, first.y - 48, 'main', '', 14)
+    this.selectionLabel = this.add.bitmapText(first.x, first.y - 48, 'main', '', FONT.desc)
       .setOrigin(0.5, 0.5)
-      .setTint(0xFFFFFF)
+      .setTint(COLORS.white)
       .setDepth(10001)
       .setVisible(false)
 
@@ -525,10 +522,7 @@ export class UI extends Phaser.Scene {
     if (!stack) return
     this.invIcons[i] = this.add.sprite(x, y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale).setDepth(200)
     if (stack.count > 1) {
-      this.invCounts[i] = this.add.bitmapText(x + 23, y + 23, 'main', String(stack.count), 20)
-        .setOrigin(1, 1)
-        .setTint(COLORS.uiText)
-        .setDepth(201)
+      this.invCounts[i] = makeCountLabel(this, x, y, stack.count, 201)
     }
   }
 
@@ -563,7 +557,7 @@ export class UI extends Phaser.Scene {
     // clickable while every empty spot — including the bottom strip beside
     // the hotbar — hits the blocker and closes the crate.
     const blockerH = h - UI_BAR_HEIGHT
-    this.crateShade = this.add.rectangle(0, UI_BAR_HEIGHT, w, blockerH, 0x000000, 0)
+    this.crateShade = this.add.rectangle(0, UI_BAR_HEIGHT, w, blockerH, COLORS.black, 0.45)
       .setOrigin(0, 0)
       .setInteractive()
       .setDepth(100)
@@ -589,7 +583,7 @@ export class UI extends Phaser.Scene {
 
     // title
     const titleY = panelY - panelH / 2 + PANEL_PAD + 16
-    const title = this.add.bitmapText(panelX, titleY, 'main', 'Crate', 32)
+    const title = this.add.bitmapText(panelX, titleY, 'main', 'Crate', FONT.title)
       .setOrigin(0.5, 0.5)
       .setTint(COLORS.uiText)
       .setDepth(9002)
@@ -686,10 +680,7 @@ export class UI extends Phaser.Scene {
       .setScale(ITEMS[stack.type].scale)
       .setDepth(9003)
     if (stack.count > 1) {
-      this.crateCounts[i] = this.add.bitmapText(x + 23, y + 23, 'main', String(stack.count), 20)
-        .setOrigin(1, 1)
-        .setTint(COLORS.uiText)
-        .setDepth(9004)
+      this.crateCounts[i] = makeCountLabel(this, x, y, stack.count, 9004)
     }
   }
 
@@ -761,7 +752,7 @@ class BagPanel {
   private bag: ItemStack
   private objects: Phaser.GameObjects.GameObject[] = []
   private icons: (Phaser.GameObjects.Sprite | null)[] = []
-  private counts: (Phaser.GameObjects.BitmapText | null)[] = []
+  private counts: (Phaser.GameObjects.GameObject | null)[] = []
   private slotPos: { x: number; y: number }[] = []
   private bindings: SlotBinding[] = []
   // top edge Y of this panel (set in constructor) — read by the crate blocker.
@@ -918,10 +909,7 @@ class BagPanel {
     const scene = this.ui as unknown as Phaser.Scene
     this.icons[i] = scene.add.sprite(pos.x, pos.y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale).setDepth(200)
     if (stack.count > 1) {
-      this.counts[i] = scene.add.bitmapText(pos.x + 23, pos.y + 23, 'main', String(stack.count), 20)
-        .setOrigin(1, 1)
-        .setTint(COLORS.uiText)
-        .setDepth(201)
+      this.counts[i] = makeCountLabel(scene, pos.x, pos.y, stack.count, 201)
     }
   }
 

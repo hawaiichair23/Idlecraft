@@ -7,7 +7,7 @@
 // time the player clicks an empty plot.
 
 import Phaser from 'phaser'
-import { COLORS } from '../colors'
+import { COLORS, FONT } from '../colors'
 import { BUILDINGS, state, type BuiltType } from '../game/state'
 import { attachSlotHover } from '../ui/hover'
 import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
@@ -23,6 +23,7 @@ interface UnlockEntry {
 }
 const UNLOCK_ENTRIES: UnlockEntry[] = [
   { type: 'field', buyPrice: 300 },
+  { type: 'storage', buyPrice: 500 },
 ]
 
 // Interior palette is now defined in InteriorBackdrop.ts INTERIOR_PALETTES.
@@ -59,7 +60,7 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
 
   // title
   const topRowY = panelY - rowStackH / 2 + ROW_H / 2
-  scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Land Office', 24)
+  scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Land Office', FONT.title)
     .setOrigin(0.5, 0.5)
     .setTint(COLORS.uiText)
     .setDepth(101)
@@ -108,17 +109,17 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
 
     // name + description, left-aligned in long slot
     const labelX = nameX - NAME_W / 2 + 12
-    const label = scene.add.bitmapText(labelX, rowY - 8, 'main', def.name, 18)
+    const label = scene.add.bitmapText(labelX, rowY - 8, 'main', def.name, FONT.name)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
       .setDepth(102)
-    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', def.description, 14)
+    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', def.description, FONT.desc)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
       .setDepth(102)
 
     // cost number + coin
-    const cost = scene.add.bitmapText(costX - 6, rowY + 3, 'main', `${entry.buyPrice}`, 16)
+    const cost = scene.add.bitmapText(costX - 6, rowY + 3, 'main', `${entry.buyPrice}`, FONT.cost)
       .setOrigin(0.5, 0.5)
       .setTint(COLORS.uiText)
       .setDepth(102)

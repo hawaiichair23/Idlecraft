@@ -12,7 +12,7 @@ export interface SlotVisual {
   y: number
   getStack: () => ItemStack | null
   icon: Phaser.GameObjects.Sprite | null
-  count: Phaser.GameObjects.BitmapText | null
+  count: Phaser.GameObjects.GameObject | null
   lastType: string | null
   lastCount: number
   container?: Phaser.GameObjects.Container

@@ -18,7 +18,7 @@ interface TannerEntry {
   description: string
 }
 const TANNER_ITEMS: TannerEntry[] = [
-  { type: 'leather', buyPrice: 35, description: 'Tanned animal hide for crafting.' },
+  { type: 'leather', buyPrice: 35, description: 'Tanned animal hide.' },
 ]
 
 export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {

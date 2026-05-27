@@ -16,6 +16,7 @@ export const RECIPES: Recipe[] = [
   { inputs: [{ type: 'hemp', count: 1 }, { type: 'hemp', count: 1 }], output: 'twine', outputCount: 2 },
   { inputs: [{ type: 'twine', count: 1 }, { type: 'twine', count: 1 }], output: 'rope' },
   { inputs: [{ type: 'wood', count: 1 }, { type: 'wood', count: 1 }], output: 'post' },
+  { inputs: [{ type: 'wood', count: 1 }, { type: 'stone', count: 1 }], output: 'wheel' },
 ]
 
 // Returns the matching recipe for the given input stacks (order doesn't
@@ -85,8 +86,6 @@ export function consumeCraft(plotIndex: number): ItemStack | null {
   if (output.type === 'bread') state.hasMadeBread = true
   // unlock flag — first rope craft adds rope to the Tool Shop's listings
   if (output.type === 'rope') state.hasCraftedRope = true
-  // unlock flag — first twine craft spawns honses in the overworld
-  if (output.type === 'twine') state.hasCraftedTwine = true
   if (output.type === 'post') state.hasCraftedPost = true
   if (output.type === 'bag') state.hasCraftedBag = true
   return output

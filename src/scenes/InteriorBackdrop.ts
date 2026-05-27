@@ -39,6 +39,7 @@ export const INTERIOR_PALETTES = {
   mill:           { floorColor: 0x9A7B5A, wallColor: 0x3A2818 },
   well:           { floorColor: 0x5A6A6E, wallColor: 0x1A2228 },
   workshop:       { floorColor: 0x7A6040, wallColor: 0x2E1E14 },
+  storage:        { floorColor: 0x7A4030, wallColor: 0x2A0F0A },
 } as const
 
 // Defaults
