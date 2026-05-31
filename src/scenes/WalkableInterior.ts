@@ -9,7 +9,7 @@
 // are spliced out and never respawn.
 
 import Phaser from 'phaser'
-import { state, type WalkableInteriorItemInstance } from '../game/state'
+import { state, PLAYER_BASE_SPEED, type WalkableInteriorItemInstance } from '../game/state'
 import { ITEMS, type ItemType } from '../items/types'
 import { buildInteriorBackdrop } from './InteriorBackdrop'
 import { UI_INVENTORY_BAR_HEIGHT } from './UI'
@@ -50,7 +50,7 @@ const ITEM_SCALE_MULT = 1.5               // items scale up slightly, not tied t
 const PLAYER_SPEED = 135
 const PLAYER_HALF = 5
 const PICKUP_RADIUS = 18
-const EXIT_ZONE_H = 14       // thin strip at bottom of floor
+const EXIT_ZONE_H = 22       // thin strip at bottom of floor; bigger = exit triggers a few px higher (sooner)
 
 // ---- builder ----
 
@@ -104,8 +104,18 @@ export function buildWalkableInterior(
 
   // ---- update loop ----
   const update = (dt: number) => {
-    // movement
-    const step = (PLAYER_SPEED * dt) / 1000
+    // movement — apply the SAME speed modifiers the overworld uses (base
+    // override + food buff), but proportionally, so the buff "carries over"
+    // without breaking the interior's own tuning. The overworld and interior
+    // use different base speeds (it's a much smaller space), so we can't share
+    // a raw px/sec number; instead we take the multiplier the player feels
+    // outside — (base±override + buff) / base — and apply it to the interior's
+    // own PLAYER_SPEED. Eat food → ~5% faster outside → ~5% faster in here too.
+    const owBase = state.playerSpeedOverride ?? PLAYER_BASE_SPEED
+    const buffed = state.gameTime < state.speedBuffEndsAt
+    const owSpeed = owBase + (buffed ? state.speedBuffAmount : 0)
+    const speedMult = owSpeed / PLAYER_BASE_SPEED
+    const step = (PLAYER_SPEED * speedMult * dt) / 1000
     let dx = 0
     let dy = 0
     if (wasd.A.isDown || arrows.left!.isDown) dx -= 1

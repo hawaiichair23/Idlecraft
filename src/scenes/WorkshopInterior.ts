@@ -110,8 +110,8 @@ export function buildWorkshopInterior(
   }
 
   // ---- output slot --------------------------------------------------------
-  // Shows the real stored craftOutput (filled by the auto-craft tick when pipes
-  // feed the workshop) if present; otherwise shows the live craft preview.
+  // Shows the real stored craftOutput (filled by the auto-craft tick while
+  // auto-craft is on) if present; otherwise shows the live craft preview.
   // Taking pulls the stored output first, else consumes inputs to craft once.
   {
     const x = outputX
@@ -146,6 +146,36 @@ export function buildWorkshopInterior(
     slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if ((p.event as MouseEvent).shiftKey) { onCraftAllShiftClick(); return }
       dc.handleSlotClick(outputBinding, p)
+    })
+  }
+
+  // ---- auto-craft toggle ---------------------------------------------------
+  // Sits below the output slot, centered on it. ON = the workshop crafts on its
+  // timer (the arrow fills as the countdown); OFF = plain hand table. Tint shows
+  // state.
+  {
+    const toggleX = outputX
+    const toggleY = centerY + SLOT / 2 + GAP + SLOT / 2
+    const btn = scene.add.image(toggleX, toggleY, 'menu-slot').setInteractive()
+    container?.add(btn)
+    const label = scene.add.bitmapText(toggleX, toggleY, 'mainSmall', 'AUTO', 14)
+      .setOrigin(0.5, 0.5)
+    container?.add(label)
+
+    const paint = () => {
+      const on = state.plots[plotIndex].autoCraft === true
+      const tint = on ? COLORS.white : COLORS.menuDisabled
+      btn.setTint(tint)
+      label.setTint(tint)
+    }
+    paint()
+
+    btn.on('pointerdown', (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      if (!p.leftButtonDown()) return
+      ev.stopPropagation()
+      const plot = state.plots[plotIndex]
+      plot.autoCraft = !plot.autoCraft
+      paint()
     })
   }
 
@@ -206,10 +236,12 @@ export function buildWorkshopInterior(
     scene.events.off('bread-crafted', onBreadCrafted)
   }
 
-  // Arrow fills dark→bright yellow over the craft interval while a craft is
-  // active (valid recipe + room in output). Mirrors the mill/well arrow.
+  // The arrow fills dark→bright ONLY while auto-craft is ON (it's the visible
+  // countdown of the auto-craft timer). With auto-craft off the arrow is static.
   const update = () => {
     const plot = state.plots[plotIndex]
+    if (!plot.autoCraft) { arrowSprite.setTint(COLORS.craftSymbol); return }
+
     const preview = previewCraft(plotIndex)
     // a craft is "active" only when there's a valid recipe AND output room
     let active = preview !== null
@@ -217,10 +249,8 @@ export function buildWorkshopInterior(
       const out = plot.craftOutput
       if (out && out.type !== preview.type) active = false
     }
-    if (!active) {
-      arrowSprite.setTint(COLORS.craftSymbol)
-      return
-    }
+    if (!active) { arrowSprite.setTint(COLORS.craftSymbol); return }
+
     const craftMs = getEffectiveTickMs(BUILDINGS.workshop.tickMs, plot.level)
     const frac = ((Date.now() - plot.lastItemTickAt) % craftMs) / craftMs
     const r = Math.floor(Phaser.Math.Linear(0x55, 0xFF, frac))

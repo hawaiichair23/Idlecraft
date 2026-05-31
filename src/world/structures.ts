@@ -34,6 +34,12 @@ export interface WorldStructure {
   y: number
   // Which town this structure belongs to. null = unaffiliated.
   townId: string | null
+  // Walkable-interior loot for THIS instance, seeded on first visit. When
+  // present (even as []), it overrides any hardcoded default in the interior
+  // dispatch — so a procedurally-placed house can carry its own loot (or be
+  // deliberately empty) independent of the authored in-town house. undefined
+  // means "use the interior's built-in default" (the authored hemp house).
+  loot?: { x: number; y: number; type: string; count?: number }[]
 }
 
 // A town is a logical grouping of structures plus discovery state.

@@ -37,9 +37,8 @@ const HONSE_COLOR_TOTAL = HONSE_COLORS.reduce((s, c) => s + c[1], 0)
 // outliers roll super-slow or super-fast — the prize/dud catches.
 function rollSpeed(): number {
   const r = Math.random()
-  if (r < 0.05) return 0.45 + Math.random() * 0.15   // super slow: 0.45 .. 0.60
   if (r < 0.10) return 1.40 + Math.random() * 0.30   // super fast: 1.40 .. 1.70
-  return 0.70 + Math.random() * 0.60                 // normal: 0.70 .. 1.30
+  return 0.85 + Math.random() * 0.45                 // normal: 0.85 .. 1.30
 }
 
 function pickCoat(): number {
@@ -194,10 +193,46 @@ export function getHonseRopePull(
 // honse itself, the mounted honse, and tamed honses (only the wild band groups
 // up). Returns the additive velocity contribution; zero when it has no
 // neighbors. Pure — reads positions only.
+// ---- herd spatial grid ----
+// getHerdSteer only ever cares about other honses within HERD_RADIUS. Scanning
+// every honse for every honse is O(n²) — fine for a handful, but it squares as
+// herds grow. Instead we bucket the herd-eligible honses (untamed, not mounted)
+// into a grid of HERD_RADIUS-sized cells once per frame, then each honse only
+// looks at its own cell + the 8 touching cells. Because a neighbor must be
+// within HERD_RADIUS to matter and a cell is HERD_RADIUS wide, that 3×3 block
+// provably contains every honse that could be in range — anything outside is
+// too far by construction. The per-neighbor math is unchanged; only the set of
+// honses examined shrinks, so the steering output is identical.
+const HERD_CELL = HERD_RADIUS
+
+// Map from "cellX,cellY" → list of honse indices in that cell. Only includes
+// honses eligible to participate in herding (untamed, not the mount).
+type HerdGrid = Map<string, number[]>
+
+function cellKey(cx: number, cy: number): string {
+  return `${cx},${cy}`
+}
+
+function buildHerdGrid(honses: Honse[], mountedIndex: number | null): HerdGrid {
+  const grid: HerdGrid = new Map()
+  for (let i = 0; i < honses.length; i++) {
+    if (i === mountedIndex) continue
+    const h = honses[i]
+    if (h.tame) continue
+    const cx = Math.floor(h.x / HERD_CELL)
+    const cy = Math.floor(h.y / HERD_CELL)
+    const key = cellKey(cx, cy)
+    const bucket = grid.get(key)
+    if (bucket) bucket.push(i)
+    else grid.set(key, [i])
+  }
+  return grid
+}
+
 function getHerdSteer(
   honses: Honse[],
   selfIndex: number,
-  mountedIndex: number | null,
+  grid: HerdGrid,
 ): { vx: number; vy: number } {
   const self = honses[selfIndex]
   let sumX = 0, sumY = 0, count = 0
@@ -206,25 +241,36 @@ function getHerdSteer(
   const sep = self.spacing
   const sepSq = sep * sep
 
-  for (let j = 0; j < honses.length; j++) {
-    if (j === selfIndex || j === mountedIndex) continue
-    const o = honses[j]
-    if (o.tame) continue
-    const dx = o.x - self.x
-    const dy = o.y - self.y
-    const dSq = dx * dx + dy * dy
-    if (dSq > radiusSq || dSq < 0.0001) continue
+  // Only scan the 3×3 block of cells around self. Any honse close enough to
+  // herd with is guaranteed to fall inside it; the rest are skipped for free.
+  const selfCX = Math.floor(self.x / HERD_CELL)
+  const selfCY = Math.floor(self.y / HERD_CELL)
+  for (let gx = selfCX - 1; gx <= selfCX + 1; gx++) {
+    for (let gy = selfCY - 1; gy <= selfCY + 1; gy++) {
+      const bucket = grid.get(cellKey(gx, gy))
+      if (!bucket) continue
+      for (const j of bucket) {
+        if (j === selfIndex) continue
+        // (tame / mounted honses were never added to the grid, so there's no
+        // need to re-check them here.)
+        const o = honses[j]
+        const dx = o.x - self.x
+        const dy = o.y - self.y
+        const dSq = dx * dx + dy * dy
+        if (dSq > radiusSq || dSq < 0.0001) continue
 
-    // cohesion: accumulate neighbor positions to average later
-    sumX += o.x; sumY += o.y; count++
+        // cohesion: accumulate neighbor positions to average later
+        sumX += o.x; sumY += o.y; count++
 
-    // separation: push directly away from any neighbor that's too close,
-    // stronger the closer it is
-    if (dSq < sepSq) {
-      const d = Math.sqrt(dSq)
-      const push = (sep - d) / sep   // 0 at edge → 1 when touching
-      sepX -= (dx / d) * push
-      sepY -= (dy / d) * push
+        // separation: push directly away from any neighbor that's too close,
+        // stronger the closer it is
+        if (dSq < sepSq) {
+          const d = Math.sqrt(dSq)
+          const push = (sep - d) / sep   // 0 at edge → 1 when touching
+          sepX -= (dx / d) * push
+          sepY -= (dy / d) * push
+        }
+      }
     }
   }
 
@@ -249,13 +295,18 @@ function getHerdSteer(
 export function updateHonses(
   honses: Honse[],
   dt: number,
+  gameTime: number,
   collidesAt: (px: number, py: number, ignoreHonseIndex: number) => boolean,
   getTether: (honseIndex: number) => { x: number; y: number } | null = () => null,
   mountedIndex: number | null = null,
   playerPos: { x: number; y: number } | null = null,
 ) {
-  const now = Date.now()
+  const now = gameTime
   const step = dt / 1000
+
+  // Bucket the herd-eligible honses once per frame so each honse's herd scan
+  // only touches its local neighborhood instead of every other honse.
+  const herdGrid = buildHerdGrid(honses, mountedIndex)
 
   for (let i = 0; i < honses.length; i++) {
     // The mounted honse is driven by player input in the scene; skip her AI
@@ -295,7 +346,7 @@ export function updateHonses(
     // not written back into h.vx/h.vy — so it's a fresh nudge each frame and
     // can't compound into a runaway swarm.
     if (!avoiding && !h.tame) {
-      const steer = getHerdSteer(honses, i, mountedIndex)
+      const steer = getHerdSteer(honses, i, herdGrid)
       vx += steer.vx
       vy += steer.vy
     }

@@ -64,6 +64,7 @@ const pL = '#8A6B4A'   // lighter brown pebble
 // ---- GRASS ---- dead/dry strands. Edit colors/shape freely.
 const gD = '#6B7042'   // dark dry green
 const gL = '#8E8C4E'   // pale dry green-tan
+const gssL = '#9c9c8f'   // pale dry green-tan
 export const GRASS: Sprite = [
   [gD,_,_,_,_,gD,_],
   [_,gD,_,gL,_,gD,_],
@@ -82,12 +83,12 @@ export const PEBBLES: Sprite = [
 export const COW_SKULL: Sprite = [
   [bN,_,_,_,_,_,_,bN],
   [bN,bN,bN,bN,bN,bN,bN,bN],
-  [_,bN,bS,bN,bN,bS,bN,_],
-  [_,bN,bS,bN,bN,bS,bN,_],
-  [_,bN,bN,bN,bN,bA,bN,_],
-  [_,_,bN,bN,bA,bA,_,_],
-  [_,_,bA,bA,bA,bA,_,_],
-  [_,_,_,bA,bA,_,_,_],
+  [_,bN,bS,bN,bN,bS,bN,gssL],
+  [_,bN,bS,bN,bN,bS,bN,gssL],
+  [_,bN,bN,bN,bN,bA,bN,gssL],
+  [_,_,bN,bN,bA,bA,gssL,_],
+  [_,_,bA,bA,bA,gssL,gssL,_],
+  [_,_,_,bA,bA,gssL,_,_],
 ]
 // 8x8. Starter — feel free to tweak any pixel.
 const cL = '#FFEE66'  // highlight (bright)
@@ -197,6 +198,38 @@ export const WORKSHOP: Sprite = [
   [_,_,sL,sL,sL,sL,rD,dD,dD,rD,sL,sL,sL,sL,_,_],
   [_,_,sD,sD,sD,sD,rD,dD,dD,rD,sD,sD,sD,sD,_,_],
   [_,_,sD,sD,sD,sD,rD,dD,dD,rD,sD,sD,sD,sD,_,_],
+]
+
+// ---- WORKSHOP LEVEL 2 ---- the upgraded smithy: same footprint and forge, but
+// a tall brick smokestack, a raised dormer/loft on the roof, and a brick base —
+// reads as an established, industrialized shop. 16x16. Reuses workshop palette
+// ---- WORKSHOP LEVEL 2 ---- the upgraded smithy: a completely different,
+// solid STONE building (slate roof, stone-block walls) but keeping the red
+// brick chimney. No forge glow. 16x16.
+const stL = '#9a9488'  // stone block light
+const stM = '#7d776b'  // stone block mid
+const stD = '#5a554c'  // stone block dark / mortar
+const slT = '#4a4640'  // slate roof
+const bkL = '#A65238'  // brick light (red chimney)
+const bkD = '#7C3B28'  // brick dark
+const wsWn = '#1A0D06'  // window deep (matches storage windows)
+export const WORKSHOP_L2: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,sM,sM,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,sM,sM,sM,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,bkD,bkL,bkD,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,bkD,bkL,bkD,_,_,_],
+  [_,_,_,_,slT,slT,slT,slT,slT,slT,bkD,bkL,bkD,_,_,_],
+  [_,_,_,slT,slT,slT,slT,slT,slT,slT,bkD,bkL,bkD,_,_,_],
+  [_,_,slT,slT,slT,slT,slT,slT,slT,slT,slT,slT,slT,_,_,_],
+  [_,_,stD,stL,stM,stL,stD,stL,stM,stL,stD,stL,stM,stD,_,_],
+  [_,_,stL,stM,wsWn,wsWn,stD,stL,stM,wsWn,wsWn,stM,stL,stD,_,_],
+  [_,_,stD,stL,wsWn,wsWn,stD,stL,stM,wsWn,wsWn,stL,stD,stL,_,_],
+  [_,_,stL,stM,stL,stD,stL,stM,stL,stD,stL,stD,stL,stM,_,_],
+  [_,_,stD,stL,stM,stL,stD,stL,stM,stL,stM,stL,stD,stL,_,_],
+  [_,_,stL,stM,stL,stD,stL,stM,stL,stD,stL,stM,stL,stD,_,_],
+  [_,_,stD,stL,stM,stL,dD,dD,stL,stM,stL,stD,stL,stM,_,_],
+  [_,_,stL,stM,stL,stD,dD,dD,stD,stL,stM,stL,stD,stL,_,_],
+  [_,_,stD,stL,stM,stL,dD,dD,stL,stD,stL,stM,stL,stD,_,_],
 ]
 
 // ---- ITEMS (placeholders) ----
@@ -839,6 +872,23 @@ export const ITEM_GOLD: Sprite = [
   [_,_,goD,goM,goM,goD,_,_],
 ]
 
+// Clay: same rounded-chunk shape as ITEM_STONE, recolored to a beige-leaning
+// terracotta — warm reddish-brown softened toward tan, distinct from stone's
+// grey and the ore set.
+const clL = '#CC9870'
+const clM = '#A6724F'
+const clD = '#6E4830'
+export const ITEM_CLAY: Sprite = [
+  [_,_,clM,clM,clM,_,_,_],
+  [_,clM,clL,clL,clM,clM,_,_],
+  [clM,clL,clL,clM,clM,clM,clM,_],
+  [clM,clL,clM,clM,clM,clD,clM,clM],
+  [clM,clM,clM,clM,clD,clM,clM,clM],
+  [clM,clM,clM,clM,clM,clM,clM,clD],
+  [_,clM,clM,clD,clM,clM,clD,_],
+  [_,_,clD,clM,clM,clD,_,_],
+]
+
 export const ITEM_SHOVEL: Sprite = [
   [_,_,_,_,_,_,svH,_],
   [_,_,_,_,_,svH,_,_],
@@ -890,6 +940,26 @@ export const ITEM_BAG: Sprite = [
   [bgS,bgL,bgD,bgD,bgD,bgD,bgL,bgS],
   [_,bgS,bgD,bgD,bgD,bgD,bgS,_],
   [_,_,bgS,bgS,bgS,bgS,_,_],
+]
+
+// Sack: a bulging burlap sack cinched at the neck. 8x8
+const vnL = '#ad926c' 
+const vnM = '#977545'
+const vnB = '#7e5e32'
+export const ITEM_SACK: Sprite = [
+  [_,vnL,vnL,vnL,vnL,vnL,vnL,_],
+  [_,vnL,vnL,vnB,vnL,vnL,vnM,_],
+  [_,_,vnM,vnB,vnM,vnL,vnM,_],
+  [_,_,_,vnM,vnB,vnB,_,_],
+  [_,_,vnL,vnL,vnM,vnL,_,_],
+  [_,vnL,vnL,vnM,vnL,vnL,vnL,_],
+  [vnL,vnL,vnL,vnB,vnL,vnL,vnB,vnL,],
+  [vnM,vnL,vnL,vnM,vnL,vnL,vnB,vnL],
+  [vnM,vnM,vnL,vnL,vnL,vnL,vnL,vnL],
+  [vnM,vnM,vnM,vnL,vnL,vnL,vnL,vnL],
+  [vnM,vnM,vnM,vnM,vnL,vnL,vnL,vnL],
+  [vnM,vnM,vnM,vnM,vnM,vnL,vnL,vnM],
+  [_,vnB,vnB,vnM,vnM,vnM,vnM,vnL],
 ]
 
 // Medium Bag: larger version of the bag with a slight green tint and a metal
@@ -976,6 +1046,19 @@ export const ITEM_TWINE: Sprite = [
   [_,twL,twM,twL,twM,twL,twM,_],
 ]
 
+// Canvas: a woven square of cloth — checkerboard weave in twine fibers with a
+// darker stitched border. 8x8, reuses the twine palette.
+export const ITEM_CANVAS: Sprite = [
+  [twD,twD,twD,twD,twD,twD,twD,twD],
+  [twD,twL,twM,twL,twM,twL,twM,twD],
+  [twD,twM,twL,twM,twL,twM,twL,twD],
+  [twD,twL,twM,twL,twM,twL,twM,twD],
+  [twD,twM,twL,twM,twL,twM,twL,twD],
+  [twD,twL,twM,twL,twM,twL,twM,twD],
+  [twD,twM,twL,twM,twL,twM,twL,twD],
+  [twD,twD,twD,twD,twD,twD,twD,twD],
+]
+
 // Sugar cane: tall green stalk with segmented joints. 8x8.
 const scL = '#7BAA3C'   // leaf light green
 const scM = '#5A8024'   // stalk mid green
@@ -1027,10 +1110,10 @@ export const ITEM_PASTRY: Sprite = [
 // matched to the scale of other in-game buildings.
 const cotBk = '#80694c'   // bark mid
 const cotBkD = '#4a3928'  // bark shadow
-const cotLfL = '#8C9A6E'  // leaves light (grey-green)
+const cotLfL = '#929a6e'  // leaves light (grey-green)
 const cotLfM = '#5F6B48'  // leaves mid (muted green)
 const cotLfD = '#3F4A2E'  // leaves dark (deep muted green)
-const brrW = '#96b346' // highlight
+const brrW = '#a4b346' // highlight
 
 export const COTTONWOOD: Sprite = [
   [_,_,_,_,brrW,cotLfL,brrW,brrW,_,_,_,_],
@@ -1264,6 +1347,19 @@ export const ITEM_WOOD: Sprite = [
   [_,_,_,_,_,_,_,_],
 ]
 
+// Plank: three flat sawn boards stacked. Same post-wood palette as logs, but
+// flat (not rounded) to read as milled lumber. 8x8.
+export const ITEM_PLANK: Sprite = [
+  [_,_,_,_,_,_,_,_],
+  [psD,psL,psL,psL,psG,psL,psL,psD],
+  [psD,psM,psM,psM,psM,psM,psM,psD],
+  [_,_,_,_,_,_,_,_],
+  [psD,psL,psG,psL,psL,psL,psL,psD],
+  [psD,psM,psM,psM,psM,psM,psM,psD],
+  [_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_],
+]
+
 // Wheel: round wooden wheel with a square stone hub in the center. 12x12.
 // Wood ring (post palette psL/psM/psD), stone center (rock palette rkL/rkM/rkD).
 export const ITEM_WHEEL: Sprite = [
@@ -1277,9 +1373,34 @@ export const ITEM_WHEEL: Sprite = [
   [_, _, psM, psM, psM, psM, _, _],
 ]
 
+// Cart: placeholder — a simple wooden box on two wheels. 8x8, post palette.
+export const ITEM_CRAFTING_CART: Sprite = [
+  [_, psM, psM, psM, psM, psM, psM, _],
+  [psM, psL, psL, psL, psL, psL, psL, psM],
+  [psM, psL, psD, psL, psL, psD, psL, psM],
+  [psM, psL, psL, psL, psL, psL, psL, psM],
+  [psM, psM, psM, psM, psM, psM, psM, psM],
+  [_, psD, _, _, _, _, psD, _],
+  [_, psD, psD, _, _, psD, psD, _],
+  [_, _, psD, _, _, psD, _, _],
+]
+
+// Fence gate: placeholder — two end posts with two horizontal rails between.
+// 8x8, post palette.
+export const ITEM_FENCE_GATE: Sprite = [
+  [psM, _, _, _, _, _, _, psM],
+  [psL, psD, psD, psD, psD, psD, psD, psL],
+  [psL, _, _, _, _, _, _, psL],
+  [psL, psD, psD, psD, psD, psD, psD, psL],
+  [psL, _, _, _, _, _, _, psL],
+  [psL, psD, psD, psD, psD, psD, psD, psL],
+  [psM, _, _, _, _, _, _, psM],
+  [psD, _, _, _, _, _, _, psD],
+]
+
 // ---- BRUSH GROUND ---- 8x8 ground tile
-const brL = '#8C9A6E'   // brush light
-const brD = '#7b895d'   // brush dark speck 
+const brL = '#949a6e'   // brush light
+const brD = '#85895d'   // brush dark speck 
 export const BRUSH_GROUND: Sprite = [
   [brL,brL,brL,brL,brL,brL,brL,brL],
   [brL,brL,brL,brL,brL,brL,brL,brL],
@@ -1324,7 +1445,7 @@ export const BRUSH_EDGE_RIGHT: Sprite = [
   [brL,brL,brL,brL,brL,brL,_,_],
 ]
 
-const brBot = '#6b7a4e'
+const brBot = '#767a4e'
 
 export const BRUSH_EDGE_BOTTOM: Sprite = [
   [brL,brL,brL,brL,brL,brL,brL,brL],
@@ -1527,6 +1648,24 @@ export const HONSE_SPOTTED_BROWN: Sprite = [
   [_,_,_,_,_,_,hnG,hnG,_,hnG,hnG,_,_,_,_,hnG,hnG,_,hnG,hnD,_,_,_,_,_,_],
 ]
 
+// Tumbleweed: round dried-plant ball, 10x10. Browns and tans, ragged edges.
+const twdL = '#b8a568'   // dried plant light
+const twdM = '#ae8d60'   // dried plant mid
+const twdD = '#947651'   // dried plant dark (center mass)
+const twdS = '#695438'   // deep shadow / twig
+export const TUMBLEWEED: Sprite = [
+  [_,_,_,twdS,twdM,twdM,twdS,_,_,_],
+  [_,_,twdM,twdL,twdD,twdD,twdL,twdM,_,_],
+  [_,twdM,twdD,twdL,twdM,twdM,twdL,twdD,twdM,_],
+  [twdS,twdL,twdM,twdD,twdS,twdS,twdD,twdM,twdL,twdS],
+  [twdM,twdD,twdM,twdS,twdD,twdD,twdS,twdM,twdD,twdM],
+  [twdM,twdD,twdM,twdS,twdD,twdD,twdS,twdM,twdD,twdM],
+  [twdS,twdL,twdM,twdD,twdS,twdS,twdD,twdM,twdL,twdS],
+  [_,twdM,twdD,twdL,twdM,twdM,twdL,twdD,twdM,_],
+  [_,_,twdM,twdL,twdD,twdD,twdL,twdM,_,_],
+  [_,_,_,twdS,twdM,twdM,twdS,_,_,_],
+]
+
 // Hotbar selection frame: hollow rounded-square outline that highlights the
 // selected slot. White border (tinted at use), transparent center, corners
 // notched to match the slot's rounded corners. 24x24 — scale to fit the slot.
@@ -1562,10 +1701,26 @@ export const SELECT_FRAME: Sprite = [
   [_,_,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,SF,_,_],
 ]
 
+// Quirt: a riding crop — short leather handle (lower-left) with a forked twine
+// lash flicking off the top-right. Placeholder: built from the leather hide
+// tones (ltL/ltM/ltD) for the handle and the twine fiber tones (twL/twM/twD)
+// for the lash, so it reads as exactly what it's crafted from. 8x8.
+export const QUIRT: Sprite = [
+  [_,_,_,_,_,_,twL,_],
+  [_,_,_,_,_,twM,twL,twM],
+  [_,_,_,_,twL,twM,_,_],
+  [_,_,_,ltL,twM,_,_,_],
+  [_,_,ltM,ltL,_,_,_,_],
+  [_,ltM,ltL,_,_,_,_,_],
+  [ltD,ltM,_,_,_,_,_,_],
+  [ltD,_,_,_,_,_,_,_],
+]
+
 export const ALL_SPRITES: Record<string, Sprite> = {
   mill: MILL,
   well: WELL,
   workshop: WORKSHOP,
+  workshop_l2: WORKSHOP_L2,
   field: FIELD,
   storage: STORAGE,
   shop: SHOP,
@@ -1605,10 +1760,13 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   cursor_x: CURSOR_X,
   item_bag: ITEM_BAG,
   item_medium_bag: ITEM_MEDIUM_BAG,
+  item_sack: ITEM_SACK,
   item_sausage: ITEM_SAUSAGE,
   item_kolache: ITEM_KOLACHE,
   item_leather: ITEM_LEATHER,
   item_twine: ITEM_TWINE,
+  item_canvas: ITEM_CANVAS,
+  item_quirt: QUIRT,
   item_rope: ITEM_ROPE,
   item_sugar_cane: ITEM_SUGAR_CANE,
   item_sugar: ITEM_SUGAR,
@@ -1627,7 +1785,10 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   cedar_post_v: CEDAR_POST_V,
   item_cedar_post: ITEM_CEDAR_POST,
   item_wood: ITEM_WOOD,
+  item_plank: ITEM_PLANK,
   item_wheel: ITEM_WHEEL,
+  item_crafting_cart: ITEM_CRAFTING_CART,
+  item_fence_gate: ITEM_FENCE_GATE,
   item_crate: ITEM_CRATE,
   item_pipe: ITEM_PIPE,
   pipe_chevron: PIPE_CHEVRON,
@@ -1639,6 +1800,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_copper: ITEM_COPPER,
   item_silver: ITEM_SILVER,
   item_gold: ITEM_GOLD,
+  item_clay: ITEM_CLAY,
   brush_ground: BRUSH_GROUND,
   brush_edge_top: BRUSH_EDGE_TOP,
   brush_edge_left: BRUSH_EDGE_LEFT,
@@ -1654,6 +1816,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   honse_sorrel_socks: HONSE_SORREL_SOCKS,
   honse_spotted: HONSE_SPOTTED,
   honse_spotted_brown: HONSE_SPOTTED_BROWN,
+  tumbleweed: TUMBLEWEED,
 }
 
 // Fallback palette for sprite keys that aren't generated arrays (e.g. PNG

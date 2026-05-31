@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { COLORS, FONT } from '../colors'
 import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, getStorageSlotCount, STORAGE_COLS, MODIFIER_SLOTS_PER_PLOT, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
-import { ITEMS, type ItemStack } from '../items/types'
+import { ITEMS, type ItemStack, type ItemType } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
 import { type WorldStructureType } from '../world/structures'
 import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
@@ -23,7 +23,7 @@ import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
 
 export type InteriorData =
   | { source: 'plot'; buildingType: BuiltType; plotIndex: number }
-  | { source: 'world'; buildingType: WorldStructureType; structureIndex: number }
+  | { source: 'world'; buildingType: WorldStructureType; structureIndex: number; loot?: { x: number; y: number; type: ItemType; count?: number }[] }
 
 // Panel layout constants
 const PANEL_W = 440
@@ -217,7 +217,7 @@ export class Interior extends Phaser.Scene {
               if (seedAdded <= 0) {
                 // no room — undo the dig so nothing is lost
                 cell.state = 'planted'
-                cell.plantedAt = Date.now()
+                cell.plantedAt = state.gameTime
                 rebuildMask()
                 return
               }
@@ -232,14 +232,14 @@ export class Interior extends Phaser.Scene {
               if (stack.count <= 0) state.inventory[slot] = null
               this.registry.events.emit('inventory-changed')
               cell.state = 'planted'
-              cell.plantedAt = Date.now()
+              cell.plantedAt = state.gameTime
               rebuildMask()
             }
           })
         }
         // Advance cells to current growth stage before first render
         const STAGE_TIME_MS = 25_000
-        const now = Date.now()
+        const now = state.gameTime
         for (const cell of fieldCells) {
           const elapsed = now - cell.plantedAt
           if (cell.state === 'planted' && elapsed >= STAGE_TIME_MS) cell.state = 'sprouting'
@@ -253,7 +253,10 @@ export class Interior extends Phaser.Scene {
           delay: 1000,
           loop: true,
           callback: () => {
-            const now = Date.now()
+            // Scheduled on the Phaser scene clock (fires ~1x/sec), but the
+            // growth math reads the game clock: on pause gameTime stops, so
+            // elapsed stops growing and no stage advances — crops freeze.
+            const now = state.gameTime
             let changed = false
             for (const cell of fieldCells) {
               const elapsed = now - cell.plantedAt
@@ -312,16 +315,22 @@ export class Interior extends Phaser.Scene {
       const handle = buildShopInterior(this, this.interiorData.structureIndex)
       this.moduleCleanups.push(handle.onCleanup)
     } else if (this.interiorData.buildingType === 'abandoned_house') {
+      // Loot: if this instance carries its own list (procedurally-placed
+      // houses do, even an empty []), use it. Otherwise fall back to the
+      // authored in-town house's default hemp loadout. This is what lets the
+      // scattered frontier houses be empty while the original keeps its hemp.
+      const defaultHemp = [
+        { x: 0.3, y: 0.35, type: 'hemp' as const, count: 2 },
+        { x: 0.65, y: 0.55, type: 'hemp' as const, count: 2 },
+        { x: 0.75, y: 0.3, type: 'hemp' as const, count: 2 },
+        { x: 0.4, y: 0.7, type: 'hemp' as const, count: 2 },
+      ]
+      const loot = this.interiorData.loot ?? defaultHemp
       const handle = buildWalkableInterior(this, {
         stateKey: `abandoned_house:${this.interiorData.structureIndex}`,
         ...INTERIOR_PALETTES.abandonedHouse,
         wallHeightFraction: 0.45,
-        initialItems: [
-          { x: 0.3, y: 0.35, type: 'hemp', count: 2 },
-          { x: 0.65, y: 0.55, type: 'hemp', count: 2 },
-          { x: 0.75, y: 0.3, type: 'hemp', count: 2 },
-          { x: 0.4, y: 0.7, type: 'hemp', count: 2 },
-        ],
+        initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
       }, () => this.exit())
       this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
       this.moduleCleanups.push(handle.onCleanup)

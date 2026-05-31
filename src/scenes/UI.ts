@@ -74,6 +74,21 @@ export class UI extends Phaser.Scene {
     return this.openCrateIndex >= 0
   }
 
+  // True if the screen-space point is over inventory UI (the bottom bar strip
+  // or any open bag panel). The Overworld checks this before dropping a held
+  // item to the world, so a miss between slots keeps the item in hand instead
+  // of falling through to the ground.
+  isPointerOverInventory(px: number, py: number): boolean {
+    const h = this.scale.height
+    // Bottom bar strip, extended up a little so the area just above the hotbar
+    // slots (where they poke past UI_BAR_HEIGHT) also catches missed drops.
+    if (py >= h - UI_BAR_HEIGHT - 34) return true
+    for (const panel of this.bagPanels) {
+      if (panel && panel.containsPoint(px, py)) return true
+    }
+    return false
+  }
+
   // Position of the currently open crate, or null if none is open. Lets the
   // Overworld range-check the player against it each frame to auto-close.
   openCratePos(): { x: number; y: number } | null {
@@ -757,6 +772,13 @@ class BagPanel {
   private bindings: SlotBinding[] = []
   // top edge Y of this panel (set in constructor) — read by the crate blocker.
   private topY = 0
+  // Full panel bounds (set in constructor) — read by isPointerOverInventory so
+  // a missed drop over the panel doesn't fall through to the world.
+  private bounds = { x: 0, y: 0, w: 0, h: 0 }
+  containsPoint(px: number, py: number): boolean {
+    const b = this.bounds
+    return px >= b.x - b.w / 2 && px <= b.x + b.w / 2 && py >= b.y - b.h / 2 && py <= b.y + b.h / 2
+  }
 
   constructor(ui: UI, panelIndex: number, w: number, h: number, bag: ItemStack) {
     this.ui = ui
@@ -791,6 +813,14 @@ class BagPanel {
 
     const scene = ui as unknown as Phaser.Scene
     const bg = scene.add.nineslice(panelCenterX, panelCenterY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16).setDepth(150)
+    this.bounds = { x: panelCenterX, y: panelCenterY, w: panelW, h: panelH }
+    // Swallow clicks that land on the panel (e.g. gaps between slots) so a held
+    // item isn't dropped into the world when you miss a slot. Slots sit above
+    // this and still get the click first; only the gaps fall through to here.
+    bg.setInteractive()
+    bg.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation()
+    })
     this.objects.push(bg)
 
     const startX = panelCenterX - (COLS - 1) * (SLOT + GAP) / 2

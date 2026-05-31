@@ -19,8 +19,23 @@ export const MAX_GOLD = 999_999
 export const Terrain = { Salt: 0, Grass: 1, Water: 2, CrackedDirt: 3 } as const
 export type Terrain = (typeof Terrain)[keyof typeof Terrain]
 export const TERRAIN_TILE = 16
-// World is 576*8 = 4608px square (mirror of WORLD_PX in Overworld) → 288 tiles.
-export const TERRAIN_COLS = (576 * 8) / TERRAIN_TILE
+// Initial world size in pixels. This is the ONLY place the starting size is
+// written — worldBounds and the terrain grid derive from it, and growWorld()
+// resizes them at runtime.
+const INITIAL_WORLD_PX = 576 * 8
+
+// Base player movement speed (px/sec on the overworld step formula). This is
+// the ONLY place the base speed is written — the overworld uses it directly,
+// and the walkable interior derives its proportional speed multiplier from it
+// so food buffs / speed overrides carry over consistently between the two.
+export const PLAYER_BASE_SPEED = 2835
+
+export interface WorldBounds {
+  minX: number
+  minY: number
+  width: number
+  height: number
+}
 
 export const MODIFIER_SLOTS_PER_PLOT = 8
 
@@ -47,7 +62,7 @@ export const FIELD_CELLS_PER_PLOT = FIELD_COLS * FIELD_ROWS
 export type FieldCellState = 'empty' | 'planted' | 'sprouting' | 'growing' | 'mature'
 export interface FieldCell {
   state: FieldCellState
-  plantedAt: number   // Date.now() when planted; 0 for empty cells
+  plantedAt: number   // state.gameTime when planted; 0 for empty cells
 }
 
 export function makeEmptyFieldCells(): FieldCell[] {
@@ -67,12 +82,21 @@ export interface WalkableInteriorItemInstance {
 export interface PlotState {
   built: BuildingType
   level: number          // building upgrade level, starts at 1
-  lastTickAt: number   // ms timestamp of the last completed gold tick
-  lastItemTickAt: number  // ms timestamp of the last completed item tick (for producers)
+  lastTickAt: number   // state.gameTime ms of the last completed gold tick
+  lastItemTickAt: number  // state.gameTime ms of the last completed item tick (for producers)
   output: ItemStack | null   // producer output: mill→flour, well→water
   // workshop-only: 2 input slots and 1 output slot. null for non-workshop plots.
   craftInputs?: (ItemStack | null)[]
+  // Parallel to craftInputs: which source plot index feeds each input slot, so
+  // each pipe source keeps its own slot (1st source -> slot 0, 2nd -> slot 1).
+  // null = slot not claimed by any source.
+  craftInputSources?: (number | null)[]
   craftOutput?: ItemStack | null
+  // workshop-only: when true, the workshop crafts on its own timer and the
+  // result buffers in craftOutput (for pipes or the player's hand to drain).
+  // When false it's a plain crafting table — each craft is pulled by hand.
+  // Toggled by the player in the workshop interior.
+  autoCraft?: boolean
   // modifier rack — every building has one; items here will eventually affect
   // production but right now just store anything the player drops in.
   modifiers: (ItemStack | null)[]
@@ -180,7 +204,7 @@ class GameState {
   // Trees and saplings planted by the player. Each entry persists as a sprite
   // in the world. `stage` distinguishes a walk-through sapling (diggable, no
   // collision) from a mature tree (solid trunk obstacle, felled with an axe).
-  // `plantedAt` is the Date.now() stamp set when a sapling is planted; the
+  // `plantedAt` is the state.gameTime stamp set when a sapling is planted; the
   // overworld grows it to mature once enough time has elapsed. Only saplings
   // carry it — mature/stump and hand-placed trees leave it undefined.
   plantedTrees: { x: number; y: number; kind: 'cottonwood'; stage: 'sapling' | 'mature' | 'stump' | 'dead'; plantedAt?: number }[] = []
@@ -215,8 +239,18 @@ class GameState {
   // a specific world. 0 until init() runs.
   worldSeed = 0
 
-  // Terrain grid (see Terrain/TERRAIN_TILE above). Allocated in init().
-  terrain: Uint8Array = new Uint8Array(TERRAIN_COLS * TERRAIN_COLS)
+  // The world's size and position — the single source of truth for how big
+  // the world is and where its corners sit. World coordinates may go negative
+  // (after growing west/north); the terrain array is always indexed from this
+  // rectangle's top-left via terrainAt/setTerrainAt. growWorld() mutates these.
+  worldBounds: WorldBounds = { minX: 0, minY: 0, width: INITIAL_WORLD_PX, height: INITIAL_WORLD_PX }
+  // Terrain grid dimensions in tiles, derived from worldBounds / TERRAIN_TILE.
+  // Separate cols (width) and rows (height) so the grid can be non-square.
+  terrainCols = INITIAL_WORLD_PX / TERRAIN_TILE
+  terrainRows = INITIAL_WORLD_PX / TERRAIN_TILE
+
+  // Terrain grid. Reallocated in init() and by growWorld().
+  terrain: Uint8Array = new Uint8Array(this.terrainCols * this.terrainRows)
 
 
   // General store sell-grid contents — items dragged in here are sold on click.
@@ -224,9 +258,24 @@ class GameState {
   generalStoreSlots: (ItemStack | null)[] = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
 
   // ms timestamp when the speed buff ends. 0 = no buff active.
+  // NOTE: this is a GAME-TIME stamp (state.gameTime), not Date.now(). See below.
   speedBuffEndsAt = 0
   // Bonus amount granted by the currently-active buff.
   speedBuffAmount = 0
+
+  // ---- pausable game clock ----
+  // Accumulated unpaused gameplay time in ms. Advanced once per frame at the
+  // top of Overworld.update (the only always-running update loop — it keeps
+  // ticking with its camera hidden while an interior scene runs on top), and
+  // only while !paused. This is the single source of truth for "how much
+  // gameplay time has elapsed" and the clock ALL gameplay timers key off:
+  // food buff, sapling growth, crop growth, producer/workshop/pipe ticks,
+  // chop cooldown, pickup delay, honse idle wander. Cosmetic timers (drop
+  // bob, sprite facing) stay on Date.now()/scene time. Starts at 0; reset in
+  // init(). Do NOT compare a gameTime value against a Date.now() value.
+  gameTime = 0
+  // When true, gameTime stops advancing and every gameplay timer freezes.
+  paused = false
 
   // NPC dialogue progression — each flag flips true the first time its line
   // is shown, and the corresponding line is never shown again.
@@ -298,18 +347,18 @@ class GameState {
 
   // Read the terrain type at a world-pixel position. Out-of-bounds reads as Salt.
   terrainAt(x: number, y: number): Terrain {
-    const c = Math.floor(x / TERRAIN_TILE)
-    const r = Math.floor(y / TERRAIN_TILE)
-    if (c < 0 || r < 0 || c >= TERRAIN_COLS || r >= TERRAIN_COLS) return Terrain.Salt
-    return this.terrain[r * TERRAIN_COLS + c] as Terrain
+    const c = Math.floor((x - this.worldBounds.minX) / TERRAIN_TILE)
+    const r = Math.floor((y - this.worldBounds.minY) / TERRAIN_TILE)
+    if (c < 0 || r < 0 || c >= this.terrainCols || r >= this.terrainRows) return Terrain.Salt
+    return this.terrain[r * this.terrainCols + c] as Terrain
   }
 
   // Write the terrain type at a world-pixel position. Out-of-bounds is a no-op.
   setTerrainAt(x: number, y: number, t: Terrain) {
-    const c = Math.floor(x / TERRAIN_TILE)
-    const r = Math.floor(y / TERRAIN_TILE)
-    if (c < 0 || r < 0 || c >= TERRAIN_COLS || r >= TERRAIN_COLS) return
-    this.terrain[r * TERRAIN_COLS + c] = t
+    const c = Math.floor((x - this.worldBounds.minX) / TERRAIN_TILE)
+    const r = Math.floor((y - this.worldBounds.minY) / TERRAIN_TILE)
+    if (c < 0 || r < 0 || c >= this.terrainCols || r >= this.terrainRows) return
+    this.terrain[r * this.terrainCols + c] = t
   }
 
   init(plotCount: number) {
@@ -318,6 +367,9 @@ class GameState {
     // whole layout derives from this one number. Random per new game today;
     // a future menu can set worldSeed before calling init() to replay a world.
     this.worldSeed = Math.floor(Math.random() * 1e9)
+    // Reset the pausable game clock for the new game.
+    this.gameTime = 0
+    this.paused = false
     this.plots = Array.from({ length: plotCount }, () => ({
       built: 'empty' as BuildingType,
       level: 1,
@@ -345,7 +397,10 @@ class GameState {
     this.revealedItems = []
     this.droppedItems = []
     this.plantedTrees = []
-    this.terrain = new Uint8Array(TERRAIN_COLS * TERRAIN_COLS)
+    this.worldBounds = { minX: 0, minY: 0, width: INITIAL_WORLD_PX, height: INITIAL_WORLD_PX }
+    this.terrainCols = INITIAL_WORLD_PX / TERRAIN_TILE
+    this.terrainRows = INITIAL_WORLD_PX / TERRAIN_TILE
+    this.terrain = new Uint8Array(this.terrainCols * this.terrainRows)
     this.placedPosts = []
     this.placedCrates = []
     this.pipes = []
@@ -354,15 +409,17 @@ class GameState {
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
     // DEV: seed items for testing
+    // Tools start INSIDE the bag, not in the hotbar.
     const bag: ItemStack = { type: 'bag', count: 1, contents: [
-      { type: 'rope', count: 32 },
-      { type: 'post', count: 32 },
-      { type: 'pipe', count: 32 },
+      { type: 'pickaxe', count: 1 },
+      { type: 'axe', count: 1 },
+      { type: 'pipe', count: 64 },
       null,
-    ]}
-    this.inventory[0] = { type: 'pickaxe', count: 1 }
-    this.inventory[1] = { type: 'crate', count: 1 }
-    this.inventory[2] = bag
+      null,
+    ] }
+    this.inventory[0] = bag
+    this.inventory[1] = { type: 'hemp', count: 64 }
+    this.inventory[2] = { type: 'sack', count: 1, contents: [null, null, null, null, null, null, null, null] }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -373,7 +430,6 @@ class GameState {
     const existing = this.inventory[slotIndex]
     const cap = ITEMS[stack.type].maxStack
     if (!existing) {
-      if (isBag(stack.type) && this.bagCount() >= MAX_BAGS) return 0
       const moved = Math.min(cap, stack.count)
       const placed: ItemStack = { type: stack.type, count: moved }
       if (isBag(stack.type)) {
@@ -540,13 +596,19 @@ class GameState {
     const def = BUILDINGS[type]
     if (!this.trySpend(def.cost, registry)) return false
     plot.built = type
-    const now = Date.now()
-    plot.lastTickAt = now
-    plot.lastItemTickAt = now
+    // Both timers stamp from the game clock — one clock for all gameplay state.
+    // lastItemTickAt drives the producer/workshop tick in Overworld.update,
+    // which compares against state.gameTime, so it must be game-time or a fresh
+    // plot would never tick. lastTickAt ("last gold tick") currently has no
+    // reader, but it stays on gameTime too: no gameplay stamp is ever wall-clock.
+    plot.lastItemTickAt = this.gameTime
+    plot.lastTickAt = this.gameTime
     plot.output = null
     if (type === 'workshop') {
       plot.craftInputs = [null, null]
+      plot.craftInputSources = [null, null]
       plot.craftOutput = null
+      plot.autoCraft = false   // starts as a hand table; player opts into auto
     }
     if (type === 'field') {
       plot.fieldCells = makeEmptyFieldCells()
@@ -580,12 +642,83 @@ class GameState {
     plot.output = null
     plot.craftInputs = undefined
     plot.craftOutput = undefined
+    plot.autoCraft = undefined
     plot.fieldCells = undefined
     plot.storageContents = undefined
     plot.modifiers = Array.from({ length: MODIFIER_SLOTS_PER_PLOT }, () => null)
 
     return spill
   }
+
+  // Grow the world outward in one direction by `amount` pixels (snapped up to a
+  // whole number of tiles so the grid stays aligned). Extends worldBounds, then
+  // allocates a larger terrain grid and copies every existing tile into its new
+  // position — so nothing already in the world moves in WORLD space; only the
+  // array indices shift. New tiles default to Salt (0); the new region is left
+  // bare for a caller to fill. Returns the pixels actually added (a multiple of
+  // TERRAIN_TILE), or 0 if amount was non-positive.
+  growWorld(direction: 'west' | 'east' | 'north' | 'south', amount: number): number {
+    if (amount <= 0) return 0
+    const addTiles = Math.ceil(amount / TERRAIN_TILE)
+    const addPx = addTiles * TERRAIN_TILE
+    const oldCols = this.terrainCols
+    const oldRows = this.terrainRows
+    const old = this.terrain
+
+    let newCols = oldCols
+    let newRows = oldRows
+    let colShift = 0   // columns existing tiles move right (west grow)
+    let rowShift = 0   // rows existing tiles move down (north grow)
+
+    switch (direction) {
+      case 'east':
+        newCols = oldCols + addTiles
+        this.worldBounds.width += addPx
+        break
+      case 'west':
+        newCols = oldCols + addTiles
+        colShift = addTiles
+        this.worldBounds.minX -= addPx
+        this.worldBounds.width += addPx
+        break
+      case 'south':
+        newRows = oldRows + addTiles
+        this.worldBounds.height += addPx
+        break
+      case 'north':
+        newRows = oldRows + addTiles
+        rowShift = addTiles
+        this.worldBounds.minY -= addPx
+        this.worldBounds.height += addPx
+        break
+    }
+
+    // Allocate the bigger grid and copy each old row into its shifted slot. The
+    // stride changes when growing east/west (newCols !== oldCols), so the copy
+    // is row-by-row rather than one contiguous block.
+    const next = new Uint8Array(newCols * newRows)
+    for (let r = 0; r < oldRows; r++) {
+      const srcStart = r * oldCols
+      const destStart = (r + rowShift) * newCols + colShift
+      next.set(old.subarray(srcStart, srcStart + oldCols), destStart)
+    }
+
+    this.terrain = next
+    this.terrainCols = newCols
+    this.terrainRows = newRows
+    return addPx
+  }
 }
 
 export const state = new GameState()
+
+// Maps a world Y to a render depth for overhead y-sorting (things lower on
+// screen draw in front). Measured from the world's TOP edge (minY) rather than
+// absolute zero, so depth stays non-negative after the world grows north into
+// negative Y — otherwise a sprite at negative Y gets a negative depth and
+// renders behind the background. At minY = 0 this returns Y unchanged, so it's
+// identical to the old behavior. This is the ONLY place Y becomes depth; every
+// y-sorted sprite routes through here.
+export function depthForY(y: number): number {
+  return y - state.worldBounds.minY
+}

@@ -1,3 +1,5 @@
+import { pointToPolylineDist } from './geometry'
+
 export type DecorType = 'cow_skull' | 'pebbles' | 'grass'
 
 export interface DecorItem {
@@ -13,9 +15,6 @@ export interface BuriedItem {
   reward: number
 }
 
-// One rock formation placed by gen. Position only — the Overworld renders the
-// full 10-tile 9-slice heap at this point. When mining/ores arrive, an `ore`
-// field rolled from a weighted table slots in here without changing placement.
 export interface RockFormation {
   x: number
   y: number
@@ -46,16 +45,28 @@ export interface GenOpts {
   tightExclusions: { x: number; y: number; radius: number }[]  // plot footprint only (pebbles, grass)
 }
 
-// Densities = items per world-px², so counts scale with world size.
-// Spacing = physical px between items, constant regardless of world size.
-// Reference: 4608² ≈ 21.2M px².
-const SKULL_DENSITY = 0.00000094     // ~20 at reference size
+// A rectangle in world pixels to scatter within. scatter() places items inside
+// this; the full world is just one big rect, a grown strip is a smaller one.
+export interface GenRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+const SKULL_DENSITY = 0.00000064    
 const SKULL_SPACING = 64
-const PEBBLE_DENSITY = 0.0000094     // ~200
+const PEBBLE_DENSITY = 0.0000094    
 const PEBBLE_SPACING = 12
-const GRASS_DENSITY = 0.0000094      // ~200
+const GRASS_DENSITY = 0.0000094     
 const GRASS_SPACING = 16
-const BURIED_COIN_DENSITY = 0.00007125 // ~981
+const BURIED_COIN_DENSITY = 0.00007125 
+
+const SCATTER_TUNING: Record<DecorType, { density: number; spacing: number }> = {
+  cow_skull: { density: SKULL_DENSITY, spacing: SKULL_SPACING },
+  pebbles:   { density: PEBBLE_DENSITY, spacing: PEBBLE_SPACING },
+  grass:     { density: GRASS_DENSITY, spacing: GRASS_SPACING },
+}
 
 const DECOR_EDGE_MARGIN_FRACTION = 0.017   // ~80px at reference size
 const DECOR_SCALE = 2
@@ -117,7 +128,7 @@ function scatterBuried(
 function scatter(
   decor: DecorItem[],
   rng: () => number,
-  opts: GenOpts,
+  area: GenRect,
   type: DecorType,
   count: number,
   exclusions: { x: number; y: number; radius: number }[],
@@ -125,13 +136,12 @@ function scatter(
 ) {
   const maxAttempts = count * 30
   const minSq = minSpacing * minSpacing
-  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
   let attempts = 0
   let placed = 0
   while (placed < count && attempts < maxAttempts) {
     attempts++
-    const x = margin + rng() * (opts.worldSize - margin * 2)
-    const y = margin + rng() * (opts.worldSize - margin * 2)
+    const x = area.x + rng() * area.w
+    const y = area.y + rng() * area.h
 
     let blocked = false
     for (const ex of exclusions) {
@@ -157,7 +167,9 @@ function scatter(
 // Wilderness → northern town (south of town up to its center).
 const PATH_WILDERNESS_TO_TOWN = { sx: 2400, sy: 1504, ex: 2390, ey: 550 }
 
-const PATH_SNAKE_AMPLITUDE = 30    // how far it wobbles side-to-side
+const PATH_DRIFT_STEP = 1.5        // random walk step size per pebble — how much the trail wanders
+const PATH_DRIFT_DECAY = 0.995     // pull back toward center each step — keeps it near the straight line
+const PATH_SNAKE_AMPLITUDE = 30    // sine wobble for the wilderness path (opt-in via buildPath arg)
 const PATH_SNAKE_PERIOD = 600      // length of one wobble cycle
 const PATH_PEBBLE_SPACING = 6      // lower = denser
 const PATH_WIDTH = 14              // random scatter perpendicular to path
@@ -168,14 +180,7 @@ const ROCK_CLUSTER_RADIUS = 600      // how far heaps spread from the cluster ce
 const ROCK_HEAP_SPACING = 160        // min gap between heaps — full 10-tile formations are ~72px wide
 const ROCK_CLUSTER_MIN_Y_FRAC = 0.4   // cluster center stays in the southern 60% of the map
 
-// Place one cluster of rock formations. Unlike scatter (which spreads evenly
-// across the whole world), this rolls a single cluster center, then samples
-// heaps in a radius around it so they read as a localized deposit. The center
-// roll uses the seeded rng, so the cluster lands somewhere new every save — but
-// the same seed always reproduces the same spot. Radial sampling uses
-// sqrt(rng()) so heaps fill the cluster area evenly instead of bunching at the
-// center (area grows with radius²; sqrt counteracts that). Same rejection
-// sampling as scatter: skip heaps too close together or inside an exclusion.
+// Place one cluster of rock formations
 function scatterRockCluster(
   out: RockFormation[],
   rng: () => number,
@@ -239,6 +244,7 @@ function buildPath(
   rng: () => number,
   startX: number, startY: number,
   endX: number, endY: number,
+  snakeAmplitude = 0,   // 0 = random-walk only (trail). >0 = sine snake (wilderness path).
 ) {
   const dx = endX - startX
   const dy = endY - startY
@@ -248,14 +254,19 @@ function buildPath(
   const nx = -ty
   const ny = tx
   const steps = Math.floor(len / PATH_PEBBLE_SPACING)
+  let drift = 0
   for (let i = 0; i <= steps; i++) {
     const t = i / steps
     const cx = startX + dx * t
     const cy = startY + dy * t
-    const snake = Math.sin((i * PATH_PEBBLE_SPACING) / PATH_SNAKE_PERIOD * Math.PI * 2) * PATH_SNAKE_AMPLITUDE
+    const snake = snakeAmplitude === 0
+      ? 0
+      : Math.sin((i * PATH_PEBBLE_SPACING) / PATH_SNAKE_PERIOD * Math.PI * 2) * snakeAmplitude
+    drift += (rng() - 0.5) * PATH_DRIFT_STEP
+    drift *= PATH_DRIFT_DECAY
     const spread = (rng() - 0.5) * PATH_WIDTH
-    const px = cx + nx * (snake + spread)
-    const py = cy + ny * (snake + spread)
+    const px = cx + nx * (snake + drift + spread)
+    const py = cy + ny * (snake + drift + spread)
     decor.push({ x: Math.floor(px), y: Math.floor(py), type: 'pebbles', scale: DECOR_SCALE })
   }
 }
@@ -272,12 +283,154 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   const grassCount = Math.floor(GRASS_DENSITY * worldArea)
   const coinCount = Math.floor(BURIED_COIN_DENSITY * worldArea)
 
-  scatter(decor, rng, opts, 'cow_skull', skullCount, opts.exclusions, SKULL_SPACING)
-  scatter(decor, rng, opts, 'pebbles', pebbleCount, opts.tightExclusions, PEBBLE_SPACING)
-  scatter(decor, rng, opts, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
-  buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey)
+  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
+  const fullArea: GenRect = { x: margin, y: margin, w: opts.worldSize - margin * 2, h: opts.worldSize - margin * 2 }
+
+  scatter(decor, rng, fullArea, 'cow_skull', skullCount, opts.exclusions, SKULL_SPACING)
+  scatter(decor, rng, fullArea, 'pebbles', pebbleCount, opts.tightExclusions, PEBBLE_SPACING)
+  scatter(decor, rng, fullArea, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
+  buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey, PATH_SNAKE_AMPLITUDE)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
   scatterRockCluster(rocks, rng, opts, opts.exclusions)
 
   return { decor, buried, rocks }
+}
+
+// Scatter decor into a sub-rectangle of the world at the SAME per-area densities
+// as the full-world pass — used to populate newly-grown land (e.g. a west strip)
+// without disturbing existing content.
+export function generateRegionDecor(
+  region: GenRect,
+  seed: number,
+  types: DecorType[],
+  exclusions: { x: number; y: number; radius: number }[] = [],
+): DecorItem[] {
+  const rng = makeRng(seed)
+  const decor: DecorItem[] = []
+  const area = region.w * region.h
+  for (const type of types) {
+    const tuning = SCATTER_TUNING[type]
+    const count = Math.floor(tuning.density * area)
+    scatter(decor, rng, region, type, count, exclusions, tuning.spacing)
+  }
+  return decor
+}
+
+// Build a pebble trail through a sequence of waypoints. Runs the existing
+// buildPath snaking-pebble logic between each consecutive pair
+export function buildTrail(
+  waypoints: { x: number; y: number }[],
+  seed: number,
+): DecorItem[] {
+  const rng = makeRng(seed)
+  const decor: DecorItem[] = []
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const a = waypoints[i]
+    const b = waypoints[i + 1]
+    buildPath(decor, rng, a.x, a.y, b.x, b.y)
+  }
+  return decor
+}
+
+
+const TREE_DENSITY = 0.00000016
+const TREE_TRAIL_BUMP = 0.82         // extra keep-chance at the trail line itself
+const TREE_BUMP_FALLOFF = 800        // px from the trail where the bump decays to ~1/e
+// Per-candidate falloff jitter
+const TREE_FALLOFF_JITTER_MIN = 0.4
+const TREE_FALLOFF_JITTER_MAX = 1.8
+const TREE_BASELINE_KEEP = 0.5       // keep-chance for a candidate far from the trail
+
+// Scatter wild trees across the whole world, weighted toward a trail.
+export function scatterTrailTrees(
+  waypoints: { x: number; y: number }[],
+  bounds: GenRect,
+  seed: number,
+  clearance: number,
+  minSpacing: number,
+): { x: number; y: number }[] {
+  const rng = makeRng(seed)
+  const out: { x: number; y: number }[] = []
+  const minSq = minSpacing * minSpacing
+  // Candidate count from density. Divide by the baseline keep-chance so the
+  // EXPECTED kept count matches density × area despite rejections.
+  const area = bounds.w * bounds.h
+  const candidateCount = Math.floor((TREE_DENSITY * area) / TREE_BASELINE_KEEP)
+
+  for (let i = 0; i < candidateCount; i++) {
+    const x = bounds.x + rng() * bounds.w
+    const y = bounds.y + rng() * bounds.h
+
+    const trailDist = pointToPolylineDist(x, y, waypoints)
+    if (trailDist < clearance) continue   // never on the path
+
+    // Per-tree falloff jitter
+    const jitterFalloff = TREE_BUMP_FALLOFF * (TREE_FALLOFF_JITTER_MIN + rng() * (TREE_FALLOFF_JITTER_MAX - TREE_FALLOFF_JITTER_MIN))
+    const bump = TREE_TRAIL_BUMP * Math.exp(-(trailDist * trailDist) / (jitterFalloff * jitterFalloff))
+    const keepProb = Math.min(1, TREE_BASELINE_KEEP + bump)
+    if (rng() > keepProb) continue
+
+    let blocked = false
+    for (const t of out) {
+      const dx = x - t.x
+      const dy = y - t.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+
+    out.push({ x: Math.floor(x), y: Math.floor(y) })
+  }
+  return out
+}
+
+// Herd site tuning.
+const HERD_FIRST_HALF_FRAC = 0.5   // herd X is chosen within the first this-much of the trail's X span
+const HERD_X_MARGIN = 1500         // keep the site this far from the very start/midpoint, so it's not jammed at an end
+const HERD_OFFSET_MIN = 120        // perpendicular distance from the trail line — far enough off the path...
+const HERD_OFFSET_MAX = 260        // ...but close enough to stay visible from it
+
+// Interpolate the trail's Y at a given X by finding the waypoint segment that
+// brackets X and lerping. Assumes waypoints are monotonic-ish in X (the trail
+// runs east→west). Falls back to the nearest endpoint's Y outside the range.
+function trailYAtX(waypoints: { x: number; y: number }[], x: number): number {
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const a = waypoints[i]
+    const b = waypoints[i + 1]
+    const loX = Math.min(a.x, b.x)
+    const hiX = Math.max(a.x, b.x)
+    if (x >= loX && x <= hiX) {
+      const span = b.x - a.x
+      if (Math.abs(span) < 0.0001) return a.y
+      const t = (x - a.x) / span
+      return a.y + (b.y - a.y) * t
+    }
+  }
+  // outside the polyline's X range — clamp to whichever end is nearer
+  return Math.abs(x - waypoints[0].x) < Math.abs(x - waypoints[waypoints.length - 1].x)
+    ? waypoints[0].y
+    : waypoints[waypoints.length - 1].y
+}
+
+// Pick a wild-herd center near the trail, somewhere in the FIRST HALF of the
+// journey (the X range nearer the settled start). Seeded, so a given world
+// always places the herd in the same spot — but a different world puts it
+// somewhere new. The site sits a short perpendicular distance off the trail
+// (HERD_OFFSET_MIN..MAX), on a randomly-chosen side, so it's clearly off the
+// path yet visible from it — same "near the trail" feel as the tree band.
+export function pickHerdSite(
+  waypoints: { x: number; y: number }[],
+  seed: number,
+): { x: number; y: number } {
+  const rng = makeRng(seed)
+  const startX = waypoints[0].x
+  const endX = waypoints[waypoints.length - 1].x
+  // first half of the X span (start → midpoint), inset by a margin at both ends
+  const halfX = startX + (endX - startX) * HERD_FIRST_HALF_FRAC
+  const loX = Math.min(startX, halfX) + HERD_X_MARGIN
+  const hiX = Math.max(startX, halfX) - HERD_X_MARGIN
+  const cx = loX + rng() * (hiX - loX)
+  const trailY = trailYAtX(waypoints, cx)
+  const side = rng() < 0.5 ? -1 : 1
+  const offset = HERD_OFFSET_MIN + rng() * (HERD_OFFSET_MAX - HERD_OFFSET_MIN)
+  return { x: Math.floor(cx), y: Math.floor(trailY + side * offset) }
 }
