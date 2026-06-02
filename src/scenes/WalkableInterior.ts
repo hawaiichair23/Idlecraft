@@ -47,9 +47,10 @@ export interface WalkableInteriorHandle {
 const INTERIOR_SCALE = 2           // player renders 2x overworld scale
 const PLAYER_SCALE = 2 * INTERIOR_SCALE   // overworld is 2, interior is 4
 const ITEM_SCALE_MULT = 1.5               // items scale up slightly, not tied to player
-const PLAYER_SPEED = 135
 const PLAYER_HALF = 5
 const PICKUP_RADIUS = 18
+const PICKUP_ATTRACT_RADIUS = 40
+const PICKUP_ATTRACT_EASE = 0.25
 const EXIT_ZONE_H = 22       // thin strip at bottom of floor; bigger = exit triggers a few px higher (sooner)
 
 // ---- builder ----
@@ -104,18 +105,10 @@ export function buildWalkableInterior(
 
   // ---- update loop ----
   const update = (dt: number) => {
-    // movement — apply the SAME speed modifiers the overworld uses (base
-    // override + food buff), but proportionally, so the buff "carries over"
-    // without breaking the interior's own tuning. The overworld and interior
-    // use different base speeds (it's a much smaller space), so we can't share
-    // a raw px/sec number; instead we take the multiplier the player feels
-    // outside — (base±override + buff) / base — and apply it to the interior's
-    // own PLAYER_SPEED. Eat food → ~5% faster outside → ~5% faster in here too.
     const owBase = state.playerSpeedOverride ?? PLAYER_BASE_SPEED
     const buffed = state.gameTime < state.speedBuffEndsAt
     const owSpeed = owBase + (buffed ? state.speedBuffAmount : 0)
-    const speedMult = owSpeed / PLAYER_BASE_SPEED
-    const step = (PLAYER_SPEED * speedMult * dt) / 1000
+    const step = (owSpeed * dt) / 1000
     let dx = 0
     let dy = 0
     if (wasd.A.isDown || arrows.left!.isDown) dx -= 1
@@ -135,15 +128,21 @@ const maxY = floorTop + floorH - PLAYER_HALF
     // pickup items — walk through liveItems in reverse so splice indexing
     // stays safe within the loop.
     const pickSq = PICKUP_RADIUS * PICKUP_RADIUS
+    const attractSq = PICKUP_ATTRACT_RADIUS * PICKUP_ATTRACT_RADIUS
     for (let i = liveItems.length - 1; i >= 0; i--) {
       const it = liveItems[i]
       const sprite = floorSprites[i]
       if (!sprite) continue
-      const ix = Math.round(w * it.x)
-      const iy = Math.round(floorTop + floorH * it.y)
-      const ddx = ix - player.x
-      const ddy = iy - player.y
-      if (ddx * ddx + ddy * ddy > pickSq) continue
+      const ddx = player.x - sprite.x
+      const ddy = player.y - sprite.y
+      const distSq = ddx * ddx + ddy * ddy
+      if (distSq > pickSq) {
+        if (distSq <= attractSq && state.roomFor(it) > 0) {
+          sprite.x += ddx * PICKUP_ATTRACT_EASE
+          sprite.y += ddy * PICKUP_ATTRACT_EASE
+        }
+        continue
+      }
       const added = state.inventoryAddAnywhere({ type: it.type, count: it.count })
       if (added > 0) {
         sprite.destroy()

@@ -6,7 +6,7 @@ import { UI_BAR_HEIGHT, UI } from './UI'
 import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createCrateContents, Terrain, TERRAIN_TILE, depthForY, PLAYER_BASE_SPEED, type BuiltType } from '../game/state'
 import { previewCraft, consumeCraft } from '../items/recipes'
 import { ITEMS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
-import { generateWorld, generateRegionDecor, buildTrail, scatterTrailTrees, pickHerdSite, type GenRect, type DecorItem } from '../world/gen'
+import { generateWorld, generateRegionDecor, buildTrail, scatterTrailTrees, scatterTrailRockClusters, pickHerdSite, type GenRect, type DecorItem } from '../world/gen'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { scatterSites, SITE_TEMPLATES, type PlacedSite } from '../world/sites'
 import { registerGrabbable } from '../ui/hover'
@@ -515,11 +515,6 @@ export class Overworld extends Phaser.Scene {
       tightExclusions,
     })
     this.decorData.push(...layout.decor)
-    // rock formations — placed as a seeded cluster by gen, rendered via the
-    // helper (multi-tile sprite + collision + rope blocker)
-    for (const r of layout.rocks) {
-      this.spawnRockFormation(r.x, r.y)
-    }
     // fixed landmark heap near spawn — NOT procedural. Always in the same spot
     // every world so the player has a known, reliable rock to mine once they
     // get the pickaxe. The seeded cluster above is the real deposit; this is
@@ -787,6 +782,18 @@ export class Overworld extends Phaser.Scene {
     cam.setBounds(state.worldBounds.minX, state.worldBounds.minY, state.worldBounds.width, state.worldBounds.height)
     cam.setZoom(1.08)
 
+    // Safe zones: the original map bounds (captured before the permanent grows
+    // below) are a no-combat area. Fort Worth will append a second zone later.
+    this.safeZones = [{
+      x: state.worldBounds.minX,
+      y: state.worldBounds.minY,
+      w: state.worldBounds.width,
+      h: state.worldBounds.height,
+    }]
+    // initialize the key so the first real transition fires changedata (not setdata)
+    this.registry.set('inCombat', false)
+
+
     // Permanent westward expansion. Runs AFTER the player and plots were placed
     // at the original world center, so the spawn/town stays exactly where it is
     // and the new frontier extends west of it. growWorld re-syncs the camera
@@ -822,7 +829,7 @@ export class Overworld extends Phaser.Scene {
 
     // Westward trail — a pebble path snaking through the waypoints from the
     // settled area to Fort Worth. Built after the grow so the strip exists.
-    const trailDecor = buildTrail(TRAIL_WAYPOINTS, state.worldSeed + 7777)
+    const { decor: trailDecor, centerline: trailCenterline } = buildTrail(TRAIL_WAYPOINTS, state.worldSeed + 7777)
     this.decorData.push(...trailDecor)
     this.cullDecor()
 
@@ -841,39 +848,50 @@ export class Overworld extends Phaser.Scene {
       this.spawnHonse(herdCx + Math.cos(a) * r, herdCy + Math.sin(a) * r)
     }
 
-    // Rock outcrops along the trail — same formations as the base world
-    // (spawnRockFormation), placed in small clusters at points flanking the
-    // route. Each center spawns a few heaps spread around it, like the base
-    // world's cluster. Set off the path so they don't block travel.
-    const rockClusters = [
-      { x: -4000, y: 1900 },
-      { x: -11000, y: 2750 },
-      { x: -19000, y: 1850 },
-      { x: -26000, y: 2800 },
-      { x: -33000, y: 1750 },
-      { x: -40000, y: 2850 },
-      { x: -46000, y: 1900 },
-    ]
-    for (const c of rockClusters) {
-      const heaps = 2 + Math.floor(Math.random() * 2)   // 2–3 per cluster
-      for (let i = 0; i < heaps; i++) {
-        const a = Math.random() * Math.PI * 2
-        const r = Math.random() * 220
-        this.spawnRockFormation(
-          Math.floor(c.x + Math.cos(a) * r),
-          Math.floor(c.y + Math.sin(a) * r),
-        )
-      }
-    }
-
-    // A rock cluster right beside the trail (path runs at y≈2300).
+    // Seeded rock clusters paced along the trail, flanking it at varied distances
+    // — concentrated near the route, some reaching into the wilds. Each center
+    // spawns a few heaps spread around it.
     {
-      const cx = -15000, cy = 2680
-      const heaps = 5 + Math.floor(Math.random() * 3)
-      for (let i = 0; i < heaps; i++) {
-        const a = Math.random() * Math.PI * 2
-        const r = Math.random() * 220
-        this.spawnRockFormation(Math.floor(cx + Math.cos(a) * r), Math.floor(cy + Math.sin(a) * r))
+      const rwb = state.worldBounds
+      const rockBounds: GenRect = { x: rwb.minX, y: rwb.minY, w: rwb.width, h: rwb.height }
+      const centers = scatterTrailRockClusters(TRAIL_WAYPOINTS, rockBounds, state.worldSeed + 6464)
+      let rk = (state.worldSeed + 6464) >>> 0
+      const rand = () => { rk = (rk * 1664525 + 1013904223) >>> 0; return rk / 4294967296 }
+      const rockBlockers = this.getBlockers(40)
+      for (const c of centers) {
+        const heaps = 2 + Math.floor(rand() * 6)
+        const placed: { x: number; y: number }[] = []
+        const MIN_GAP = 30
+        const minSq = MIN_GAP * MIN_GAP
+        let attempts = 0
+        while (placed.length < heaps && attempts < heaps * 30) {
+          attempts++
+          const a = rand() * Math.PI * 2
+          const r = rand() * 220
+          const hx = Math.floor(c.x + Math.cos(a) * r)
+          const hy = Math.floor(c.y + Math.sin(a) * r)
+          let blocked = false
+          for (const p of placed) {
+            const dx = hx - p.x
+            const dy = hy - p.y
+            if (dx * dx + dy * dy < minSq) { blocked = true; break }
+          }
+          if (blocked) continue
+          // reject near any physical obstacle or honse
+          for (const b of rockBlockers) {
+            const dx = hx - b.x
+            const dy = hy - b.y
+            if (dx * dx + dy * dy < b.radius * b.radius) { blocked = true; break }
+          }
+          if (blocked) continue
+          // reject inside any plot footprint (plots aren't obstacles until built)
+          for (const v of this.plotViews) {
+            if (Math.abs(hx - v.x) < PLOT_SIZE / 2 && Math.abs(hy - v.y) < PLOT_SIZE / 2) { blocked = true; break }
+          }
+          if (blocked) continue
+          placed.push({ x: hx, y: hy })
+          this.spawnRockFormation(hx, hy)
+        }
       }
     }
 
@@ -891,7 +909,7 @@ export class Overworld extends Phaser.Scene {
       const TREE_TRAIL_CLEARANCE = 15   // px kept clear of the path
       const TREE_MIN_SPACING = 90       // px between trees
       const candidates = scatterTrailTrees(
-        TRAIL_WAYPOINTS, treeBounds, state.worldSeed + 4242,
+        trailCenterline, treeBounds, state.worldSeed + 4242,
         TREE_TRAIL_CLEARANCE, TREE_MIN_SPACING,
       )
       const blockers = this.getBlockers(40)
@@ -957,18 +975,24 @@ export class Overworld extends Phaser.Scene {
       // can't bleed into update()'s E poll and immediately mount/open a crate.
       Phaser.Input.Keyboard.JustDown(this.eKey)
       if (this.preInteriorPos) {
-        const bx = this.preInteriorBuildingPos?.x ?? this.preInteriorPos.x
-        const by = this.preInteriorBuildingPos?.y ?? this.preInteriorPos.y
-        let dx = this.preInteriorPos.x - bx
-        let dy = this.preInteriorPos.y - by
-        const len = Math.sqrt(dx * dx + dy * dy)
-        if (len > 0) { dx /= len; dy /= len }
-        else { dy = 1 }  // default: push south
-        this.player.x = this.preInteriorPos.x + dx * 5
-        this.player.y = this.preInteriorPos.y + dy * 5
+        if (this.exitForceSouth && this.preInteriorBuildingPos) {
+          this.player.x = this.preInteriorBuildingPos.x
+          this.player.y = this.preInteriorBuildingPos.y + 25
+        } else {
+          const bx = this.preInteriorBuildingPos?.x ?? this.preInteriorPos.x
+          const by = this.preInteriorBuildingPos?.y ?? this.preInteriorPos.y
+          let dx = this.preInteriorPos.x - bx
+          let dy = this.preInteriorPos.y - by
+          const len = Math.sqrt(dx * dx + dy * dy)
+          if (len > 0) { dx /= len; dy /= len }
+          else { dy = 1 }
+          this.player.x = this.preInteriorPos.x + dx * 5
+          this.player.y = this.preInteriorPos.y + dy * 5
+        }
         this.player.setDepth(depthForY(this.player.y) + 8)
         this.preInteriorPos = null
         this.preInteriorBuildingPos = null
+        this.exitForceSouth = false
       }
       // ignore door detection until the player moves out of the current
       // door zone, so we don't immediately re-enter the building we just left.
@@ -978,6 +1002,9 @@ export class Overworld extends Phaser.Scene {
 
   private preInteriorPos: { x: number; y: number } | null = null
   private preInteriorBuildingPos: { x: number; y: number } | null = null
+  private exitForceSouth = false
+  private safeZones: GenRect[] = []
+  private inCombat = false
   // true after exiting an interior; cleared once the player walks out of any door zone.
   private doorCheckBlocked = false
 
@@ -995,6 +1022,7 @@ export class Overworld extends Phaser.Scene {
     this.preInteriorPos = { x: this.player.x, y: this.player.y }
     const s = state.worldStructures[structureIndex]
     this.preInteriorBuildingPos = { x: s.x, y: s.y }
+    this.exitForceSouth = type === 'abandoned_house'
     this.cameras.main.setVisible(false)
     this.registry.events.emit('interior-entered')
     // Pass this instance's loot (if any) so the interior seeds from it instead
@@ -1048,7 +1076,7 @@ export class Overworld extends Phaser.Scene {
   // Axe hits required to fell a mature tree.
   private static CHOP_HITS_TO_FELL = 8
   // Pickaxe hits required to deplete a rock formation.
-  private static MINE_HITS_TO_DEPLETE = 10
+  private static MINE_HITS_TO_DEPLETE = 12
   // Axe hit-radius for destroying a placed post — matches CHOP_HIT_RADIUS.
   private static POST_HIT_RADIUS = 18
   // Dropped-item animation: a fresh drop pops up DROP_JUMP_HEIGHT px and
@@ -2098,7 +2126,7 @@ export class Overworld extends Phaser.Scene {
   private spawnDroppedSprite(x: number, y: number, type: ItemType, jump: boolean, flyFromX?: number): Phaser.GameObjects.Sprite {
     const sprite = this.add.sprite(x, y, ITEMS[type].sprite)
       .setScale(ITEMS[type].scale)
-      .setDepth(2)
+      .setDepth(depthForY(y) - 12)
     sprite.setData('baseY', y)
     sprite.setData('bobPhase', Math.random() * Math.PI * 2)
     // fresh drops are locked from pickup briefly so they don't vanish underfoot;
@@ -3123,8 +3151,12 @@ export class Overworld extends Phaser.Scene {
       if (state.gameTime - t.plantedAt >= growMs) this.growSapling(t)
     }
 
-    // Spawn honses when hemp is first harvested
-    if (state.hasHarvestedHemp && !this.honsesSpawned && state.honses.length === 0) {
+    // Spawn the starter honse trio when hemp is first harvested. Gated only by
+    // honsesSpawned (fires once) — NOT by honses.length, because the wild herd
+    // is seed-placed at world creation, so honses.length is never 0 by the time
+    // hemp is harvested. (That stale === 0 guard previously blocked the trio
+    // entirely once the herd existed.)
+    if (state.hasHarvestedHemp && !this.honsesSpawned) {
       this.honsesSpawned = true
       const spawns: [number, number][] = [[2700, 2240], [2780, 2300], [2640, 2190]]
       for (const [sx, sy] of spawns) {
@@ -3675,5 +3707,16 @@ export class Overworld extends Phaser.Scene {
 
     // ---- pipe item transfer ----
     this.runPipeTicks(now)
+
+    // ---- safe zone / combat ---- hearts show outside any safe zone
+    const px2 = this.player.x, py2 = this.player.y
+    let inSafe = false
+    for (const z of this.safeZones) {
+      if (px2 >= z.x && px2 <= z.x + z.w && py2 >= z.y && py2 <= z.y + z.h) { inSafe = true; break }
+    }
+    if (inSafe === this.inCombat) {
+      this.inCombat = !inSafe
+      this.registry.set('inCombat', this.inCombat)
+    }
   }
 }

@@ -38,7 +38,7 @@ const HONSE_COLOR_TOTAL = HONSE_COLORS.reduce((s, c) => s + c[1], 0)
 function rollSpeed(): number {
   const r = Math.random()
   if (r < 0.10) return 1.40 + Math.random() * 0.30   // super fast: 1.40 .. 1.70
-  return 0.85 + Math.random() * 0.45                 // normal: 0.85 .. 1.30
+  return 0.95 + Math.random() * 0.35                 // normal: 0.95 .. 1.30
 }
 
 function pickCoat(): number {

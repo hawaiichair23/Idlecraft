@@ -24,11 +24,7 @@ export const TERRAIN_TILE = 16
 // resizes them at runtime.
 const INITIAL_WORLD_PX = 576 * 8
 
-// Base player movement speed (px/sec on the overworld step formula). This is
-// the ONLY place the base speed is written — the overworld uses it directly,
-// and the walkable interior derives its proportional speed multiplier from it
-// so food buffs / speed overrides carry over consistently between the two.
-export const PLAYER_BASE_SPEED = 2835
+export const PLAYER_BASE_SPEED = 135
 
 export interface WorldBounds {
   minX: number
@@ -174,7 +170,7 @@ export function createCrateContents(): (ItemStack | null)[] {
 }
 
 class GameState {
-  gold = 9999
+  gold = 20
   plots: PlotState[] = []
   // Fixed world buildings (shop, church, etc.) — not owned, not bought, no ticks.
   worldStructures: WorldStructure[] = []
@@ -362,7 +358,7 @@ class GameState {
   }
 
   init(plotCount: number) {
-    this.gold = 9999
+    this.gold = 20
     // Roll this world's seed. generateWorld reads state.worldSeed, so the
     // whole layout derives from this one number. Random per new game today;
     // a future menu can set worldSeed before calling init() to replay a world.
@@ -408,18 +404,7 @@ class GameState {
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    // DEV: seed items for testing
-    // Tools start INSIDE the bag, not in the hotbar.
-    const bag: ItemStack = { type: 'bag', count: 1, contents: [
-      { type: 'pickaxe', count: 1 },
-      { type: 'axe', count: 1 },
-      { type: 'pipe', count: 64 },
-      null,
-      null,
-    ] }
-    this.inventory[0] = bag
-    this.inventory[1] = { type: 'hemp', count: 64 }
-    this.inventory[2] = { type: 'sack', count: 1, contents: [null, null, null, null, null, null, null, null] }
+    // Inventory starts empty.
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.

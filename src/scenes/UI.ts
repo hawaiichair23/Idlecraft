@@ -13,6 +13,7 @@ const BAR_HEIGHT = 40
 
 export class UI extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.BitmapText
+  private hearts: Phaser.GameObjects.Sprite[] = []
   private dragController!: DragController
   private cursorController!: CursorController
 
@@ -116,7 +117,7 @@ export class UI extends Phaser.Scene {
     // top bar
     this.topBar = this.add.rectangle(0, 0, w, BAR_HEIGHT, COLORS.black).setOrigin(0, 0).setAlpha(0.95)
     const initialGold = (this.registry.get('gold') as number | undefined) ?? 0
-    this.goldText = this.add.bitmapText(12, BAR_HEIGHT / 2, 'main', `gold: ${initialGold.toLocaleString()}`, FONT.name)
+    this.goldText = this.add.bitmapText(12, BAR_HEIGHT / 2 + 2, 'main', `gold: ${initialGold.toLocaleString()}`, FONT.gold)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiGold)
 
@@ -124,6 +125,21 @@ export class UI extends Phaser.Scene {
       this.goldText.setText(`gold: ${value.toLocaleString()}`)
       if (this.menuContainer && this.menuContainer.visible) this.refreshMenuAffordability()
     })
+
+    // hearts — shown only outside a safe zone (combat). Overworld sets 'inCombat'.
+    const heartsStartX = this.goldText.x + this.goldText.width + 34
+    const startInCombat = (this.registry.get('inCombat') as boolean | undefined) ?? false
+    for (let i = 0; i < 3; i++) {
+      const heart = this.add.sprite(heartsStartX + i * 28, BAR_HEIGHT / 2, 'heart')
+        .setOrigin(0, 0.5)
+        .setScale(3)
+        .setVisible(startInCombat)
+      this.hearts.push(heart)
+    }
+    this.registry.events.on('changedata-inCombat', (_p: unknown, value: boolean) => {
+      for (const h of this.hearts) h.setVisible(value)
+    })
+
 
     // any code path that changed inventory en-masse fires this — redraw all
     this.registry.events.on('inventory-changed', () => {

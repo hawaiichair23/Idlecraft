@@ -7,6 +7,7 @@ export const FONT = {
   name: 18,    // item names, row labels
   title: 24,   // panel titles
   count: 20,   // stack-count numbers on slots
+  gold: 19,    // gold amount in the top bar
 } as const
 
 export const COLORS = {

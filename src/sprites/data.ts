@@ -95,6 +95,18 @@ const cL = '#FFEE66'  // highlight (bright)
 const cM = '#DAA520'  // main yellow (matches uiGold)
 const cD = '#8B6914'  // shadow (dark)
 
+// ---- HEART ----
+const hM = '#c50000'  // main red
+
+export const HEART: Sprite = [
+  [_,hM,hM,_,hM,hM,_],
+  [hM,hM,hM,hM,hM,hM,hM],
+  [hM,hM,hM,hM,hM,hM,hM],
+  [_,hM,hM,hM,hM,hM,_],
+  [_,_,hM,hM,hM,_,_],
+  [_,_,_,hM,_,_,_],
+]
+
 export const GOLD_COIN: Sprite = [
   [_,_,_,cD,cD,_,_,_],
   [_,_,cD,cL,cL,cD,_,_],
@@ -1732,6 +1744,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   player: PLAYER,
   npc_workshop: NPC_WORKSHOP,
   gold_coin: GOLD_COIN,
+  heart: HEART,
   arrow_right: ARROW_RIGHT,
   cow_skull: COW_SKULL,
   yucca: YUCCA,

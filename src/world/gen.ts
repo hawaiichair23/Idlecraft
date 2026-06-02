@@ -172,72 +172,13 @@ const PATH_DRIFT_DECAY = 0.995     // pull back toward center each step — keep
 const PATH_SNAKE_AMPLITUDE = 30    // sine wobble for the wilderness path (opt-in via buildPath arg)
 const PATH_SNAKE_PERIOD = 600      // length of one wobble cycle
 const PATH_PEBBLE_SPACING = 6      // lower = denser
+const PATH_CENTERLINE_SAMPLE = 20  // emit one centerline point every N pebbles (~120px) for clearance checks
 const PATH_WIDTH = 14              // random scatter perpendicular to path
 
-// Rock formation placement knobs.
-const ROCK_HEAPS_PER_CLUSTER = 8
-const ROCK_CLUSTER_RADIUS = 600      // how far heaps spread from the cluster center
-const ROCK_HEAP_SPACING = 160        // min gap between heaps — full 10-tile formations are ~72px wide
-const ROCK_CLUSTER_MIN_Y_FRAC = 0.4   // cluster center stays in the southern 60% of the map
 
-// Place one cluster of rock formations
-function scatterRockCluster(
-  out: RockFormation[],
-  rng: () => number,
-  opts: GenOpts,
-  exclusions: { x: number; y: number; radius: number }[],
-) {
-  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
 
-  // roll a cluster center clear of exclusions (e.g. town); cap attempts
-  let cx = 0, cy = 0
-  let centerOk = false
-  for (let i = 0; i < 60 && !centerOk; i++) {
-    cx = margin + ROCK_CLUSTER_RADIUS + rng() * (opts.worldSize - (margin + ROCK_CLUSTER_RADIUS) * 2)
-    // clamp to southern band — north is low Y (town), rocks belong further south
-    const minY = opts.worldSize * ROCK_CLUSTER_MIN_Y_FRAC
-    const yLow = Math.max(margin + ROCK_CLUSTER_RADIUS, minY)
-    cy = yLow + rng() * (opts.worldSize - margin - ROCK_CLUSTER_RADIUS - yLow)
-    centerOk = true
-    for (const ex of exclusions) {
-      const dx = cx - ex.x
-      const dy = cy - ex.y
-      // keep the whole cluster footprint clear of the exclusion, not just its center
-      const clear = ex.radius + ROCK_CLUSTER_RADIUS
-      if (dx * dx + dy * dy < clear * clear) { centerOk = false; break }
-    }
-  }
-  if (!centerOk) return   // couldn't find a clear center; skip rocks this world
 
-  const minSq = ROCK_HEAP_SPACING * ROCK_HEAP_SPACING
-  const maxAttempts = ROCK_HEAPS_PER_CLUSTER * 30
-  let attempts = 0
-  let placed = 0
-  while (placed < ROCK_HEAPS_PER_CLUSTER && attempts < maxAttempts) {
-    attempts++
-    const angle = rng() * Math.PI * 2
-    const dist = ROCK_CLUSTER_RADIUS * Math.sqrt(rng())
-    const x = cx + Math.cos(angle) * dist
-    const y = cy + Math.sin(angle) * dist
 
-    let blocked = false
-    for (const ex of exclusions) {
-      const dx = x - ex.x
-      const dy = y - ex.y
-      if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
-    }
-    if (blocked) continue
-    for (const r of out) {
-      const dx = x - r.x
-      const dy = y - r.y
-      if (dx * dx + dy * dy < minSq) { blocked = true; break }
-    }
-    if (blocked) continue
-
-    out.push({ x: Math.floor(x), y: Math.floor(y) })
-    placed++
-  }
-}
 
 function buildPath(
   decor: DecorItem[],
@@ -245,6 +186,7 @@ function buildPath(
   startX: number, startY: number,
   endX: number, endY: number,
   snakeAmplitude = 0,   // 0 = random-walk only (trail). >0 = sine snake (wilderness path).
+  centerline?: { x: number; y: number }[],   // optional: sampled drifted center, for clearance checks
 ) {
   const dx = endX - startX
   const dy = endY - startY
@@ -268,6 +210,9 @@ function buildPath(
     const px = cx + nx * (snake + drift + spread)
     const py = cy + ny * (snake + drift + spread)
     decor.push({ x: Math.floor(px), y: Math.floor(py), type: 'pebbles', scale: DECOR_SCALE })
+    if (centerline && i % PATH_CENTERLINE_SAMPLE === 0) {
+      centerline.push({ x: cx + nx * (snake + drift), y: cy + ny * (snake + drift) })
+    }
   }
 }
 
@@ -291,7 +236,6 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   scatter(decor, rng, fullArea, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
   buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey, PATH_SNAKE_AMPLITUDE)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
-  scatterRockCluster(rocks, rng, opts, opts.exclusions)
 
   return { decor, buried, rocks }
 }
@@ -321,15 +265,16 @@ export function generateRegionDecor(
 export function buildTrail(
   waypoints: { x: number; y: number }[],
   seed: number,
-): DecorItem[] {
+): { decor: DecorItem[]; centerline: { x: number; y: number }[] } {
   const rng = makeRng(seed)
   const decor: DecorItem[] = []
+  const centerline: { x: number; y: number }[] = []
   for (let i = 0; i < waypoints.length - 1; i++) {
     const a = waypoints[i]
     const b = waypoints[i + 1]
-    buildPath(decor, rng, a.x, a.y, b.x, b.y)
+    buildPath(decor, rng, a.x, a.y, b.x, b.y, 0, centerline)
   }
-  return decor
+  return { decor, centerline }
 }
 
 
@@ -433,4 +378,48 @@ export function pickHerdSite(
   const side = rng() < 0.5 ? -1 : 1
   const offset = HERD_OFFSET_MIN + rng() * (HERD_OFFSET_MAX - HERD_OFFSET_MIN)
   return { x: Math.floor(cx), y: Math.floor(trailY + side * offset) }
+}
+
+const ROCK_CLUSTER_DENSITY = 0.000000022   // clusters per px² — expected count is density × area
+const ROCK_CLUSTER_TRAIL_BUMP = 0.7        // extra keep-chance at the trail line itself
+const ROCK_CLUSTER_BUMP_FALLOFF = 2500     // px from trail where the bump decays to ~1/e
+const ROCK_CLUSTER_BASELINE_KEEP = 0.25    // keep-chance for a candidate far from the trail
+const ROCK_CLUSTER_MIN_SPACING = 700       // min px between cluster centers
+
+// Seeded rock-cluster centers paced westward along the trail, each offset to a
+// random side at a random perpendicular distance — concentrated near the route
+// but reaching into the wilds. Different per world seed, stable for a given one.
+export function scatterTrailRockClusters(
+  waypoints: { x: number; y: number }[],
+  bounds: GenRect,
+  seed: number,
+): { x: number; y: number }[] {
+  const rng = makeRng(seed)
+  const out: { x: number; y: number }[] = []
+  const minSq = ROCK_CLUSTER_MIN_SPACING * ROCK_CLUSTER_MIN_SPACING
+  const area = bounds.w * bounds.h
+  // candidate count from density, divided by baseline keep so the EXPECTED kept
+  // count tracks density × area despite rejections
+  const candidateCount = Math.floor((ROCK_CLUSTER_DENSITY * area) / ROCK_CLUSTER_BASELINE_KEEP)
+
+  for (let i = 0; i < candidateCount; i++) {
+    const x = bounds.x + rng() * bounds.w
+    const y = bounds.y + rng() * bounds.h
+
+    const trailDist = pointToPolylineDist(x, y, waypoints)
+    const bump = ROCK_CLUSTER_TRAIL_BUMP * Math.exp(-(trailDist * trailDist) / (ROCK_CLUSTER_BUMP_FALLOFF * ROCK_CLUSTER_BUMP_FALLOFF))
+    const keepProb = Math.min(1, ROCK_CLUSTER_BASELINE_KEEP + bump)
+    if (rng() > keepProb) continue
+
+    let blocked = false
+    for (const c of out) {
+      const dx = x - c.x
+      const dy = y - c.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+
+    out.push({ x: Math.floor(x), y: Math.floor(y) })
+  }
+  return out
 }
