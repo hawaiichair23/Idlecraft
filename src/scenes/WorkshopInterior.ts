@@ -115,7 +115,11 @@ export function buildWorkshopInterior(
   // Taking pulls the stored output first, else consumes inputs to craft once.
   {
     const x = outputX
-    const getStack = () => state.plots[plotIndex].craftOutput ?? previewCraft(plotIndex)
+    const getStack = () => {
+      const plot = state.plots[plotIndex]
+      if (plot.autoCraft) return plot.craftOutput
+      return plot.craftOutput ?? previewCraft(plotIndex)
+    }
     const slotImg = makeSlotImage(scene, { x, y: centerY, peek: getStack, tooltipOffsetY: -38 })
     container?.add(slotImg)
     slotVisuals.push({ x, y: centerY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container })
@@ -175,6 +179,7 @@ export function buildWorkshopInterior(
       ev.stopPropagation()
       const plot = state.plots[plotIndex]
       plot.autoCraft = !plot.autoCraft
+      if (plot.autoCraft) plot.lastItemTickAt = state.gameTime
       paint()
     })
   }
@@ -252,7 +257,7 @@ export function buildWorkshopInterior(
     if (!active) { arrowSprite.setTint(COLORS.craftSymbol); return }
 
     const craftMs = getEffectiveTickMs(BUILDINGS.workshop.tickMs, plot.level)
-    const frac = ((Date.now() - plot.lastItemTickAt) % craftMs) / craftMs
+    const frac = ((state.gameTime - plot.lastItemTickAt) % craftMs) / craftMs
     const r = Math.floor(Phaser.Math.Linear(0x55, 0xFF, frac))
     const g = Math.floor(Phaser.Math.Linear(0x4a, 0xD7, frac))
     const b = Math.floor(Phaser.Math.Linear(0x3e, 0x00, frac))

@@ -1355,21 +1355,29 @@ export const ITEM_WOOD: Sprite = [
   [psM,psL,psL,psG,psL,psL,psM,psM],
   [psM,psL,psL,psL,psL,psG,psL,psM],
   [psD,psM,psM,psM,psM,psM,psM,psD],
-  [_,_,_,_,_,_,_,_],
+  [psD,psM,psM,psM,psM,psM,psM,psD],
   [_,_,_,_,_,_,_,_],
 ]
 
 // Plank: three flat sawn boards stacked. Same post-wood palette as logs, but
 // flat (not rounded) to read as milled lumber. 8x8.
+// Lighter milled-lumber palette — pick/tweak these for the plank:
+const plL = '#D9BC8C'   // plank light (sunlit board face)
+const plM = '#BF9D6B'   // plank mid (main)
+const plD = '#8A6A42'   // plank dark (shadow / grain)
 export const ITEM_PLANK: Sprite = [
-  [_,_,_,_,_,_,_,_],
-  [psD,psL,psL,psL,psG,psL,psL,psD],
-  [psD,psM,psM,psM,psM,psM,psM,psD],
-  [_,_,_,_,_,_,_,_],
-  [psD,psL,psG,psL,psL,psL,psL,psD],
-  [psD,psM,psM,psM,psM,psM,psM,psD],
-  [_,_,_,_,_,_,_,_],
-  [_,_,_,_,_,_,_,_],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plL,plL,plL,plD,plL,plL,plL,plL,plL,plL,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plL,plL,plL,plL,plL,plL,plD,plL,plL,plL,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plL,plL,plD,plL,plL,plL,plL,plL,plL,plL,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
+  [plD,plL,plL,plL,plL,plD,plL,plL,plL,plL,plL,plD],
+  [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
 ]
 
 // Wheel: round wooden wheel with a square stone hub in the center. 12x12.

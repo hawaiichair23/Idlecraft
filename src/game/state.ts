@@ -24,7 +24,7 @@ export const TERRAIN_TILE = 16
 // resizes them at runtime.
 const INITIAL_WORLD_PX = 576 * 8
 
-export const PLAYER_BASE_SPEED = 135
+export const PLAYER_BASE_SPEED = 1135
 
 export interface WorldBounds {
   minX: number
@@ -292,6 +292,7 @@ class GameState {
   // Set to true the first time a bag is crafted. Unlocks the bag listing
   // in the Tool Shop.
   hasCraftedBag = false
+  hasPipeUnlock = false
 
   // ---- developer overrides ----
   // Multiplier on production tick speed. 1 = normal, 2 = twice as fast.
@@ -404,7 +405,7 @@ class GameState {
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    // Inventory starts empty.
+    this.inventory[0] = { type: 'plank', count: 10 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.

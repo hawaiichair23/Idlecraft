@@ -18,10 +18,24 @@ export interface LandOfficeInteriorHandle {
 
 // Plot-type unlocks the Land Office sells. Order = display order.
 interface UnlockEntry {
-  type: BuiltType
+  type: BuiltType | 'pipe'
   buyPrice: number
+  sprite?: string
+  name?: string
+  description?: string
+  isOwned?: () => boolean
+  onBuy?: () => void
 }
 const UNLOCK_ENTRIES: UnlockEntry[] = [
+  {
+    type: 'pipe',
+    buyPrice: 200,
+    sprite: 'item_pipe',
+    name: 'Pipes',
+    description: 'Unlocks Pipes from the Tool Shop.',
+    isOwned: () => state.hasPipeUnlock,
+    onBuy: () => { state.hasPipeUnlock = true },
+  },
   { type: 'field', buyPrice: 300 },
   { type: 'storage', buyPrice: 500 },
 ]
@@ -81,7 +95,7 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
   const refresh = () => {
     const gold = (scene.registry.get('gold') as number | undefined) ?? 0
     for (const r of rowRefs) {
-      const owned = state.unlockedBuildings.has(r.entry.type)
+      const owned = r.entry.isOwned ? r.entry.isOwned() : state.unlockedBuildings.has(r.entry.type as BuiltType)
       const affordable = gold >= r.entry.buyPrice
       const tint = owned ? COLORS.menuDisabled
         : affordable ? COLORS.uiText
@@ -94,7 +108,10 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
   }
 
   UNLOCK_ENTRIES.forEach((entry, i) => {
-    const def = BUILDINGS[entry.type]
+    const buildingDef = (entry.type !== 'pipe') ? BUILDINGS[entry.type as BuiltType] : null
+    const spriteName = entry.sprite ?? entry.type
+    const displayName = entry.name ?? (buildingDef ? buildingDef.name : entry.type)
+    const displayDesc = entry.description ?? (buildingDef ? buildingDef.description : '')
     const rowY = topRowY + i * (ROW_H + ROW_GAP)
 
     const iconSlot = scene.add.image(iconX, rowY, 'menu-slot').setInteractive().setDepth(101)
@@ -104,16 +121,14 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
     attachSlotHover(scene, nameSlot, nameX, rowY, NAME_W, ROW_H)
     attachSlotHover(scene, costSlot, costX, rowY, COST_W, ROW_H)
 
-    // building icon centered in its slot
-    scene.add.sprite(iconX, rowY, entry.type).setScale(2).setDepth(102)
+    scene.add.sprite(iconX, rowY, spriteName).setScale(2).setDepth(102)
 
-    // name + description, left-aligned in long slot
     const labelX = nameX - NAME_W / 2 + 12
-    const label = scene.add.bitmapText(labelX, rowY - 8, 'main', def.name, FONT.name)
+    const label = scene.add.bitmapText(labelX, rowY - 8, 'main', displayName, FONT.name)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
       .setDepth(102)
-    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', def.description, FONT.desc)
+    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', displayDesc, FONT.desc)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
       .setDepth(102)
@@ -128,13 +143,15 @@ export function buildLandOfficeInterior(scene: Phaser.Scene): LandOfficeInterior
     rowRefs.push({ entry, label, desc, cost })
 
     const onClick = (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
-      if (!p.leftButtonDown()) return        // buy on left-click only
+      if (!p.leftButtonDown()) return
       ev.stopPropagation()
-      if (state.unlockedBuildings.has(entry.type)) return  // already owned
+      const owned = entry.isOwned ? entry.isOwned() : state.unlockedBuildings.has(entry.type as BuiltType)
+      if (owned) return
       const gold = (scene.registry.get('gold') as number | undefined) ?? 0
       if (gold < entry.buyPrice) return
       if (!state.trySpend(entry.buyPrice, scene.registry)) return
-      state.unlockedBuildings.add(entry.type)
+      if (entry.onBuy) entry.onBuy()
+      else state.unlockedBuildings.add(entry.type as BuiltType)
       refresh()
     }
     iconSlot.on('pointerdown', onClick)

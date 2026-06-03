@@ -172,8 +172,9 @@ const PATH_DRIFT_DECAY = 0.995     // pull back toward center each step — keep
 const PATH_SNAKE_AMPLITUDE = 30    // sine wobble for the wilderness path (opt-in via buildPath arg)
 const PATH_SNAKE_PERIOD = 600      // length of one wobble cycle
 const PATH_PEBBLE_SPACING = 6      // lower = denser
-const PATH_CENTERLINE_SAMPLE = 20  // emit one centerline point every N pebbles (~120px) for clearance checks
+const PATH_CENTERLINE_SAMPLE = 20  // emit one centerline point every N pebbles
 const PATH_WIDTH = 14              // random scatter perpendicular to path
+const PATH_VISUAL_OFFSET = 20      // shift stored centerline north so it matches where pebbles visually read
 
 
 
@@ -211,7 +212,7 @@ function buildPath(
     const py = cy + ny * (snake + drift + spread)
     decor.push({ x: Math.floor(px), y: Math.floor(py), type: 'pebbles', scale: DECOR_SCALE })
     if (centerline && i % PATH_CENTERLINE_SAMPLE === 0) {
-      centerline.push({ x: cx + nx * (snake + drift), y: cy + ny * (snake + drift) })
+      centerline.push({ x: cx + nx * (snake + drift), y: cy + ny * (snake + drift) - PATH_VISUAL_OFFSET })
     }
   }
 }
@@ -393,18 +394,25 @@ export function scatterTrailRockClusters(
   waypoints: { x: number; y: number }[],
   bounds: GenRect,
   seed: number,
+  exclusions: { x: number; y: number; radius: number }[] = [],
 ): { x: number; y: number }[] {
   const rng = makeRng(seed)
   const out: { x: number; y: number }[] = []
   const minSq = ROCK_CLUSTER_MIN_SPACING * ROCK_CLUSTER_MIN_SPACING
   const area = bounds.w * bounds.h
-  // candidate count from density, divided by baseline keep so the EXPECTED kept
-  // count tracks density × area despite rejections
   const candidateCount = Math.floor((ROCK_CLUSTER_DENSITY * area) / ROCK_CLUSTER_BASELINE_KEEP)
 
   for (let i = 0; i < candidateCount; i++) {
     const x = bounds.x + rng() * bounds.w
     const y = bounds.y + rng() * bounds.h
+
+    let excluded = false
+    for (const e of exclusions) {
+      const dx = x - e.x
+      const dy = y - e.y
+      if (dx * dx + dy * dy < e.radius * e.radius) { excluded = true; break }
+    }
+    if (excluded) continue
 
     const trailDist = pointToPolylineDist(x, y, waypoints)
     const bump = ROCK_CLUSTER_TRAIL_BUMP * Math.exp(-(trailDist * trailDist) / (ROCK_CLUSTER_BUMP_FALLOFF * ROCK_CLUSTER_BUMP_FALLOFF))

@@ -14,6 +14,31 @@ export function pointToSegmentDist(px: number, py: number, x1: number, y1: numbe
   return Math.sqrt((px - projX) * (px - projX) + (py - projY) * (py - projY))
 }
 
+// Generate a smooth curved path between two points, bulging perpendicular to
+// the straight line between them. `bulge` is the peak offset (sign picks the
+// side); `segments` is how many points to emit. Sine profile: zero at both
+// ends, max at the middle, flat tangents at the anchors so it eases instead of
+// kinking. Returns start→end inclusive. Direction-agnostic.
+export function curveBetween(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  bulge: number,
+  segments: number,
+): { x: number; y: number }[] {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const len = Math.hypot(dx, dy)
+  const nx = len < 0.0001 ? 0 : -dy / len
+  const ny = len < 0.0001 ? 0 : dx / len
+  const out: { x: number; y: number }[] = []
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments
+    const offset = Math.sin(t * Math.PI) * bulge
+    out.push({ x: start.x + dx * t + nx * offset, y: start.y + dy * t + ny * offset })
+  }
+  return out
+}
+
 // Shortest distance from point (px, py) to a polyline (sequence of waypoints) —
 // the minimum over each consecutive segment. Returns Infinity for <2 points.
 export function pointToPolylineDist(px: number, py: number, pts: { x: number; y: number }[]): number {

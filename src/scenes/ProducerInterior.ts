@@ -80,7 +80,7 @@ export function buildProducerInterior(
     if (!def.itemTickMs) return
     const plot = state.plots[plotIndex]
     const effectiveMs = getEffectiveTickMs(def.itemTickMs, plot.level)
-    const frac = ((Date.now() - plot.lastItemTickAt) % effectiveMs) / effectiveMs
+    const frac = ((state.gameTime - plot.lastItemTickAt) % effectiveMs) / effectiveMs
     const r = Math.floor(Phaser.Math.Linear(0x55, 0xFF, frac))
     const g = Math.floor(Phaser.Math.Linear(0x4a, 0xD7, frac))
     const b = Math.floor(Phaser.Math.Linear(0x3e, 0x00, frac))

@@ -51,12 +51,10 @@ export const RECIPES: Recipe[] = [
     pattern: ['canvas', 'canvas', 'canvas', 'canvas'],
     output: 'sack',
   },
-  // 3 planks + 1 wheel -> cart. Wheel must sit in a bottom slot; mirror lets it
-  // be either bottom-left (this pattern) or bottom-right (the flip).
+  // 2 planks + 2 wheels -> cart. Wheels on bottom, planks on top.
   {
-    inputs: [{ type: 'plank', count: 3 }, { type: 'wheel', count: 1 }],
-    pattern: ['plank', 'plank', 'wheel', 'plank'],
-    mirror: true,
+    inputs: [{ type: 'plank', count: 2 }, { type: 'wheel', count: 2 }],
+    pattern: ['plank', 'plank', 'wheel', 'wheel'],
     output: 'crafting_cart',
   },
   // Planks in all four slots -> crate.

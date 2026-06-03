@@ -13,7 +13,7 @@ import { registerGrabbable } from '../ui/hover'
 import { RopeController, CAT_HONSE } from '../world/ropeController'
 import { updateHonses, getHonseBodyAABB, createHonse } from '../world/honse'
 import { updateTumbleweeds, clearTumbleweeds } from '../world/tumbleweed'
-import { pointToSegmentDist } from '../world/geometry'
+import { pointToSegmentDist, pointToPolylineDist, curveBetween } from '../world/geometry'
 
 
 const PLAYER_SPEED = PLAYER_BASE_SPEED   // single source of truth lives in state.ts
@@ -30,32 +30,42 @@ const PERMANENT_VERTICAL_PX = 10000
 // Each entry is a bend in the trail — the path snakes between them with the
 // same pebble wobble as the existing wilderness path. Authored positions.
 const TRAIL_WAYPOINTS: { x: number; y: number }[] = [
-  { x: 200, y: 2300 },        // departs the settled area, due west
-  { x: -5400, y: 2300 },      // ease into bend 1
-  { x: -6000, y: 2250 },      // bend 1: north 50px — held flat
-  { x: -6700, y: 2250 },      //   ...alongside something
-  { x: -7300, y: 2300 },      // ease out
-  { x: -13200, y: 2300 },     // ease into bend 2
-  { x: -13900, y: 2360 },     // bend 2: south 60px — held flat
-  { x: -14600, y: 2360 },     //   ...held across the apex
-  { x: -15300, y: 2300 },     // ease out
-  { x: -20200, y: 2300 },     // ease into bend 3
-  { x: -21000, y: 2260 },     // bend 3: north 40px — held flat
-  { x: -21700, y: 2260 },     //   ...alongside something
-  { x: -22300, y: 2300 },     // ease out
-  { x: -27000, y: 2300 },     // ease into bend 4 — future river crossing
-  { x: -27800, y: 2200 },     // bend 4: north 100px — held flat
-  { x: -28500, y: 2200 },     //   ...held across the apex
-  { x: -29200, y: 2300 },     // ease out
-  { x: -34200, y: 2300 },     // ease into bend 5
-  { x: -35000, y: 2350 },     // bend 5: south 50px — held flat
-  { x: -35700, y: 2350 },     //   ...alongside something
-  { x: -36300, y: 2300 },     // ease out
-  { x: -41200, y: 2300 },     // ease into bend 6
-  { x: -42000, y: 2260 },     // bend 6: north 40px — held flat
-  { x: -42700, y: 2260 },     //   ...alongside something
-  { x: -43300, y: 2300 },     // ease out
-  { x: -49500, y: 2300 },     // Fort Worth
+  { x: 200, y: 2300 },
+
+  // bend 1: north ~60px (generated)
+  ...curveBetween({ x: -5400, y: 2300 }, { x: -7300, y: 2300 }, 60, 14),
+
+  // bend 2: south ~70px (generated)
+  ...curveBetween({ x: -13200, y: 2300 }, { x: -15300, y: 2300 }, -70, 14),
+
+  // bend 3: north ~50px (generated)
+  ...curveBetween({ x: -20200, y: 2300 }, { x: -22300, y: 2300 }, 50, 14),
+
+  // bend 4: north ~110px (generated) — future river crossing
+  ...curveBetween({ x: -27000, y: 2300 }, { x: -29200, y: 2300 }, 110, 16),
+
+  // bend 5: south ~60px (generated)
+  ...curveBetween({ x: -34200, y: 2300 }, { x: -36300, y: 2300 }, -60, 14),
+
+  // bend 6: north ~50px (generated)
+  ...curveBetween({ x: -41200, y: 2300 }, { x: -43300, y: 2300 }, 50, 14),
+
+  { x: -49500, y: 2300 },
+]
+
+// Preston Road: a north-south route branching off the westward trail at ~25%
+// from the west (Fort Worth) end, near x=-37075. Runs nearly the full vertical
+// span of the world, crossing the trail at y=2300. Same gentle wander as the
+// trail, authored with curveBetween — bulge here pushes EAST/WEST since the
+// segments run vertically.
+const PRESTON_JUNCTION_X = -37075
+const PRESTON_WAYPOINTS: { x: number; y: number }[] = [
+  { x: PRESTON_JUNCTION_X, y: -9000 },   // near the north edge
+  ...curveBetween({ x: PRESTON_JUNCTION_X, y: -9000 }, { x: PRESTON_JUNCTION_X, y: -3000 }, 80, 14),
+  ...curveBetween({ x: PRESTON_JUNCTION_X, y: -3000 }, { x: PRESTON_JUNCTION_X, y: 2300 }, -60, 14),
+  { x: PRESTON_JUNCTION_X, y: 2300 },    // crosses the trail
+  ...curveBetween({ x: PRESTON_JUNCTION_X, y: 2300 }, { x: PRESTON_JUNCTION_X, y: 7500 }, 70, 14),
+  ...curveBetween({ x: PRESTON_JUNCTION_X, y: 7500 }, { x: PRESTON_JUNCTION_X, y: 13500 }, -80, 14),
 ]
 // Decor culling: sprites only exist within this margin around the camera view.
 // The margin provides hysteresis so decor at the screen edge doesn't thrash.
@@ -298,6 +308,7 @@ export class Overworld extends Phaser.Scene {
     this.worldBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
       const ui = this.scene.get('UI') as UI
       const drag = ui.getDragController()
+      if (!drag) return   // UI not fully initialized yet (early click during scene boot)
       const isRight = p.rightButtonDown()
 
       // While mounted: clicks normally dismount, but destructive actions
@@ -538,7 +549,7 @@ export class Overworld extends Phaser.Scene {
     // boot cheap no matter how many trees the world holds.
     // restore any placed posts already in state
     for (const p of state.placedPosts) {
-      const sprite = this.add.sprite(p.x, p.y, p.species ?? 'post').setScale(2).setDepth(depthForY(p.y) + 8)
+      const sprite = this.add.sprite(p.x, p.y, p.species ?? 'post').setScale(2).setDepth(depthForY(p.y) - 8)
       this.placedPostSprites.set(`${p.x},${p.y}`, sprite)
       const postObs = this.makePostObstacle(p.x, p.y)
       this.obstacles.push(postObs)
@@ -546,7 +557,7 @@ export class Overworld extends Phaser.Scene {
     }
     // restore any placed crates already in state (contents persist on the entry)
     for (const c of state.placedCrates) {
-      const sprite = this.add.sprite(c.x, c.y, 'item_crate').setScale(2).setDepth(depthForY(c.y) + 8).setInteractive()
+      const sprite = this.add.sprite(c.x, c.y, 'item_crate').setScale(2).setDepth(depthForY(c.y) - 8).setInteractive()
       this.attachCrateOpenHandler(sprite)
       this.crateSprites.push(sprite)
       this.crateBodies.push(this.matter.add.rectangle(c.x, c.y, 16, 16, { frictionAir: 0.1 }))
@@ -700,7 +711,7 @@ export class Overworld extends Phaser.Scene {
 
     // ---- HONSES ---- spawn from state. Position + depth resync each frame.
     this.honseSprites = state.honses.map(h => {
-      const spr = this.add.sprite(h.x, h.y, h.sprite).setScale(2).setDepth(depthForY(h.y) + 8)
+      const spr = this.add.sprite(h.x, h.y, h.sprite).setScale(2).setDepth(depthForY(h.y) - 8)
       if (h.tinted) spr.setTint(h.tint)
       return spr
     })
@@ -833,6 +844,30 @@ export class Overworld extends Phaser.Scene {
     this.decorData.push(...trailDecor)
     this.cullDecor()
 
+    // Preston Road — north-south branch off the trail. Same pebble treatment;
+    // its centerline joins the trail's for tree/rock clearance below.
+    const { decor: prestonDecor, centerline: prestonCenterline } = buildTrail(PRESTON_WAYPOINTS, state.worldSeed + 8888)
+    this.decorData.push(...prestonDecor)
+    this.cullDecor()
+    const roadCenterline = [...trailCenterline, ...prestonCenterline]
+
+    // Heavier pebble wear right at the crossing — a dense seeded patch within a
+    // 15px radius of the junction so it reads as a well-trafficked intersection.
+    {
+      let jk = (state.worldSeed + 5252) >>> 0
+      const jrand = () => { jk = (jk * 1664525 + 1013904223) >>> 0; return jk / 4294967296 }
+      const JUNCTION_R = 20
+      const JUNCTION_PEBBLES = 24
+      for (let i = 0; i < JUNCTION_PEBBLES; i++) {
+        const a = jrand() * Math.PI * 2
+        const r = JUNCTION_R * (0.8 + jrand() * 0.2)   // ring: 80–100% of radius, hollow center
+        const px = Math.floor(PRESTON_JUNCTION_X + Math.cos(a) * r)
+        const py = Math.floor(2301 + Math.sin(a) * r)
+        this.decorData.push({ x: px, y: py, type: 'pebbles', scale: 2 })
+      }
+      this.cullDecor()
+    }
+
     // Wild herd grazing off the trail, at a seed-chosen spot in the first half
     // of the journey (near the trail, visible from it). Different world → herd
     // somewhere new; same world → same spot. Each honse mills around its own
@@ -854,14 +889,15 @@ export class Overworld extends Phaser.Scene {
     {
       const rwb = state.worldBounds
       const rockBounds: GenRect = { x: rwb.minX, y: rwb.minY, w: rwb.width, h: rwb.height }
-      const centers = scatterTrailRockClusters(TRAIL_WAYPOINTS, rockBounds, state.worldSeed + 6464)
+      const startAreaCenter = { x: cx, y: cy, radius: 2000 }
+      const centers = scatterTrailRockClusters(TRAIL_WAYPOINTS, rockBounds, state.worldSeed + 6464, [startAreaCenter])
       let rk = (state.worldSeed + 6464) >>> 0
       const rand = () => { rk = (rk * 1664525 + 1013904223) >>> 0; return rk / 4294967296 }
       const rockBlockers = this.getBlockers(40)
       for (const c of centers) {
         const heaps = 2 + Math.floor(rand() * 6)
         const placed: { x: number; y: number }[] = []
-        const MIN_GAP = 30
+        const MIN_GAP = 40
         const minSq = MIN_GAP * MIN_GAP
         let attempts = 0
         while (placed.length < heaps && attempts < heaps * 30) {
@@ -889,6 +925,7 @@ export class Overworld extends Phaser.Scene {
             if (Math.abs(hx - v.x) < PLOT_SIZE / 2 && Math.abs(hy - v.y) < PLOT_SIZE / 2) { blocked = true; break }
           }
           if (blocked) continue
+          if (pointToPolylineDist(hx, hy, roadCenterline) < 25) continue
           placed.push({ x: hx, y: hy })
           this.spawnRockFormation(hx, hy)
         }
@@ -906,10 +943,10 @@ export class Overworld extends Phaser.Scene {
     {
       const wb = state.worldBounds
       const treeBounds: GenRect = { x: wb.minX, y: wb.minY, w: wb.width, h: wb.height }
-      const TREE_TRAIL_CLEARANCE = 15   // px kept clear of the path
+      const TREE_TRAIL_CLEARANCE = 25   // px kept clear of the path
       const TREE_MIN_SPACING = 90       // px between trees
       const candidates = scatterTrailTrees(
-        trailCenterline, treeBounds, state.worldSeed + 4242,
+        roadCenterline, treeBounds, state.worldSeed + 4242,
         TREE_TRAIL_CLEARANCE, TREE_MIN_SPACING,
       )
       const blockers = this.getBlockers(40)
@@ -989,7 +1026,7 @@ export class Overworld extends Phaser.Scene {
           this.player.x = this.preInteriorPos.x + dx * 5
           this.player.y = this.preInteriorPos.y + dy * 5
         }
-        this.player.setDepth(depthForY(this.player.y) + 8)
+        this.player.setDepth(depthForY(this.player.y) - 8)
         this.preInteriorPos = null
         this.preInteriorBuildingPos = null
         this.exitForceSouth = false
@@ -1074,7 +1111,7 @@ export class Overworld extends Phaser.Scene {
   // dropping doesn't require pixel-perfect aim.
   private static PLANT_HIT_RADIUS = 28
   // Axe hits required to fell a mature tree.
-  private static CHOP_HITS_TO_FELL = 8
+  private static CHOP_HITS_TO_FELL = 12
   // Pickaxe hits required to deplete a rock formation.
   private static MINE_HITS_TO_DEPLETE = 12
   // Axe hit-radius for destroying a placed post — matches CHOP_HIT_RADIUS.
@@ -2286,7 +2323,7 @@ export class Overworld extends Phaser.Scene {
 
     state.placedPosts.push({ x, y, species })
     const tex = this.resolvePostTexture(x, y, species)
-    const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(depthForY(y) + 8)
+    const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(depthForY(y) - 8)
     this.placedPostSprites.set(`${x},${y}`, sprite)
     this.obstacles.push(newObs)
     this.placedPostBodies.set(`${x},${y}`, this.addRopeBlocker(newObs))
@@ -2301,7 +2338,7 @@ export class Overworld extends Phaser.Scene {
 
   spawnCrate(x: number, y: number) {
     state.placedCrates.push({ x, y, contents: createCrateContents() })
-    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(depthForY(y) + 8).setInteractive()
+    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(depthForY(y) - 8).setInteractive()
     this.attachCrateOpenHandler(sprite)
     this.crateSprites.push(sprite)
     this.crateBodies.push(this.matter.add.rectangle(x, y, 16, 16, { frictionAir: 0.1 }))
@@ -2357,7 +2394,7 @@ export class Overworld extends Phaser.Scene {
     }
 
     state.placedCrates.push({ x, y, contents: createCrateContents() })
-    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(depthForY(y) + 8).setInteractive()
+    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(depthForY(y) - 8).setInteractive()
     this.attachCrateOpenHandler(sprite)
     this.crateSprites.push(sprite)
     this.crateBodies.push(this.matter.add.rectangle(x, y, 16, 16, { frictionAir: 0.1 }))
@@ -2611,7 +2648,7 @@ export class Overworld extends Phaser.Scene {
     x = spot.x; y = spot.y
     const honse = createHonse(x, y)
     state.honses.push(honse)
-    const spr = this.add.sprite(x, y, honse.sprite).setScale(2).setDepth(depthForY(y) + 8)
+    const spr = this.add.sprite(x, y, honse.sprite).setScale(2).setDepth(depthForY(y) - 8)
     if (honse.tinted) spr.setTint(honse.tint)
     this.honseSprites.push(spr)
     this.honseBodies.push(
@@ -2622,7 +2659,7 @@ export class Overworld extends Phaser.Scene {
   private placePost(x: number, y: number, species: 'post' | 'cedar_post') {
     state.placedPosts.push({ x, y, species })
     const tex = this.resolvePostTexture(x, y, species)
-    const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(depthForY(y) + 8)
+    const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(depthForY(y) - 8)
     this.placedPostSprites.set(`${x},${y}`, sprite)
     this.obstacles.push(this.makePostObstacle(x, y))
     this.refreshPostNeighbors(x, y)
@@ -2698,7 +2735,7 @@ export class Overworld extends Phaser.Scene {
     const arrow = this.add.sprite(midX, midY, chevronKey)
       .setScale(2)
       .setRotation(angle)
-      .setDepth(midY + 1)
+      .setDepth(depthForY(midY) + 1)
     this.pipeArrows.set(key, arrow)
   }
 
@@ -3223,7 +3260,7 @@ export class Overworld extends Phaser.Scene {
       }
       s.x = h.x
       s.y = h.y
-      s.setDepth(depthForY(h.y) + 8)
+      s.setDepth(depthForY(h.y) - 8)
       s.setFlipX(h.facingRight)
 
       // footprints: drop one every ~12px of travel while moving
@@ -3269,7 +3306,7 @@ export class Overworld extends Phaser.Scene {
       if (sprite) {
         sprite.x = bx
         sprite.y = by
-        sprite.setDepth(by + 8)
+        sprite.setDepth(depthForY(by) - 8)
       }
       // update obstacle AABB
       if (obs) {
@@ -3424,7 +3461,7 @@ export class Overworld extends Phaser.Scene {
       // lock player sprite to the saddle
       this.player.x = h.x
       this.player.y = h.y + MOUNT_SADDLE_Y
-      this.player.setDepth(depthForY(h.y) + 9)   // one above the honse so the rider is on top
+      this.player.setDepth(depthForY(h.y) - 7)
       // the rider casts no separate ground shadow while up on the honse
       this.playerShadow.setVisible(false)
     } else if (overworldVisible) {
