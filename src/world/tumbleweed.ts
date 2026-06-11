@@ -10,7 +10,6 @@
 // is hand-placed or teleported.
 
 import Phaser from 'phaser'
-import { depthForY } from '../game/state'
 
 // Forces (per frame). Matter forces are tiny — scaled by body mass.
 // The wind FLUCTUATES: its eastward push rises and falls over time (gusts),
@@ -46,7 +45,7 @@ const CAT_WORLD = 0x0001
 const CAT_TUMBLEWEED = 0x0004
 
 // Spawn tuning
-const SPAWN_INTERVAL = 350000
+const SPAWN_INTERVAL = 420000
 const MAX_ALIVE = 3
 const DESPAWN_MARGIN = 800
 // Weeds enter this far left of the view, across a band extending this far above
@@ -90,7 +89,7 @@ export function spawnTumbleweed(scene: Phaser.Scene, atX?: number, atY?: number,
 
   const sprite = scene.add.sprite(x, y, 'tumbleweed')
     .setScale(SPRITE_SCALE)
-    .setDepth(depthForY(y))
+    .setDepth(y)
 
   // The weed: a normal dynamic circle. The engine owns its motion entirely.
   // It keeps colliding with the world (rocks/buildings) and with its own floor.
@@ -172,7 +171,7 @@ export function updateTumbleweeds(
     tw.sprite.x = bx
     tw.sprite.y = by
     tw.sprite.rotation = tw.angle
-    tw.sprite.setDepth(depthForY(by))
+    tw.sprite.setDepth(by)
 
     // ---- player bounce: the player isn't a Matter body, so push the weed
     // away manually with a velocity impulse. The engine carries it from there.

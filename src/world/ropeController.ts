@@ -21,6 +21,7 @@
 import Phaser from 'phaser'
 import { state } from '../game/state'
 import { getHonseNeckAnchor } from './honse'
+import { getCoyoteNeckAnchor } from './coyote'
 
 // ---- tuning ----
 const ROPE_SEGMENTS = 20
@@ -37,7 +38,7 @@ export const CAT_WORLD = 0x0001
 export const CAT_HONSE = 0x0002
 const ROPE_THROW_SPEED = 60
 const ROPE_TRANSITION_THROW_SPEED = 40
-const ROPE_THROW_MOUNTED_MULT = 2.5   // mounted throws fire harder so the rope leads a galloping mount
+const ROPE_THROW_MOUNTED_MULT = 2.3   // mounted throws fire harder so the rope leads a galloping mount
 const ROPE_LIFETIME_MS = 2000          // unattached rope auto-cleanup
 const ROPE_COLOR = 0x8B5A2B
 const ROPE_THICKNESS = 3
@@ -53,6 +54,7 @@ export type RopeEnd =
     | { kind: 'player' }
     | { kind: 'post'; x: number; y: number }
     | { kind: 'honse'; index: number }
+    | { kind: 'coyote'; index: number }
     | { kind: 'crate'; index: number }
 
 // ---- internal rope record ----
@@ -113,6 +115,10 @@ export class RopeController {
             const c = state.placedCrates[end.index]
             return c ? { x: c.x, y: c.y } : null
         }
+        if (end.kind === 'coyote') {
+            const cy = state.coyotes[end.index]
+            return cy ? getCoyoteNeckAnchor(cy) : null
+        }
         const h = state.honses[end.index]
         if (!h) return null
         return getHonseNeckAnchor(h)
@@ -147,6 +153,19 @@ export class RopeController {
             let other: RopeEnd | null = null
             if (r.endA.kind === 'honse' && r.endA.index === honseIndex) other = r.endB
             else if (r.endB.kind === 'honse' && r.endB.index === honseIndex) other = r.endA
+            if (!other) continue
+            const pos = this.endPos(other)
+            if (pos) return pos
+        }
+        return null
+    }
+
+    getCoyoteTetherAnchor(coyoteIndex: number): { x: number; y: number } | null {
+        for (const r of this.ropes) {
+            if (!r.endB) continue
+            let other: RopeEnd | null = null
+            if (r.endA.kind === 'coyote' && r.endA.index === coyoteIndex) other = r.endB
+            else if (r.endB.kind === 'coyote' && r.endB.index === coyoteIndex) other = r.endA
             if (!other) continue
             const pos = this.endPos(other)
             if (pos) return pos
@@ -541,6 +560,13 @@ export class RopeController {
             const dx = x - neck.x
             const dy = y - neck.y
             if (dx * dx + dy * dy <= honseR2) return { kind: 'honse', index: i }
+        }
+        for (let i = 0; i < state.coyotes.length; i++) {
+            if (fromEnd.kind === 'coyote' && fromEnd.index === i) continue
+            const a = getCoyoteNeckAnchor(state.coyotes[i])
+            const dx = x - a.x
+            const dy = y - a.y
+            if (dx * dx + dy * dy <= honseR2) return { kind: 'coyote', index: i }
         }
         return null
     }

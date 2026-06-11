@@ -6,19 +6,22 @@ import type { ItemStack, ItemType, ItemDef } from '../items/types'
 import { ITEMS } from '../items/types'
 import type { WorldStructure } from '../world/structures'
 import type { Honse } from '../world/honse'
+import type { Coyote } from '../world/coyote'
 
 export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage'
 export type BuiltType = Exclude<BuildingType, 'empty'>
 
 export const MAX_GOLD = 999_999
+export const MAX_HEALTH = 3
 
 // Terrain grid. One byte per TERRAIN_TILE-square cell covering the world, the
 // ground-truth map every system reads and writes: gen seeds it, the renderer
 // draws from it, planting reads it, fertilizing writes it. Salt=0 so a zeroed
 // array is an all-salt basin by default; other terrains are written in.
-export const Terrain = { Salt: 0, Grass: 1, Water: 2, CrackedDirt: 3 } as const
+export const Terrain = { Salt: 0, Grass: 1, Water: 2, CrackedDirt: 3, PathDirt: 4 } as const
 export type Terrain = (typeof Terrain)[keyof typeof Terrain]
 export const TERRAIN_TILE = 16
+export const WOOD_TILE = 24
 // Initial world size in pixels. This is the ONLY place the starting size is
 // written — worldBounds and the terrain grid derive from it, and growWorld()
 // resizes them at runtime.
@@ -33,13 +36,14 @@ export interface WorldBounds {
   height: number
 }
 
-export const MODIFIER_SLOTS_PER_PLOT = 8
-
 // General store sell-grid: 6 columns × 4 rows.
 export const GENERAL_STORE_SLOTS = 24
 
 // World-placed crate storage: 6 columns × 4 rows, same grid as the store.
 export const CRATE_SLOTS = 24
+
+// Standalone world well water capacity — fills to this, then idles.
+export const WORLD_WELL_CAP = 4
 
 // Storage building: base 24 slots (6×4), grows with level.
 export const STORAGE_BASE_SLOTS = 24
@@ -93,9 +97,6 @@ export interface PlotState {
   // When false it's a plain crafting table — each craft is pulled by hand.
   // Toggled by the player in the workshop interior.
   autoCraft?: boolean
-  // modifier rack — every building has one; items here will eventually affect
-  // production but right now just store anything the player drops in.
-  modifiers: (ItemStack | null)[]
   // field-only: per-cell state for the 5×5 planting grid. undefined for
   // non-field plots; initialized when a field is built.
   fieldCells?: FieldCell[]
@@ -171,6 +172,7 @@ export function createCrateContents(): (ItemStack | null)[] {
 
 class GameState {
   gold = 20
+  health = MAX_HEALTH
   plots: PlotState[] = []
   // Fixed world buildings (shop, church, etc.) — not owned, not bought, no ticks.
   worldStructures: WorldStructure[] = []
@@ -208,11 +210,17 @@ class GameState {
   // and an obstacle in collision. `species` chooses which sprite to render —
   // 'post' (weathered cottonwood gray) or 'cedar_post' (warm cedar brown).
   // Mechanically identical otherwise.
-  placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' }[] = []
+  placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' | 'iron_post' }[] = []
+  placedGates: { x: number; y: number; vertical: boolean; open: boolean; swingX: number; swingY: number }[] = []
   // Crates placed by the player. Each is a sprite + obstacle in the world (like
   // a post) plus its own storage grid in `contents` (CRATE_SLOTS long). The
   // contents persist for the play session — open the crate to take/put items.
   placedCrates: { x: number; y: number; contents: (ItemStack | null)[] }[] = []
+  // Standalone world wells (e.g. the one in the north town). Each produces
+  // water up to WORLD_WELL_CAP, then idles until the player takes some. Unlike
+  // plot wells these have no level/upgrades — a fixed-rate water bucket you
+  // walk up to and open like a plot well.
+  worldWells: { x: number; y: number; water: number; lastTickAt: number }[] = []
   // Pipe connections between plots. Each pipe links a source plot's output
   // to a destination plot's input. Items flow automatically on tick.
   // fromPlot/toPlot are indices into the plots array.
@@ -220,6 +228,10 @@ class GameState {
   // Honses in the world. Position is the visual center; sprite/collision/rope
   // hitboxes derive from this. Stationary for now — movement comes later.
   honses: Honse[] = []
+  coyotes: Coyote[] = []
+  // Dead coyotes left lying in the world as carcasses. Inert (no AI, no damage,
+  // not targetable). Later: vultures clean these up, then they're removed.
+  carcasses: { x: number; y: number }[] = []
   // Index into `honses` of the honse the player is currently riding, or null.
   // While set, the honse's AI is suppressed and player input moves the honse;
   // the player sprite is locked to the honse position each frame.
@@ -245,8 +257,12 @@ class GameState {
   terrainCols = INITIAL_WORLD_PX / TERRAIN_TILE
   terrainRows = INITIAL_WORLD_PX / TERRAIN_TILE
 
-  // Terrain grid. Reallocated in init() and by growWorld().
   terrain: Uint8Array = new Uint8Array(this.terrainCols * this.terrainRows)
+
+  woodCols = Math.ceil(INITIAL_WORLD_PX / WOOD_TILE)
+  woodRows = Math.ceil(INITIAL_WORLD_PX / WOOD_TILE)
+  wood: Uint8Array = new Uint8Array(this.woodCols * this.woodRows)
+
 
 
   // General store sell-grid contents — items dragged in here are sold on click.
@@ -272,6 +288,12 @@ class GameState {
   gameTime = 0
   // When true, gameTime stops advancing and every gameplay timer freezes.
   paused = false
+
+  // True while the player is present in the overworld; false while inside an
+  // interior. Written only by the interior enter/exit paths. Every enemy system
+  // reads this and freezes (no AI, no damage) when it's false, so enemies can't
+  // act against the absent player. New enemy types must respect it.
+  playerInWorld = true
 
   // NPC dialogue progression — each flag flips true the first time its line
   // is shown, and the corresponding line is never shown again.
@@ -358,8 +380,23 @@ class GameState {
     this.terrain[r * this.terrainCols + c] = t
   }
 
+  woodAt(x: number, y: number): number {
+    const c = Math.floor((x - this.worldBounds.minX) / WOOD_TILE)
+    const r = Math.floor((y - this.worldBounds.minY) / WOOD_TILE)
+    if (c < 0 || r < 0 || c >= this.woodCols || r >= this.woodRows) return 0
+    return this.wood[r * this.woodCols + c]
+  }
+
+  setWoodAt(x: number, y: number, v: number) {
+    const c = Math.floor((x - this.worldBounds.minX) / WOOD_TILE)
+    const r = Math.floor((y - this.worldBounds.minY) / WOOD_TILE)
+    if (c < 0 || r < 0 || c >= this.woodCols || r >= this.woodRows) return
+    this.wood[r * this.woodCols + c] = v
+  }
+
   init(plotCount: number) {
-    this.gold = 20
+    this.gold = 2000
+    this.health = MAX_HEALTH
     // Roll this world's seed. generateWorld reads state.worldSeed, so the
     // whole layout derives from this one number. Random per new game today;
     // a future menu can set worldSeed before calling init() to replay a world.
@@ -367,20 +404,19 @@ class GameState {
     // Reset the pausable game clock for the new game.
     this.gameTime = 0
     this.paused = false
+    this.playerInWorld = true
     this.plots = Array.from({ length: plotCount }, () => ({
       built: 'empty' as BuildingType,
       level: 1,
       lastTickAt: 0,
       lastItemTickAt: 0,
-      output: null,
-      modifiers: Array.from({ length: MODIFIER_SLOTS_PER_PLOT }, () => null),
+      output: null
     }))
     // seed the fixed world buildings — these are hardcoded, not procedurally placed
     this.worldStructures = [
       { type: 'shop', x: 2400, y: 504, townId: 'northern_town' },
       { type: 'church', x: 2330, y: 504, townId: 'northern_town' },
       { type: 'general_store', x: 2700, y: 2304, townId: null },
-      { type: 'abandoned_house', x: 2100, y: 3400, townId: null },
       { type: 'land_office', x: 3030, y: 204, townId: 'northern_town' },
       { type: 'nursery', x: 3100, y: 204, townId: 'northern_town' },
       { type: 'tanner', x: 3235, y: 355, townId: 'northern_town' },
@@ -398,14 +434,21 @@ class GameState {
     this.terrainCols = INITIAL_WORLD_PX / TERRAIN_TILE
     this.terrainRows = INITIAL_WORLD_PX / TERRAIN_TILE
     this.terrain = new Uint8Array(this.terrainCols * this.terrainRows)
+    this.woodCols = Math.ceil(INITIAL_WORLD_PX / WOOD_TILE)
+    this.woodRows = Math.ceil(INITIAL_WORLD_PX / WOOD_TILE)
+    this.wood = new Uint8Array(this.woodCols * this.woodRows)
     this.placedPosts = []
+    this.placedGates = []
     this.placedCrates = []
+    this.worldWells = []
     this.pipes = []
     // honses spawn dynamically when twine is first crafted — start empty
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    this.inventory[0] = { type: 'plank', count: 10 }
+    this.inventory[0] = { type: 'bread', count: 64 }
+    this.inventory[1] = { type: 'axe', count: 64 }
+    this.inventory[2] = { type: 'rope', count: 64 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -569,6 +612,18 @@ class GameState {
     registry.set('gold', this.gold)
   }
 
+  changeHealth(n: number, registry: Phaser.Data.DataManager) {
+    this.health = Math.max(0, Math.min(MAX_HEALTH, this.health + n))
+    registry.set('playerHealth', this.health)
+    return this.health
+  }
+
+  healToFull(registry: Phaser.Data.DataManager) {
+    this.health = MAX_HEALTH
+    registry.set('playerHealth', this.health)
+    return this.health
+  }
+
   trySpend(n: number, registry: Phaser.Data.DataManager): boolean {
     if (this.gold < n) return false
     this.gold -= n
@@ -604,13 +659,6 @@ class GameState {
     }
     return true
   }
-
-  // Inverse of placeBuilding: tear a built plot back down to 'empty'. Returns
-  // every item stack that was sitting in the plot (producer output + workshop
-  // craft slots) so the caller can spill them back to the player — destroying
-  // a plot refunds its contents but not its build cost. Field growth state is
-  // not items, so it's simply discarded. Modifiers aren't built out yet, so
-  // they're reset but not spilled. No-op (returns []) on an empty plot.
   clearPlot(plotIndex: number): ItemStack[] {
     const plot = this.plots[plotIndex]
     if (!plot || plot.built === 'empty') return []
@@ -631,7 +679,6 @@ class GameState {
     plot.autoCraft = undefined
     plot.fieldCells = undefined
     plot.storageContents = undefined
-    plot.modifiers = Array.from({ length: MODIFIER_SLOTS_PER_PLOT }, () => null)
 
     return spill
   }
@@ -689,22 +736,35 @@ class GameState {
       next.set(old.subarray(srcStart, srcStart + oldCols), destStart)
     }
 
+    const addWoodTiles = Math.ceil(addPx / WOOD_TILE)
+    const oldWoodCols = this.woodCols
+    const oldWoodRows = this.woodRows
+    let newWoodCols = oldWoodCols
+    let newWoodRows = oldWoodRows
+    let woodColShift = 0
+    let woodRowShift = 0
+    switch (direction) {
+      case 'east':  newWoodCols = oldWoodCols + addWoodTiles; break
+      case 'west':  newWoodCols = oldWoodCols + addWoodTiles; woodColShift = addWoodTiles; break
+      case 'south': newWoodRows = oldWoodRows + addWoodTiles; break
+      case 'north': newWoodRows = oldWoodRows + addWoodTiles; woodRowShift = addWoodTiles; break
+    }
+    const nextWood = new Uint8Array(newWoodCols * newWoodRows)
+    for (let r = 0; r < oldWoodRows; r++) {
+      const srcStart = r * oldWoodCols
+      const destStart = (r + woodRowShift) * newWoodCols + woodColShift
+      nextWood.set(this.wood.subarray(srcStart, srcStart + oldWoodCols), destStart)
+    }
+
     this.terrain = next
+    this.wood = nextWood
     this.terrainCols = newCols
     this.terrainRows = newRows
+    this.woodCols = newWoodCols
+    this.woodRows = newWoodRows
     return addPx
   }
 }
 
 export const state = new GameState()
 
-// Maps a world Y to a render depth for overhead y-sorting (things lower on
-// screen draw in front). Measured from the world's TOP edge (minY) rather than
-// absolute zero, so depth stays non-negative after the world grows north into
-// negative Y — otherwise a sprite at negative Y gets a negative depth and
-// renders behind the background. At minY = 0 this returns Y unchanged, so it's
-// identical to the old behavior. This is the ONLY place Y becomes depth; every
-// y-sorted sprite routes through here.
-export function depthForY(y: number): number {
-  return y - state.worldBounds.minY
-}

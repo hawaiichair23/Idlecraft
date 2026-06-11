@@ -37,7 +37,7 @@ const UNLOCK_ENTRIES: UnlockEntry[] = [
     onBuy: () => { state.hasPipeUnlock = true },
   },
   { type: 'field', buyPrice: 300 },
-  { type: 'storage', buyPrice: 500 },
+  { type: 'storage', buyPrice: 400 },
 ]
 
 // Interior palette is now defined in InteriorBackdrop.ts INTERIOR_PALETTES.

@@ -7,24 +7,28 @@
 // Same split: this file is the catalog (types + metadata); state holds the
 // instances (where they're placed in the world).
 
-export type WorldStructureType = 'shop' | 'church' | 'general_store' | 'abandoned_house' | 'land_office' | 'nursery' | 'tanner'   // future: 'npc_house', ...
+export type WorldStructureType = 'shop' | 'church' | 'church_bell' | 'church_bell_back' | 'general_store' | 'abandoned_house' | 'house_roof' | 'long_house' | 'land_office' | 'nursery' | 'tanner'   // future: 'npc_house', ...
 
 export interface WorldStructureDef {
   name: string
-  sprite: string         // texture key registered in sprites/data.ts
-  scale: number          // on-screen render scale
-  // The interior background texture key, or undefined for a flat backdrop.
+  sprite: string
+  scale: number
   interiorBg?: string
+  tint?: number   // applied to the (white) base sprite when no per-instance tint is set
 }
 
 export const WORLD_STRUCTURES: Record<WorldStructureType, WorldStructureDef> = {
-  shop: { name: 'Tool Shop', sprite: 'shop', scale: 3 },
+  shop: { name: 'Tool Shop', sprite: 'shop', scale: 3, tint: 0xA5805F },
   church: { name: 'Church', sprite: 'church', scale: 3 },
-  general_store: { name: 'General Store', sprite: 'general_store', scale: 3 },
+  church_bell: { name: 'Bell Church', sprite: 'church_bell', scale: 3 },
+  church_bell_back: { name: 'Bell Church', sprite: 'church_bell_back', scale: 3 },
+  general_store: { name: 'General Store', sprite: 'shop', scale: 3, tint: 0xA6BC78 },
   abandoned_house: { name: 'Abandoned House', sprite: 'abandoned_house', scale: 3 },
-  land_office: { name: 'Land Office', sprite: 'land_office', scale: 3 },
-  nursery: { name: 'Nursery', sprite: 'nursery', scale: 3 },
-  tanner: { name: 'Tanner', sprite: 'nursery', scale: 3 },
+  house_roof: { name: 'House', sprite: 'house_roof', scale: 3 },
+  long_house: { name: 'Long House', sprite: 'long_house', scale: 3 },
+  land_office: { name: 'Land Office', sprite: 'shop', scale: 3, tint: 0xC8A86A },
+  nursery: { name: 'Nursery', sprite: 'shop', scale: 3, tint: 0x9CB592 },
+  tanner: { name: 'Tanner', sprite: 'shop', scale: 3, tint: 0x9C6B43 },
 }
 
 // A single placed instance in the world.
@@ -32,13 +36,9 @@ export interface WorldStructure {
   type: WorldStructureType
   x: number
   y: number
-  // Which town this structure belongs to. null = unaffiliated.
   townId: string | null
-  // Walkable-interior loot for THIS instance, seeded on first visit. When
-  // present (even as []), it overrides any hardcoded default in the interior
-  // dispatch — so a procedurally-placed house can carry its own loot (or be
-  // deliberately empty) independent of the authored in-town house. undefined
-  // means "use the interior's built-in default" (the authored hemp house).
+  flipX?: boolean
+  tint?: number
   loot?: { x: number; y: number; type: string; count?: number }[]
 }
 

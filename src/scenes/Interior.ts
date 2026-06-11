@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { COLORS, FONT } from '../colors'
-import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, getStorageSlotCount, STORAGE_COLS, MODIFIER_SLOTS_PER_PLOT, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
+import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, getStorageSlotCount, STORAGE_COLS, WORLD_WELL_CAP, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack, type ItemType } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
 import { type WorldStructureType } from '../world/structures'
@@ -9,7 +9,7 @@ import type { UI } from './UI'
 import type { SlotBinding } from '../ui/SlotBinding'
 import type { SlotVisual } from './InteriorTypes'
 import { registerGrabbable } from '../ui/hover'
-import { makeSlotImage, makeStorageBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
+import { makeSlotImage, makeStorageBinding, makeProducerOutputBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
 import { buildProducerInterior } from './ProducerInterior'
 import { buildWorkshopInterior } from './WorkshopInterior'
 import { buildShopInterior } from './ShopInterior'
@@ -19,11 +19,12 @@ import { buildLandOfficeInterior } from './LandOfficeInterior'
 import { buildChurchInterior } from './ChurchInterior'
 import { buildNurseryInterior } from './NurseryInterior'
 import { buildTannerInterior } from './TannerInterior'
-import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
+import { INTERIOR_PALETTES } from './InteriorBackdrop'
 
 export type InteriorData =
   | { source: 'plot'; buildingType: BuiltType; plotIndex: number }
-  | { source: 'world'; buildingType: WorldStructureType; structureIndex: number; loot?: { x: number; y: number; type: ItemType; count?: number }[] }
+  | { source: 'worldWell'; wellIndex: number }
+  | { source: 'world'; buildingType: WorldStructureType; structureIndex: number; flipX?: boolean; loot?: { x: number; y: number; type: ItemType; count?: number }[] }
 
 // Panel layout constants
 const PANEL_W = 440
@@ -33,6 +34,8 @@ const SLOT_GAP = 4
 
 export class Interior extends Phaser.Scene {
   private interiorData!: InteriorData
+  private enterAt = 0
+  private panelBuilt = false
 
   // Read-only access for systems outside the scene (e.g. CursorController
   // checking which kind of interior is active).
@@ -55,6 +58,7 @@ export class Interior extends Phaser.Scene {
     this.slotVisuals = []
     this.moduleUpdates = []
     this.moduleCleanups = []
+    this.panelBuilt = false
   }
 
   preload() {
@@ -74,15 +78,6 @@ export class Interior extends Phaser.Scene {
     const h = this.cameras.main.height
 
     // ---- background ----
-    // Plot buildings use the shared backdrop system, same as world structures.
-    // Each building type maps to a named palette in INTERIOR_PALETTES.
-    // Exception: field uses a full-art PNG instead.
-    const plotPalettes: Partial<Record<string, typeof INTERIOR_PALETTES[keyof typeof INTERIOR_PALETTES]>> = {
-      mill: INTERIOR_PALETTES.mill,
-      well: INTERIOR_PALETTES.well,
-      workshop: INTERIOR_PALETTES.workshop,
-      storage: INTERIOR_PALETTES.storage,
-    }
     if (this.interiorData.source === 'plot') {
       if (this.interiorData.buildingType === 'field') {
         const fieldPlotIndex = this.interiorData.plotIndex
@@ -277,23 +272,24 @@ export class Interior extends Phaser.Scene {
           },
         })
         this.events.on('shutdown', () => growthTimer.remove(false))
-      } else {
-        const palette = plotPalettes[this.interiorData.buildingType]
-        if (palette) buildInteriorBackdrop(this, palette)
       }
     }
 
     // ---- back button + keyboard exits ----
     // Walkable interiors (abandoned house, future barns) require the player
     // to physically walk out — no back button, no ESC/E exits.
-    const isWalkable = this.interiorData.source === 'world' && this.interiorData.buildingType === 'abandoned_house'
+    const isWalkable = this.interiorData.source === 'world' && (this.interiorData.buildingType === 'abandoned_house' || this.interiorData.buildingType === 'long_house')
     if (!isWalkable) {
-      const back = this.add.rectangle(50, UI_BAR_HEIGHT + 30, 80, 32, COLORS.uiBarBg)
-        .setInteractive()
-      registerGrabbable(back)
-      this.add.bitmapText(50, UI_BAR_HEIGHT + 30, 'main', 'Back', FONT.desc)
-        .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-      back.on('pointerdown', () => this.exit())
+      // Plot + world-well popups close by clicking the shade or ESC/E, so they
+      // get no on-screen Back button. Other interiors keep it.
+      if (this.interiorData.source !== 'plot' && this.interiorData.source !== 'worldWell') {
+        const back = this.add.rectangle(50, UI_BAR_HEIGHT + 30, 80, 32, COLORS.uiBarBg)
+          .setInteractive()
+        registerGrabbable(back)
+        this.add.bitmapText(50, UI_BAR_HEIGHT + 30, 'main', 'Back', FONT.desc)
+          .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
+        back.on('pointerdown', () => this.exit())
+      }
       this.input.keyboard!.on('keydown-ESC', () => this.exit())
       this.input.keyboard!.on('keydown-E', () => this.exit())
     }
@@ -304,8 +300,13 @@ export class Interior extends Phaser.Scene {
     if (this.interiorData.source === 'plot') {
       // field has its own art background and no panel yet — just the room.
       if (this.interiorData.buildingType !== 'field') {
-        this.buildPlotPanel(w, h, onSlotShiftClick, onCraftAllShiftClick)
+        // Panel builds in update() once 300ms (game clock) have passed, so the
+        // player vanishes first and the menu follows a beat later.
+        this.enterAt = state.gameTime
       }
+    } else if (this.interiorData.source === 'worldWell') {
+      // Same gated reveal as plot wells: vanish first, popup follows.
+      this.enterAt = state.gameTime
     } else if (this.interiorData.buildingType === 'general_store') {
       const handle = buildGeneralStoreInterior(this, onSlotShiftClick)
       this.bindings.push(...handle.bindings)
@@ -330,6 +331,17 @@ export class Interior extends Phaser.Scene {
         stateKey: `abandoned_house:${this.interiorData.structureIndex}`,
         ...INTERIOR_PALETTES.abandonedHouse,
         wallHeightFraction: 0.45,
+        initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
+      }, () => this.exit())
+      this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'long_house') {
+      const loot = this.interiorData.loot ?? []
+      const handle = buildWalkableInterior(this, {
+        stateKey: `long_house:${this.interiorData.structureIndex}`,
+        ...INTERIOR_PALETTES.longHouse,
+        wallHeightFraction: 0.45,
+        openSide: this.interiorData.flipX ? 'left' : 'right',
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
       }, () => this.exit())
       this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
@@ -379,8 +391,11 @@ export class Interior extends Phaser.Scene {
     const panelY = playAreaTop + playAreaH / 2 - 50
 
     // ---- panel background ----
+    // Interactive so clicks on the panel body are absorbed here instead of
+    // falling through to the shade behind it (which closes the menu).
     this.add.nineslice(panelX, panelY, 'menu-bg', undefined, PANEL_W, panelH, 16, 16, 16, 16)
       .setTint(COLORS.interiorPanel)
+      .setInteractive()
 
     // ---- title ----
     const titleY = panelY - panelH / 2 + PANEL_PAD + 14
@@ -390,12 +405,11 @@ export class Interior extends Phaser.Scene {
       .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
 
     // ---- tab bar ----
-    // Workshops skip Modifiers but get an Upgrades tab.
     const tabNames = buildingType === 'workshop'
       ? ['Production', 'Upgrades', 'Info']
       : buildingType === 'storage'
       ? ['Storage', 'Upgrades', 'Info']
-      : ['Production', 'Upgrades', 'Modifiers', 'Info']
+      : ['Production', 'Upgrades', 'Info']
     const tabY = panelY - panelH / 2 + PANEL_PAD + TITLE_H + TAB_BAR_H / 2
     const tabW = (PANEL_W - PANEL_PAD * 2) / tabNames.length
     const tabLabels: Phaser.GameObjects.BitmapText[] = []
@@ -580,44 +594,7 @@ export class Interior extends Phaser.Scene {
       })
     }
 
-    // -- MODIFIERS tab (2) -- skipped for workshops and storage
-    if (buildingType !== 'workshop' && buildingType !== 'storage') {
-      const modifiersContainer = this.add.container(0, 0).setVisible(false)
-      tabContainers.push(modifiersContainer)
-      const MOD_COLS = 4
-      const MOD_ROWS = 2
-      const modGridW = MOD_COLS * SLOT + (MOD_COLS - 1) * SLOT_GAP
-      const modGridH = MOD_ROWS * SLOT + (MOD_ROWS - 1) * SLOT_GAP
-      const modStartX = panelX - modGridW / 2 + SLOT / 2
-      const modStartY = contentY - modGridH / 2 + SLOT / 2
-
-      const ui = this.scene.get('UI') as UI
-      const dc = ui.getDragController()
-
-      for (let i = 0; i < MODIFIER_SLOTS_PER_PLOT; i++) {
-        const col = i % MOD_COLS
-        const row = Math.floor(i / MOD_COLS)
-        const slotX = modStartX + col * (SLOT + SLOT_GAP)
-        const slotY = modStartY + row * (SLOT + SLOT_GAP)
-        const getStack = () => state.plots[plotIndex].modifiers[i]
-        const slotImg = makeSlotImage(this, { x: slotX, y: slotY, peek: getStack, tooltipOffsetY: -44 })
-        const setStack = (s: ItemStack | null) => { state.plots[plotIndex].modifiers[i] = s }
-        this.slotVisuals.push({ x: slotX, y: slotY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container: modifiersContainer })
-
-        const binding = makeStorageBinding({ x: slotX, y: slotY }, getStack, setStack, { onChange: () => {} })
-        this.bindings.push(binding)
-        dc.register(binding)
-
-        modifiersContainer.add(slotImg)
-
-        slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
-          if ((p.event as MouseEvent).shiftKey) { onSlotShiftClick(binding); return }
-          dc.handleSlotClick(binding, p)
-        })
-      }
-    }
-
-    // -- INFO tab (3) --
+    // -- INFO tab (2) --
     const infoContainer = this.add.container(0, 0).setVisible(false)
     tabContainers.push(infoContainer)
     {
@@ -669,6 +646,89 @@ export class Interior extends Phaser.Scene {
       tabLabels[i].on('pointerdown', () => setActiveTab(i))
     }
     setActiveTab(0)
+  }
+
+  // Standalone world well: well sprite -> filling arrow -> water output slot,
+  // same Production-tab layout as a plot well but with no tabs/level/upgrades.
+  private buildWorldWellPanel(w: number, h: number, wellIndex: number) {
+    const TITLE_H = 44
+    const CONTENT_H = 96
+    const panelH = PANEL_PAD + TITLE_H + CONTENT_H + PANEL_PAD
+
+    const playAreaTop = UI_BAR_HEIGHT
+    const playAreaH = h - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT
+    const panelX = w / 2
+    const panelY = playAreaTop + playAreaH / 2 - 50
+
+    this.add.nineslice(panelX, panelY, 'menu-bg', undefined, PANEL_W, panelH, 16, 16, 16, 16)
+      .setTint(COLORS.interiorPanel)
+      .setInteractive()
+
+    const titleY = panelY - panelH / 2 + PANEL_PAD + 14
+    this.add.bitmapText(panelX, titleY, 'main', 'Well', FONT.title)
+      .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
+
+    const centerY = titleY + TITLE_H / 2 + CONTENT_H / 2
+
+    // Same building -> arrow -> output layout as buildProducerInterior.
+    const GAP = 16
+    const SYMBOL = 16
+    const layoutW = SLOT * 2 + GAP * 2 + SYMBOL
+    const startX = panelX - layoutW / 2
+    const buildingX = startX + SLOT / 2
+    const arrowX = buildingX + SLOT / 2 + GAP + SYMBOL / 2
+    const outputX = arrowX + SYMBOL / 2 + GAP + SLOT / 2
+
+    this.add.image(buildingX, centerY, 'menu-slot').setTint(COLORS.interiorPanel)
+    this.add.sprite(buildingX, centerY, 'well').setScale(2)
+    const producerArrow = this.add.sprite(arrowX, centerY, 'arrow_right').setScale(2)
+
+    // Translate the well's water count <-> a water ItemStack so the existing
+    // producer-output binding (and its collect behavior) works unchanged.
+    const getStack = (): ItemStack | null => {
+      const wl = state.worldWells[wellIndex]
+      return wl.water > 0 ? { type: 'water', count: wl.water } : null
+    }
+    const setStack = (s: ItemStack | null) => {
+      state.worldWells[wellIndex].water = s ? s.count : 0
+    }
+
+    const slotImg = makeSlotImage(this, { x: outputX, y: centerY, peek: getStack, tooltipOffsetY: -38 })
+
+    this.slotVisuals.push({
+      x: outputX, y: centerY, getStack,
+      icon: null, count: null, lastType: null, lastCount: 0,
+      container: undefined,
+    })
+
+    const binding = makeProducerOutputBinding(
+      { x: outputX, y: centerY },
+      'water',
+      getStack,
+      setStack,
+      { onChange: () => {} },
+    )
+    this.bindings.push(binding)
+
+    const ui = this.scene.get('UI') as UI
+    const dc = ui.getDragController()
+    dc.register(binding)
+
+    slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if ((p.event as MouseEvent).shiftKey) { this.shiftTakeToInventory(binding); return }
+      dc.handleSlotClick(binding, p)
+    })
+
+    // Arrow fills toward the next water tick, mirroring the plot producer.
+    const wellTick = BUILDINGS.well.itemTickMs!
+    this.moduleUpdates.push(() => {
+      const wl = state.worldWells[wellIndex]
+      const frac = wl.water >= WORLD_WELL_CAP ? 1 : ((state.gameTime - wl.lastTickAt) % wellTick) / wellTick
+      const r = Math.floor(Phaser.Math.Linear(0x55, 0xFF, frac))
+      const g = Math.floor(Phaser.Math.Linear(0x4a, 0xD7, frac))
+      const b = Math.floor(Phaser.Math.Linear(0x3e, 0x00, frac))
+      producerArrow.setTint((r << 16) | (g << 8) | b)
+    })
   }
 
   placeFromInventory(stack: ItemStack) {
@@ -740,6 +800,32 @@ export class Interior extends Phaser.Scene {
   }
 
   update() {
+    if (
+      !this.panelBuilt &&
+      (
+        (this.interiorData.source === 'plot' && this.interiorData.buildingType !== 'field') ||
+        this.interiorData.source === 'worldWell'
+      ) &&
+      state.gameTime - this.enterAt >= 150
+    ) {
+      this.panelBuilt = true
+      const w = this.cameras.main.width
+      const h = this.cameras.main.height
+      const shade = this.add.rectangle(0, UI_BAR_HEIGHT, w, h - UI_BAR_HEIGHT, COLORS.black, 0.45)
+        .setOrigin(0, 0)
+        .setInteractive()
+        .setDepth(0)
+      shade.on('pointerdown', () => this.exit())
+      if (this.interiorData.source === 'worldWell') {
+        this.buildWorldWellPanel(w, h, this.interiorData.wellIndex)
+      } else {
+        this.buildPlotPanel(
+          w, h,
+          (b: SlotBinding) => this.shiftTakeToInventory(b),
+          () => this.craftAllToInventory(),
+        )
+      }
+    }
     this.redrawAllCraftSlots()
     for (const fn of this.moduleUpdates) fn()
   }

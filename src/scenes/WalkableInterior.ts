@@ -11,7 +11,7 @@
 import Phaser from 'phaser'
 import { state, PLAYER_BASE_SPEED, type WalkableInteriorItemInstance } from '../game/state'
 import { ITEMS, type ItemType } from '../items/types'
-import { buildInteriorBackdrop } from './InteriorBackdrop'
+import { buildInteriorBackdrop, SIDE_WALL_INSET } from './InteriorBackdrop'
 import { UI_INVENTORY_BAR_HEIGHT } from './UI'
 
 // ---- config shape ----
@@ -35,6 +35,7 @@ export interface WalkableInteriorConfig {
   wallHeightFraction: number   // e.g. 0.33 → top third is wall
   // Initial item layout. Only used to seed state on the first visit.
   initialItems?: WalkableInteriorItem[]
+  openSide?: 'left' | 'right'
 }
 
 export interface WalkableInteriorHandle {
@@ -51,7 +52,7 @@ const PLAYER_HALF = 5
 const PICKUP_RADIUS = 18
 const PICKUP_ATTRACT_RADIUS = 40
 const PICKUP_ATTRACT_EASE = 0.25
-const EXIT_ZONE_H = 22       // thin strip at bottom of floor; bigger = exit triggers a few px higher (sooner)
+const EXIT_ZONE_H = 22
 
 // ---- builder ----
 
@@ -65,7 +66,14 @@ export function buildWalkableInterior(
     floorColor: config.floorColor,
     wallColor: config.wallColor,
     wallHeightFraction: config.wallHeightFraction,
+    openSide: config.openSide,
   })
+
+  if (config.openSide) {
+    const floorBottom = floorTop + floorH
+    const bottomWallH = floorH * 0.25
+    scene.add.rectangle(w / 2, floorBottom - bottomWallH / 2, w, bottomWallH, config.wallColor).setDepth(-5)
+  }
 
   // ---- seed state on first visit, then read from state ----
   if (state.walkableInteriors[config.stateKey] === undefined) {
@@ -79,8 +87,12 @@ export function buildWalkableInterior(
   const liveItems = state.walkableInteriors[config.stateKey]
 
   // ---- player ----
-  const playerStartX = w / 2
-  const playerStartY = floorTop + floorH - UI_INVENTORY_BAR_HEIGHT - 30  // near the door, above inventory bar
+  const playerStartX = config.openSide === 'left' ? EXIT_ZONE_H + PLAYER_HALF + 20
+    : config.openSide === 'right' ? w - EXIT_ZONE_H - PLAYER_HALF - 20
+    : w / 2
+  const playerStartY = config.openSide
+    ? floorTop + floorH / 2
+    : floorTop + floorH - UI_INVENTORY_BAR_HEIGHT - 30
   const player = scene.add.sprite(playerStartX, playerStartY, 'player')
     .setScale(PLAYER_SCALE)
     .setDepth(900)
@@ -105,7 +117,7 @@ export function buildWalkableInterior(
 
   // ---- update loop ----
   const update = (dt: number) => {
-    const owBase = state.playerSpeedOverride ?? PLAYER_BASE_SPEED
+    const owBase = (state.playerSpeedOverride ?? PLAYER_BASE_SPEED) + 60
     const buffed = state.gameTime < state.speedBuffEndsAt
     const owSpeed = owBase + (buffed ? state.speedBuffAmount : 0)
     const step = (owSpeed * dt) / 1000
@@ -122,8 +134,31 @@ export function buildWalkableInterior(
     const maxX = w - PLAYER_HALF
     const minY = floorTop + PLAYER_HALF
 const maxY = floorTop + floorH - PLAYER_HALF
-    player.x = Phaser.Math.Clamp(player.x + dx * step, minX, maxX)
+    player.x = Phaser.Math.Clamp(player.x + dx * step, 0, w)
     player.y = Phaser.Math.Clamp(player.y + dy * step, minY, maxY)
+
+    const yFrac = (player.y - floorTop) / floorH
+    const wallInsetPx = w * SIDE_WALL_INSET
+    if (config.openSide === 'left') {
+      const rightInset = 0.35
+      const rEdge = w * (1 - rightInset)
+      const rWallX = rEdge - wallInsetPx * (1 - yFrac)
+      player.x = Math.min(player.x, rWallX - PLAYER_HALF)
+    } else if (config.openSide === 'right') {
+      const leftInset = 0.35
+      const lEdge = w * leftInset
+      const lWallX = lEdge + wallInsetPx * (1 - yFrac)
+      player.x = Math.max(player.x, lWallX + PLAYER_HALF)
+    } else {
+      const lWallX = wallInsetPx * (1 - yFrac)
+      const rWallX = w - wallInsetPx * (1 - yFrac)
+      player.x = Phaser.Math.Clamp(player.x, lWallX + PLAYER_HALF, rWallX - PLAYER_HALF)
+    }
+
+    if (config.openSide) {
+      const bottomWallTop = floorTop + floorH - floorH * 0.25
+      player.y = Math.min(player.y, bottomWallTop - PLAYER_HALF - 10)
+    }
 
     // pickup items — walk through liveItems in reverse so splice indexing
     // stays safe within the loop.
@@ -152,8 +187,10 @@ const maxY = floorTop + floorH - PLAYER_HALF
       }
     }
 
-    // exit zone — player walked to the bottom edge
-    if (player.y >= floorTop + floorH - EXIT_ZONE_H) {
+    const exiting = config.openSide === 'left' ? player.x <= EXIT_ZONE_H
+      : config.openSide === 'right' ? player.x >= w - EXIT_ZONE_H
+      : player.y >= floorTop + floorH - EXIT_ZONE_H
+    if (exiting) {
       exitFn()
     }
   }

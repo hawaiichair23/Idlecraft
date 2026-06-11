@@ -130,12 +130,14 @@ export class UI extends Phaser.Scene {
     const heartsStartX = this.goldText.x + this.goldText.width + 34
     const startInCombat = (this.registry.get('inCombat') as boolean | undefined) ?? false
     for (let i = 0; i < 3; i++) {
-      const heart = this.add.sprite(heartsStartX + i * 28, BAR_HEIGHT / 2, 'heart')
+      const heart = this.add.sprite(heartsStartX + i * 28, BAR_HEIGHT / 2, 'heart_full')
         .setOrigin(0, 0.5)
         .setScale(3)
         .setVisible(startInCombat)
       this.hearts.push(heart)
     }
+    this.refreshHearts()
+    this.registry.events.on('changedata-playerHealth', () => this.refreshHearts())
     this.registry.events.on('changedata-inCombat', (_p: unknown, value: boolean) => {
       for (const h of this.hearts) h.setVisible(value)
     })
@@ -324,6 +326,20 @@ export class UI extends Phaser.Scene {
     this.menuShade.setVisible(true)
     this.menuContainer.setVisible(true)
     this.refreshMenuAffordability()
+  }
+
+  private refreshHearts() {
+    const health = (this.registry.get('playerHealth') as number | undefined) ?? this.hearts.length
+    for (let i = 0; i < this.hearts.length; i++) {
+      const fill = Math.max(0, Math.min(1, health - i))
+      const key =
+        fill >= 1 ? 'heart_full' :
+        fill >= 0.75 ? 'heart_3q' :
+        fill >= 0.5 ? 'heart_half' :
+        fill >= 0.25 ? 'heart_1q' :
+        'heart_empty'
+      this.hearts[i].setTexture(key)
+    }
   }
 
   private refreshMenuAffordability() {

@@ -3,7 +3,7 @@ import { ALL_SPRITES, type Sprite } from './data'
 
 // Build each sprite by drawing pixels into a Graphics object, then bake it into
 // a real texture via generateTexture. Avoids the DynamicTexture y-flip pitfall.
-function spriteToTexture(scene: Phaser.Scene, key: string, sprite: Sprite) {
+export function spriteToTexture(scene: Phaser.Scene, key: string, sprite: Sprite) {
   if (scene.textures.exists(key)) return  // HMR safety
 
   const h = sprite.length

@@ -42,6 +42,7 @@ document.addEventListener('fullscreenchange', () => game.scale.updateBounds())
 declare global {
   interface Window {
     gold: (n: number) => string
+    health: (n: number) => string
     speed: (n: number) => string
     playerSpeed: (n?: number) => string
     getItem: (name: string, count?: number) => string
@@ -55,6 +56,13 @@ declare global {
 window.gold = (n: number) => {
   state.addGold(n, game.registry)
   return `gold: ${state.gold}`
+}
+
+// Change player health by n (negative to damage). Clamped 0..MAX_HEALTH.
+// health(-0.75) for a coyote bite, health(3) to full-heal.
+window.health = (n: number) => {
+  state.changeHealth(n, game.registry)
+  return `health: ${state.health}`
 }
 
 // Set the production-tick time multiplier. 1 = normal, 2 = twice as fast,
@@ -110,6 +118,10 @@ window.spawnItem = (name: string, x?: number, y?: number) => {
       if (x === undefined || y === undefined) return 'crate needs coords: spawnItem("crate", x, y)'
       overworld.spawnCrate(x, y)
       return `spawned crate at ${x}, ${y}`
+    case 'coyote':
+      if (x === undefined || y === undefined) return 'coyote needs coords: spawnItem("coyote", x, y)'
+      overworld.spawnCoyote(x, y)
+      return `spawned coyote at ${x}, ${y}`
     case 'tumbleweed': {
       if (x !== undefined && y !== undefined) {
         spawnTumbleweed(overworld, x, y, true)
@@ -121,7 +133,7 @@ window.spawnItem = (name: string, x?: number, y?: number) => {
       return `spawned tumbleweed near player (${Math.round(p.x - 200)}, ${Math.round(p.y)})`
     }
     default:
-      return `can't spawn "${name}". spawnable: horse, rock, crate, tumbleweed`
+      return `can't spawn "${name}". spawnable: horse, rock, crate, tumbleweed, coyote`
   }
 }
 

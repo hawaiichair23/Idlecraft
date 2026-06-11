@@ -1,28 +1,34 @@
 // Pixel sprite data — 2D arrays where each cell is a hex color string or null.
 // Copied from project1. Loader converts these to Phaser textures at boot.
+import { COLORS } from '../colors'
+
+// Phaser-style hex number (0xRRGGBB) → CSS string ('#RRGGBB') for the pixel cells.
+const hexStr = (n: number) => '#' + n.toString(16).padStart(6, '0').toUpperCase()
+
 
 export type Sprite = (string | null)[][]
 
 const _ = null
 
 // ---- MILL ----
-const R = '#5C3A1E'
-const D = '#7A5230'
-const B = '#A0522D'
-const W = '#C4A35A'
-const O = '#654321'
-const K = '#4A2F0F'
-const F = '#6B3410'
-const S = '#5A2D0E'
-const A = '#A0522D'
+const R = '#412916'
+const D = '#5A3C24'
+const B = '#743D21'
+const W = '#917741'
+const O = '#492F17'
+const K = '#36230B'
+const S = '#41210D'
+const A = '#743D21'
+
+const Z = '#b97c5e'
 
 // Building art widened from the center: every column 7 duplicated to 7-8,
 // then last column dropped to keep the grid 16 wide. Now centered on cols 7-8.
 export const MILL: Sprite = [
-  [_,_,_,_,A,_,_,R,R,_,_,A,_,_,_,_],
-  [_,_,_,_,_,A,R,D,D,R,A,_,_,_,_,_],
-  [_,_,_,_,_,R,A,D,D,A,R,_,_,_,_,_],
-  [_,_,_,_,_,_,D,A,A,D,_,_,_,_,_,_],
+  [_,_,_,_,Z,_,_,Z,Z,_,_,Z,_,_,_,_],
+  [_,_,_,_,_,Z,Z,Z,Z,Z,Z,_,_,_,_,_],
+  [_,_,_,_,_,R,Z,D,D,Z,R,_,_,_,_,_],
+  [_,_,_,_,_,_,D,Z,Z,D,_,_,_,_,_,_],
   [_,_,_,_,_,_,A,D,D,A,_,_,_,_,_,_],
   [_,_,_,_,_,A,D,D,D,D,A,_,_,_,_,_],
   [_,_,_,_,_,A,D,D,D,D,A,_,_,_,_,_],
@@ -32,9 +38,9 @@ export const MILL: Sprite = [
   [_,_,_,_,B,B,B,B,B,B,B,B,_,_,_,_],
   [_,_,_,B,B,B,B,B,B,B,B,B,B,_,_,_],
   [_,_,_,B,B,B,O,O,O,O,B,B,B,_,_,_],
-  [_,_,_,B,B,B,O,K,K,O,B,B,B,_,_,_],
-  [_,_,F,F,F,F,F,F,F,F,F,F,F,F,_,_],
-  [_,_,S,S,S,S,S,S,S,S,S,S,S,S,_,_],
+  [_,_,S,B,B,B,O,K,K,O,B,B,B,S,_,_],
+  [_,_,S,S,S,S,S,K,K,S,S,S,S,S,_,_],
+  [_,_,_,S,S,S,S,S,S,S,S,S,S,_,_,_],
 ]
 
 // ---- ARROW (right-pointing) ----
@@ -97,14 +103,51 @@ const cD = '#8B6914'  // shadow (dark)
 
 // ---- HEART ----
 const hM = '#c50000'  // main red
+const hE = '#3a1515'  // drained / empty cell
 
-export const HEART: Sprite = [
+export const HEART_FULL: Sprite = [
   [_,hM,hM,_,hM,hM,_],
   [hM,hM,hM,hM,hM,hM,hM],
   [hM,hM,hM,hM,hM,hM,hM],
   [_,hM,hM,hM,hM,hM,_],
   [_,_,hM,hM,hM,_,_],
   [_,_,_,hM,_,_,_],
+]
+
+export const HEART_3Q: Sprite = [
+  [_,hM,hM,_,hE,hE,_],
+  [hM,hM,hM,hM,hE,hE,hE],
+  [hM,hM,hM,hM,hE,hE,hE],
+  [_,hM,hM,hM,hM,hM,_],
+  [_,_,hM,hM,hM,_,_],
+  [_,_,_,hM,_,_,_],
+]
+
+export const HEART_HALF: Sprite = [
+  [_,hM,hM,_,hE,hE,_],
+  [hM,hM,hM,hM,hE,hE,hE],
+  [hM,hM,hM,hM,hE,hE,hE],
+  [_,hM,hM,hM,hE,hE,_],
+  [_,_,hM,hM,hE,_,_],
+  [_,_,_,hM,_,_,_],
+]
+
+export const HEART_1Q: Sprite = [
+  [_,hM,hM,_,hE,hE,_],
+  [hM,hM,hM,hE,hE,hE,hE],
+  [hM,hM,hM,hE,hE,hE,hE],
+  [_,hE,hE,hE,hE,hE,_],
+  [_,_,hE,hE,hE,_,_],
+  [_,_,_,hE,_,_,_],
+]
+
+export const HEART_EMPTY: Sprite = [
+  [_,hE,hE,_,hE,hE,_],
+  [hE,hE,hE,hE,hE,hE,hE],
+  [hE,hE,hE,hE,hE,hE,hE],
+  [_,hE,hE,hE,hE,hE,_],
+  [_,_,hE,hE,hE,_,_],
+  [_,_,_,hE,_,_,_],
 ]
 
 export const GOLD_COIN: Sprite = [
@@ -120,7 +163,7 @@ export const GOLD_COIN: Sprite = [
 
 // ---- PLAYER ----
 const SK = '#D19766'
-const RD = '#CC2222'
+const RD = hexStr(COLORS.playerShirt)
 const GN = '#228822'
 const BT = '#553311'
 const HR = '#1A0F08'
@@ -135,6 +178,11 @@ export const PLAYER: Sprite = [
   [_,_,GN,GN,GN,GN,_,_],
   [_,_,BT,_,_,BT,_,_],
 ]
+
+// Solid-red silhouette of the player for the hurt-flash blink. Every filled
+// cell becomes the shirt red; transparent stays transparent. Derived from
+// PLAYER so the shape always matches.
+export const PLAYER_HURT: Sprite = PLAYER.map(row => row.map(cell => cell === _ ? _ : RD))
 
 // ---- WORKSHOP NPC ---- exact same shape as PLAYER, blue shirt, 1px black outline.
 // 10x10 grid: the original 8x8 sprite is positioned at columns 1..8, rows 0..7,
@@ -155,29 +203,65 @@ export const NPC_WORKSHOP: Sprite = [
 ]
 
 // ---- WELL ----
-const ST = '#888888'
-const SD = '#666666'
-const WA = '#4488CC'
-const WL = '#66AADD'
-const RP = '#8B4513'
+const ST = '#504a40'
+const STs = '#474239'
+const SD = '#8a7e6a'
+const WA = '#99bec6'
+const RP = '#693f21'
+const RQ = '#905c3a'
 
 export const WELL: Sprite = [
-  [_,_,_,_,_,_,_,RP,_,_,_,_,_,_,_,_],
-  [_,_,_,_,_,_,_,RP,_,_,_,_,_,_,_,_],
-  [_,_,_,_,RP,RP,RP,RP,RP,RP,RP,_,_,_,_,_],
-  [_,_,_,_,_,_,_,RP,_,_,_,_,_,_,_,_],
-  [_,_,_,_,_,_,_,RP,_,_,_,_,_,_,_,_],
-  [_,_,_,_,ST,ST,ST,ST,ST,ST,ST,_,_,_,_,_],
-  [_,_,_,ST,SD,SD,SD,SD,SD,SD,SD,ST,_,_,_,_],
-  [_,_,_,ST,SD,WA,WA,WA,WA,WA,SD,ST,_,_,_,_],
-  [_,_,_,ST,SD,WA,WL,WA,WL,WA,SD,ST,_,_,_,_],
-  [_,_,_,ST,SD,WA,WA,WA,WA,WA,SD,ST,_,_,_,_],
-  [_,_,_,ST,SD,WA,WA,WL,WA,WA,SD,ST,_,_,_,_],
-  [_,_,_,ST,SD,SD,SD,SD,SD,SD,SD,ST,_,_,_,_],
-  [_,_,_,ST,ST,ST,ST,ST,ST,ST,ST,ST,_,_,_,_],
-  [_,_,SD,SD,SD,SD,SD,SD,SD,SD,SD,SD,SD,_,_,_],
-  [_,_,SD,SD,SD,SD,SD,SD,SD,SD,SD,SD,SD,_,_,_],
-  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,_,_],
+  [_,_,_,RP,_,_,_,RP,_,_,_,RP,_,_,_],
+  [_,_,_,RP,_,_,_,RP,_,_,_,RP,_,_,_],
+  [_,_,_,RP,_,_,_,RQ,_,_,_,RP,_,_,_],
+  [_,_,_,RP,_,_,_,RQ,_,_,_,RP,_,_,_],
+  [_,_,_,RP,ST,ST,ST,RQ,ST,ST,ST,RP,_,_,_],
+  [_,_,_,SD,SD,WA,WA,RQ,WA,WA,SD,SD,_,_,_],
+  [_,_,_,ST,SD,SD,SD,SD,SD,SD,SD,ST,_,_,_],
+  [_,_,_,ST,ST,ST,ST,ST,ST,ST,ST,STs,_,_],
+  [_,_,_,ST,ST,STs,STs,ST,ST,ST,ST,ST,_,_,_],
+  [_,_,_,ST,ST,ST,ST,ST,STs,STs,ST,ST,_,_,_],
+  [_,_,_,STs,ST,ST,ST,ST,ST,ST,ST,ST,_,_,_],
+  [_,_,_,_,ST,STs,STs,ST,ST,ST,ST,_,_,_,_],
+]
+
+// ---- DRY WELL ---- identical to WELL but the water is a dark, dried-out color.
+// Decorative (non-functional) placement around the world.
+const WD = '#2b2620'   // dried/empty well — dark
+export const DRY_WELL: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,RQ,_,_],
+  [_,_,RP,_,_,_,RP,_,_,_,RP,_,_,_],
+  [_,_,RP,_,_,_,RP,_,_,_,RP,_,_,_],
+  [_,_,RP,_,_,_,RQ,_,_,_,RP,_,_,_],
+  [_,_,RP,_,_,_,RQ,_,_,_,RP,_,_,_],
+  [_,_,RP,ST,ST,ST,RQ,ST,ST,ST,RP,_,_,_],
+  [_,_,SD,SD,WD,WD,RQ,WD,WD,SD,SD,_,_,_],
+  [_,_,ST,SD,SD,SD,SD,SD,SD,SD,ST,_,_,_],
+  [_,_,ST,ST,ST,ST,ST,ST,ST,ST,STs,_,_],
+  [_,_,ST,ST,STs,STs,ST,ST,ST,ST,ST,_,_,_],
+  [_,_,ST,ST,ST,ST,ST,STs,STs,ST,ST,_,_,_],
+  [_,_,STs,ST,ST,ST,ST,ST,ST,ST,ST,_,_,_],
+  [_,_,_,ST,ST,ST,ST,ST,ST,ST,_,_,_,_],
+]
+
+// ---- GRAVE CROSS ---- tiny weathered wooden marker for graveyards.
+// 2px-wide post and crossbar; decorative, no collision.
+const gC = '#6b5746'   // weathered wood
+const gCd = '#4a3b2f'  // wood shadow
+const gCs = '#3f3a33'  // ground shadow at the base
+export const GRAVE_CROSS: Sprite = [
+  [_,_,_,gC,gCd,_,_,_],
+  [_,_,_,gC,gCd,_,_,_],
+  [gC,gC,gC,gC,gC,gC,gC,gC,_],
+  [gC,gC,gCd,gCd,gC,gCd,gCd,gCd,_],
+  [_,_,_,gC,gCd,_,_,_],
+  [_,_,_,gC,gCd,_,_,_],
+  [_,_,_,gC,gCd,_,_,_],
+  [_,_,_,gC,gCd,_,_,_],
+  [_,_,gCs,gCs,gCs,gCs,_,_],
 ]
 
 // ---- WORKSHOP (smithy) ----
@@ -275,19 +359,53 @@ export const ITEM_WATER: Sprite = [
 ]
 
 // Bread: brown loaf with a darker crust pattern.
-const bC = '#A06030'   // crust
-const bI = '#D4A574'   // interior crumb
-const bD = '#6B3410'   // dark crust line
+const bC = '#97623a'   // crust
+const bI = '#cea579'   // interior crumb
+const bD = '#c69c70'   // dark crust line
+const bF = '#deb282'   
+
 export const ITEM_BREAD: Sprite = [
-  [_,_,bC,bC,bC,_,_,_],
-  [_,bC,bI,bI,bI,bC,_,_],
-  [bC,bI,bI,bI,bI,bI,bC,_],
-  [bC,bI,bD,bI,bD,bI,bC,_],
-  [bC,bI,bI,bI,bI,bI,bC,_],
-  [bC,bI,bD,bI,bD,bI,bC,_],
-  [_,bC,bI,bI,bI,bC,_,_],
-  [_,_,bC,bC,bC,_,_,_],
+  [_,bC,bC,bC,bC,bC,bC,bC,bC,bC,bC,bC,bC,bC,_],
+  [bC,bF,bF,bF,bF,bF,bF,bF,bF,bF,bF,bF,bF,bF,bC],
+  [bC,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bC],
+  [bC,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bC],
+  [bC,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bC],
+  [bC,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bI,bC],
+  [_,bC,bD,bD,bD,bD,bD,bD,bD,bD,bD,bD,bD,bC,_],
+  [_,bC,bD,bD,bD,bD,bD,bD,bD,bD,bD,bD,bD,bC,_],
+  [_,bC,bD,bD,bD,bD,bD,bD,bD,bD,bD,bD,bD,bC,_],
+  [_,_,bC,bC,bC,bC,bC,bC,bC,bC,bC,bC,bC,_,_],
 ]
+
+// Snake oil — a quack tonic bottle: cork stopper, glass neck, amber body with a
+// pale paper label band and a glass highlight down the left.
+const soK = '#8a5a32'   // cork
+const soG = '#3e6b4a'   // dark green glass
+const snL = '#5f9468'   // glass highlight
+const soA = '#caa24a'   // amber tonic
+const soP = '#e8e0c8'   // paper label
+const grr = '#c8c1ac'
+export const ITEM_SNAKE_OIL: Sprite = [
+  [_,_,_,soK,soK,soK,_,_,_,_],
+  [_,_,_,soK,soK,soK,_,_,_,_],
+  [_,_,_,soG,soG,soG,_,_,_,_],
+  [_,_,_,snL,soG,soG,_,_,_,_],
+  [_,_,soG,snL,soG,soG,soG,_,_,_],
+  [_,soG,snL,soA,soA,soA,soG,soG,_,_],
+  [_,soG,snL,soA,soA,soA,soG,soG,_,_],
+  [_,soG,snL,soA,soA,soA,soG,soG,_,_],
+  [_,soG,soP,soP,soP,soP,soP,soG,_,_],
+  [_,soG,soP,grr,grr,grr,soP,soG,_,_],
+  [_,soG,soP,grr,grr,soP,grr,soG,_,_],
+  [_,soG,grr,soP,soP,grr,soP,soG,_,_],
+  [_,soG,soP,soP,soP,soP,soP,soG,_,_],
+  [_,soG,snL,soA,soA,soA,soA,soG,_,_],
+  [_,soG,snL,soA,soA,soA,soA,soG,_,_],
+  [_,soG,snL,soA,soA,soA,soA,soG,_,_],
+  [_,soG,soG,soA,soA,soA,soG,soG,_,_],
+  [_,_,soG,soG,soG,soG,soG,_,_,_],
+]
+
 
 // ---- CHURCH ---- 16x16. Mission-style: low adobe walls, arched bell tower at top, cross.
 // Desert/southwest mission church palette.
@@ -315,84 +433,231 @@ export const CHURCH: Sprite = [
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
 ]
 
-// ---- SHOP ---- 16x16. Wooden frontier storefront: planks, sloped roof, door,
-// hanging sign. Same desert palette base, more "trading post" feel.
-const spP = '#8B6240'   // plank wood
-const spD = '#5F3D1F'   // dark plank / shadow
-const spR = '#6B4A2C'   // roof
-const spS = '#3A2410'   // sign frame / deep shadow
-const spA = '#1A0F08'   // door / window deep
+const cbG = '#a8a8a8'
+const cbT = '#959599'
+const cbD = '#595959'
+const cbB = '#363636'
+const cbE = '#3e2818'
+
+export const CHURCH_BELL_BACK: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,cbE,cbE,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,cbE,cbE,cbE,cbE,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,cbE,cbE,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,cbE,cbE,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,cbD,cbD,cbD,cbD,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbD,cbD,cbB,cbB,cbD,cbD,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,cbD,cbD,cbB,cbB,cbB,cbB,cbD,cbD,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbT,cbT,cbT,cbT,cbT,cbT,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbG,cbG,cbB,cbB,cbG,cbG,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbT,cbT,cbB,cbB,cbT,cbT,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbG,cbG,cbB,cbB,cbG,cbG,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,cbD,cbD,cbD,cbD,cbD,cbD,cbD,cbD,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,cbD,cbD,cbD,cbB,cbB,cbB,cbB,cbD,cbD,cbD,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,cbD,cbD,cbB,cbB,cbB,cbB,cbB,cbB,cbB,cbB,cbD,cbD,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,_,_,_,_,_,_,_],
+  [_,_,_,_,_,cbD,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbD,_,_,_,_,_],
+  [_,_,_,_,cbD,cbG,cbG,cbG,cbG,cbG,cbG,cbB,cbB,cbG,cbG,cbG,cbT,cbG,cbG,cbD,_,_,_,_],
+  [_,_,_,cbD,cbT,cbT,cbT,cbT,cbT,cbT,cbB,cbB,cbB,cbB,cbT,cbT,cbT,cbT,cbT,cbT,cbD,_,_,_],
+  [_,_,cbD,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbB,cbB,cbG,cbG,cbG,cbT,cbG,cbG,cbG,cbG,cbD,_,_],
+  [_,cbD,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbD,_],
+  [cbD,cbG,cbG,cbG,cbB,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbT,cbG,cbG,cbB,cbG,cbG,cbG,cbD],
+  [_,cbT,cbT,cbB,cbB,cbB,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbB,cbB,cbB,cbT,cbT,_],
+  [_,cbG,cbG,cbB,cbB,cbB,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbT,cbG,cbB,cbB,cbB,cbG,cbG,_],
+  [_,cbT,cbT,cbB,cbB,cbB,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbB,cbB,cbB,cbT,cbT,_],
+  [_,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbT,cbG,cbG,cbG,cbG,cbG,cbG,_],
+  [_,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,_],
+]
+
+const hh = '#8B3A26'
+
+export const CHURCH_BELL: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,cbE,cbE,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,cbE,cbE,cbE,cbE,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,cbE,cbE,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,cbE,cbE,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,cbD,cbD,cbD,cbD,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbD,cbD,cbB,cbB,cbD,cbD,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,cbD,cbD,cbB,cbB,cbB,cbB,cbD,cbD,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbT,cbT,cbT,cbT,cbT,cbT,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbG,cbG,cbB,cbB,cbG,cbG,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbT,cbT,cbB,cbB,cbT,cbT,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,cbG,cbG,cbB,cbB,cbG,cbG,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,cbD,cbD,cbD,cbD,cbD,cbD,cbD,cbD,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,cbD,cbD,cbD,cbB,cbB,cbB,cbB,cbD,cbD,cbD,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,cbD,cbD,cbB,cbB,cbB,cbB,cbB,cbB,cbB,cbB,cbD,cbD,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,_,_,_,_,_,_,_],
+  [_,_,_,_,_,cbD,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbD,_,_,_,_,_],
+  [_,_,_,_,cbD,cbG,cbG,cbG,cbG,cbG,cbG,cbB,cbB,cbG,cbG,cbG,cbT,cbG,cbG,cbD,_,_,_,_],
+  [_,_,_,cbD,cbT,cbT,cbT,cbT,cbT,cbT,cbB,cbB,cbB,cbB,cbT,cbT,cbT,cbT,cbT,cbT,cbD,_,_,_],
+  [_,_,cbD,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbB,cbB,cbG,cbG,cbG,cbT,cbG,cbG,cbG,cbG,cbD,_,_],
+  [_,cbD,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbD,_],
+  [cbD,cbG,cbG,cbG,cbB,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbT,cbG,cbG,cbB,cbG,cbG,cbG,cbD],
+  [_,cbT,cbT,cbB,cbB,cbB,cbT,cbT,cbT,cbT,cbT,cbB,cbB,cbT,cbT,cbT,cbT,cbT,cbB,cbB,cbB,cbT,cbT,_],
+  [_,cbG,cbG,cbB,cbB,cbB,cbG,cbG,cbG,cbG,cbG,hh,hh,cbG,cbG,cbG,cbT,cbG,cbB,cbB,cbB,cbG,cbG,_],
+  [_,cbT,cbT,cbB,cbB,cbB,cbT,cbT,cbT,cbT,hh,hh,hh,hh,cbT,cbT,cbT,cbT,cbB,cbB,cbB,cbT,cbT,_],
+  [_,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,cbG,hh,hh,hh,hh,cbG,cbG,cbT,cbG,cbG,cbG,cbG,cbG,cbG,_],
+  [_,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,hh,hh,hh,hh,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,cbT,_],
+]
+
+const spP = '#989898'   // plank wood
+const spD = '#787878'   // dark plank / shadow
+const spR = '#d9d9d9'   // roof
+const spS = '#3e3e3e'   // sign frame / deep shadow
+const spF = '#525252'   // upper wall fill
+const spA = '#181818'   // door / window deep
 export const SHOP: Sprite = [
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-  [_,_,spR,spR,spR,spR,spR,spR,spR,spR,spR,spR,_,_,_,_],
+  [_,_,spR,spR,spR,spR,spR,spR,spR,spR,spR,_,_,_,_,_],
   [_,spR,spS,spS,spS,spS,spS,spS,spS,spS,spS,spR,_,_,_,_],
-  [_,spR,spS,spS,spS,spS,spS,spS,spS,spS,spS,spR,_,_,_,_],
-  [_,spR,spS,spS,spS,spS,spS,spS,spS,spS,spS,spR,_,_,_,_],
-  [_,spR,spS,spS,spS,spS,spS,spS,spS,spS,spS,spR,_,_,_,_],
-  [_,spR,spS,spS,spS,spS,spS,spS,spS,spS,spS,spR,_,_,_,_],
-  [_,spR,spS,spS,spS,spS,spS,spS,spS,spS,spS,spR,_,_,_,_],
-  [_,spP,spP,spP,spP,spP,spP,spP,spP,spP,spP,spP,_,_,_,_],
+  [_,spR,spF,spF,spF,spF,spF,spF,spF,spF,spF,spR,_,_,_,_],
+  [_,spR,spF,spF,spF,spF,spF,spF,spF,spF,spF,spR,_,_,_,_],
+  [_,spR,spF,spF,spF,spF,spF,spF,spF,spF,spF,spR,_,_,_,_],
+  [_,spR,spF,spF,spF,spF,spF,spF,spF,spF,spF,spR,_,_,_,_],
+  [_,spR,spR,spR,spR,spR,spR,spR,spR,spR,spR,spR,_,_,_,_],
+  [_,spP,spD,spP,spP,spP,spP,spD,spP,spP,spP,spP,_,_,_,_],
+  [_,spP,spP,spP,spA,spA,spP,spP,spA,spA,spP,spP,_,_,_,_],
+  [_,spP,spP,spP,spA,spA,spP,spP,spA,spA,spD,spP,_,_,_,_],
   [_,spP,spD,spP,spA,spA,spP,spD,spA,spA,spP,spP,_,_,_,_],
   [_,spP,spP,spP,spA,spA,spP,spP,spA,spA,spP,spP,_,_,_,_],
   [_,spP,spD,spP,spA,spA,spP,spD,spA,spA,spP,spP,_,_,_,_],
-  [_,spP,spP,spP,spA,spA,spP,spP,spA,spA,spP,spP,_,_,_,_],
-  [_,spP,spD,spP,spA,spA,spP,spD,spA,spA,spP,spP,_,_,_,_],
-  [_,spP,spP,spP,spA,spA,spP,spP,spA,spA,spP,spP,_,_,_,_],
+  [_,spP,spP,spP,spA,spA,spP,spP,spA,spA,spD,spP,_,_,_,_],
   [_,spS,spS,spS,spS,spS,spS,spS,spS,spS,spS,spS,_,_,_,_],
 ]
 
 // ---- GENERAL STORE ---- Same shape as SHOP, different palette. Cooler/greener
 // to read distinct at a glance. Used for the early-game "sell goods" building.
 const gsP = '#6E7A4A'   // plank wood (sage green)
-const gsD = '#3F4828'   // dark plank / shadow
-const gsR = '#566338'   // roof
+const gsD = '#525c38'   // dark plank / shadow
+const gsR = '#9eb077'   // roof
 const gsS = '#2A2E1A'   // sign frame / deep shadow
+const gsF = '#4d513e'   // sign frame / deep shadow
 const gsA = '#0F1408'   // door / window deep
 export const GENERAL_STORE: Sprite = [
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-  [_,_,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,_,_,_,_],
+  [_,_,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,_,_,_,_,_],
   [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
-  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
-  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
-  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
-  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
-  [_,gsR,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsR,_,_,_,_],
-  [_,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,gsP,_,_,_,_],
+  [_,gsR,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsR,_,_,_,_],
+  [_,gsR,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsR,_,_,_,_],
+  [_,gsR,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsR,_,_,_,_],
+  [_,gsR,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsF,gsR,_,_,_,_],
+  [_,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,gsR,_,_,_,_],
+  [_,gsP,gsD,gsP,gsP,gsP,gsP,gsD,gsP,gsP,gsP,gsP,_,_,_,_],
+  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsD,gsP,_,_,_,_],
   [_,gsP,gsD,gsP,gsA,gsA,gsP,gsD,gsA,gsA,gsP,gsP,_,_,_,_],
   [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
   [_,gsP,gsD,gsP,gsA,gsA,gsP,gsD,gsA,gsA,gsP,gsP,_,_,_,_],
-  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
-  [_,gsP,gsD,gsP,gsA,gsA,gsP,gsD,gsA,gsA,gsP,gsP,_,_,_,_],
-  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsP,gsP,_,_,_,_],
+  [_,gsP,gsP,gsP,gsA,gsA,gsP,gsP,gsA,gsA,gsD,gsP,_,_,_,_],
   [_,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,gsS,_,_,_,_],
 ]
 
 // ---- ABANDONED HOUSE ---- Same shape as SHOP, but desaturated and weathered.
 // Sagging roofline (missing pixels), boarded-over windows, dark hollow door.
 // Used as a discoverable structure off-screen with items inside.
-const ahP = '#6E665C'   // weathered plank
-const ahD = '#3A332C'   // dark plank shadow
-const ahR = '#4A4138'   // washed-out roof
-const ahS = '#1F1A14'   // deep shadow / sign frame
-const ahA = '#0A0805'   // doorway hollow
-const ahB = '#4D3520'   // board-up plank (warm brown, contrasts grays)
+const ahP = '#9c9c9c'   // weathered plank
+const ahD = '#828282'   // dark plank shadow
+const wwW = '#ffffff'   // white
+const ahS = '#3f3f3f'   // deep shadow / sign frame
+const ahA = '#363636'   // doorway hollow
+const ahB = '#705242'   // board-up plank (warm brown, contrasts grays)
 export const ABANDONED_HOUSE: Sprite = [
-  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-  [_,_,ahR,ahR,ahR,_,ahR,ahR,ahR,ahR,_,ahR,_,_,_,_],
-  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
-  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
-  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_,_],
-  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
-  [_,_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
-  [_,ahR,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahR,_,_,_,_],
-  [_,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahP,_,_,_,_],
-  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahP,ahP,ahD,ahB,ahB,ahP,ahP,ahA,ahA,ahD,ahP,_,_,_,_],
-  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahA,ahA,ahP,ahD,_,_,_,_],
-  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,wwW,wwW,wwW,_,_,wwW,wwW,wwW,wwW,_,wwW,_,_,_,_],
+  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
+  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
+  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_,_],
+  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
+  [_,_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
+  [_,wwW,wwW,wwW,wwW,wwW,ahS,ahS,wwW,wwW,wwW,wwW,wwW,_,_,_,_],
+  [_,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahP,ahP,_,_,_,_],
+  [_,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,_,_,_,_],
+  [_,ahP,ahP,ahD,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahD,ahP,_,_,_,_],
+  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahP,ahD,_,_,_,_],
+  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahP,ahP,_,_,_,_],
+  [_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_],
+]
+
+// ---- HOUSE WITH ROOF ---- Copy of ABANDONED_HOUSE to iterate a roofed,
+// "occupied / lived-in" look. Non-enterable building. Edit freely; the
+// abandoned house stays untouched. Own palette so colors can diverge.
+const hrP = '#959595'   // plank
+const hrR = '#aaaaaa'   // roof
+const hrS = '#3f3f3f'   // deep shadow / sign frame
+const hrA = '#282322'   // doorway hollow
+const hrB = '#342823'   // board-up plank
+const hrG = '#828282'
+
+export const HOUSE_ROOF: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR],
+  [hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA],
+  [hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA],
+  [hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrA,hrA,hrA,hrA,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
+  [hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS],
+]
+
+// Base palette values that mark the recolorable regions of HOUSE_ROOF.
+// recolorHouseRoof swaps these out for seeded colors per instance.
+export const HOUSE_ROOF_ROOF_MAIN = hrG    // roof main
+export const HOUSE_ROOF_ROOF_STRIPE = hrR  // roof stripe
+export const HOUSE_ROOF_WALL = hrP         // wall plank
+
+// Return a recolored copy of HOUSE_ROOF: roof (main + stripe) and wall swapped
+// for the supplied colors. Other keys (door, boards, base shadow) stay fixed.
+export function recolorHouseRoof(roofMain: string, roofStripe: string, wall: string): Sprite {
+  const map: Record<string, string> = {
+    [HOUSE_ROOF_ROOF_MAIN]: roofMain,
+    [HOUSE_ROOF_ROOF_STRIPE]: roofStripe,
+    [HOUSE_ROOF_WALL]: wall,
+  }
+  return HOUSE_ROOF.map(row => row.map(cell => (cell ? (map[cell] ?? cell) : cell)))
+}
+
+const lhD = '#777777'
+const lhS = '#c1c1c1'
+const lhR = '#e0e0e0'
+const lhB = '#6e6e6e'
+
+export const LONG_HOUSE: Sprite = [
+  [_,_,lhS,lhS,lhS,lhS,lhS,lhS,lhS,lhS,lhS,_,_,_,_,_,_],
+  [_,lhS,lhS,lhD,lhD,lhD,lhD,lhD,lhD,lhS,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhD,lhR,lhR,lhR,lhR,lhR,lhR,lhD,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhS,lhR,lhR,lhR,lhS,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhD,lhD,_,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhD,lhD,_,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhD,lhD,lhR,_,_,_,_],
+  [_,lhS,lhR,lhS,lhR,lhR,lhR,lhS,lhR,lhR,lhD,lhD,lhR,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,_,lhD,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,lhD,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,lhD,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhS,lhR,lhR,lhR,lhS,lhR,lhR,lhS,lhS,lhS,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhD,lhD,_,_,_,_,_],
+  [_,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhR,lhD,lhD,_,_,_,_,_],
+  [_,lhS,lhS,lhR,lhR,lhR,lhR,lhR,lhR,lhS,lhD,lhD,_,_,_,_,_],
+  [_,lhD,lhS,lhS,lhS,lhS,lhS,lhS,lhS,lhS,lhD,lhD,_,_,_,_,_],
+  [_,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhR,_,_,_,_],
+  [_,lhB,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhB,lhR,_,_,_,_],
+  [_,lhD,lhB,lhB,lhB,lhB,lhB,lhB,lhB,lhB,lhB,lhD,_,lhD,_,_,_],
+  [_,lhB,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhB,lhR,lhD,_,_,_],
+  [_,lhD,lhB,lhB,lhB,lhB,lhB,lhB,lhB,lhB,lhB,lhD,lhD,lhD,_,_,_],
+  [_,_,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,lhD,_,_,_,_,_,_],
 ]
 
 // ---- LAND OFFICE ---- 16x16. Warm honey-toned frontier office with a porch
@@ -433,19 +698,19 @@ const fdGd = '#3F5828'  // sprout shadow
 export const FIELD: Sprite = [
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-  [_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,_,_,_,_],
-  [_,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,_,_,_,_],
-  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
-  [_,fdL,fdL,fdG,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,_,_,_,_],
-  [_,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,_,_,_,_],
-  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
-  [_,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,fdL,fdL,fdL,_,_,_,_],
-  [_,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,fdM,fdM,_,_,_,_],
-  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
-  [_,fdL,fdL,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,fdL,_,_,_,_],
-  [_,fdM,fdM,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,_,_,_,_],
-  [_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_,_,_],
-  [_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,_,_,_,_],
+  [_,_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,_,_],
+  [_,_,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdM,_,_],
+  [_,_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_],
+  [_,_,fdL,fdL,fdG,fdL,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,_,_],
+  [_,_,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,_,_],
+  [_,_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_],
+  [_,_,fdL,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,fdL,fdL,fdL,_,_],
+  [_,_,fdM,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,fdM,fdM,_,_],
+  [_,_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_],
+  [_,_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdG,fdL,fdL,fdL,fdL,_,_],
+  [_,_,fdM,fdM,fdM,fdM,fdM,fdM,fdM,fdGd,fdM,fdM,fdM,fdM,_,_],
+  [_,_,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,fdD,_,_],
+  [_,_,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,fdL,_,_],
   [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
 ]
 
@@ -601,8 +866,8 @@ export const SHOVEL_DIG: Sprite = [
 // corners (TL/TR/BL/BR), edges (T/L/R/B), and center (C). World gen composes
 // these into multi-tile rock heaps the player can mine with a pickaxe.
 const rkL = '#9E9A93'   // light stone (highlight)
-const rkM = '#6F6B65'   // mid stone (main)
-const rkD = '#3F3C38'   // dark stone (shadow)
+const rkM = '#52493c'   // mid stone (main)
+const rkD = '#47413a'   // dark stone (shadow)
 
 // top-left corner
 export const ROCK_TL: Sprite = [
@@ -1125,7 +1390,7 @@ const cotBkD = '#4a3928'  // bark shadow
 const cotLfL = '#929a6e'  // leaves light (grey-green)
 const cotLfM = '#5F6B48'  // leaves mid (muted green)
 const cotLfD = '#3F4A2E'  // leaves dark (deep muted green)
-const brrW = '#a4b346' // highlight
+const brrW = '#b1c243' // highlight
 
 export const COTTONWOOD: Sprite = [
   [_,_,_,_,brrW,cotLfL,brrW,brrW,_,_,_,_],
@@ -1222,16 +1487,20 @@ export const PLANTED_COTTONWOOD_SAPLING: Sprite = [
 // related, but thicker strokes and a hoop shape so it doesn't get confused
 // for twine at a glance. 8x8.
 export const ITEM_ROPE: Sprite = [
-  [_,_,twD,twM,twL,twD,_,_],
-  [_,twD,twM,twL,twM,twL,twD,_],
-  [twD,twM,twD,_,_,twD,twM,twD],
-  [twM,twL,_,_,_,_,twL,twM],
-  [twL,twM,_,_,_,_,twM,twL],
-  [twD,twM,twD,_,_,twD,twM,twD],
-  [_,twD,twL,twM,twL,twM,twD,_],
-  [_,_,twD,twM,twD,twL,_,_],
+  [_,_,twD,twM,twL,twL,twD,_,_],
+  [_,twD,twM,twL,twM,twM,twL,twD,_],
+  [twD,twM,twD,_,_,_,twD,twM,twD],
+  [twM,twL,_,_,_,_,_,twL,twM],
+  [twL,twM,_,_,_,_,_,twM,twL],
+  [twL,twM,_,_,_,_,_,twM,twL],
+  [twD,twM,twD,_,_,_,twD,twM,twD],
+  [_,twD,twL,twM,twL,twL,twM,twD,_],
+  [_,_,twD,twM,twM,twM,twL,_,_],
+  [_,_,_,_,twM,twL,twM,_,_],
+  [_,_,_,_,_,twM,twM,_,_],
+  [_,_,_,_,_,twM,twL,_,_],
+  [_,_,_,_,twM,twL,twM,_,_],
 ]
-
 // Hemp: rough fibrous stalks, tan-green. 8x8.
 const hpL = '#B8A878'   // fiber light (tan)
 const hpM = '#7A8048'   // stalk mid (olive green)
@@ -1333,6 +1602,49 @@ export const ITEM_CEDAR_POST: Sprite = [
   [fcM,fcM,fcG,_,_,fcM,fcM,fcG],
 ]
 
+const ipL = '#6A6A6A'
+const ipM = '#4A4A4A'
+const ipD = '#2E2E2E'
+const ipG = '#1A1A1A'
+export const IRON_POST: Sprite = [
+  [_,ipM,_,_,_,_,ipM,_],
+  [ipM,ipM,ipM,_,_,ipM,ipM,ipM],
+  [_,ipM,_,_,_,_,ipM,_],
+  [ipD,ipL,ipD,_,_,ipD,ipL,ipD],
+  [ipM,ipL,ipM,ipM,ipM,ipM,ipL,ipM],
+  [ipM,ipM,ipL,ipL,ipL,ipL,ipM,ipM],
+  [ipM,ipL,ipM,ipM,ipM,ipM,ipL,ipM],
+  [ipD,ipL,ipD,_,_,ipD,ipL,ipD],
+  [ipD,ipL,ipD,_,_,ipD,ipL,ipD],
+  [ipD,ipM,ipG,_,_,ipD,ipM,ipG],
+]
+
+export const ITEM_IRON_POST: Sprite = [
+  [_,ipM,_,_,_,_,ipM,_],
+  [ipM,ipM,ipM,_,_,ipM,ipM,ipM],
+  [_,ipM,_,_,_,_,ipM,_],
+  [ipD,ipL,ipD,_,_,ipD,ipL,ipD],
+  [ipM,ipL,ipM,ipM,ipM,ipM,ipL,ipM],
+  [ipM,ipM,ipL,ipL,ipL,ipL,ipM,ipM],
+  [ipM,ipL,ipM,ipM,ipM,ipM,ipL,ipM],
+  [ipD,ipL,ipD,_,_,ipD,ipL,ipD],
+  [ipD,ipL,ipD,_,_,ipD,ipL,ipD],
+  [ipD,ipM,ipG,_,_,ipD,ipM,ipG],
+]
+
+export const IRON_POST_V: Sprite = [
+  [_,_,_,_,ipD,_,_,_],
+  [_,_,_,_,ipD,_,_,_],
+  [_,_,_,ipL,ipD,_,_,_],
+  [_,_,_,ipL,ipM,_,_,_],
+  [_,_,_,ipL,ipM,_,_,_],
+  [_,_,_,ipL,ipM,_,_,_],
+  [_,_,_,ipL,ipM,_,_,_],
+  [_,_,_,ipM,ipD,_,_,_],
+  [_,_,_,ipM,ipG,_,_,_],
+  [_,_,_,ipM,ipG,_,_,_],
+]
+
 // Cedar post vertical: top-down view of a cedar fence running north-south. 8x8.
 export const CEDAR_POST_V: Sprite = [
   [_,_,_,fcM,fcD,_,_,_],
@@ -1362,9 +1674,9 @@ export const ITEM_WOOD: Sprite = [
 // Plank: three flat sawn boards stacked. Same post-wood palette as logs, but
 // flat (not rounded) to read as milled lumber. 8x8.
 // Lighter milled-lumber palette — pick/tweak these for the plank:
-const plL = '#D9BC8C'   // plank light (sunlit board face)
-const plM = '#BF9D6B'   // plank mid (main)
-const plD = '#8A6A42'   // plank dark (shadow / grain)
+const plL = '#d1b281'   // plank light (sunlit board face)
+const plM = '#bb9967'   // plank mid (main)
+const plD = '#926d45'   // plank dark (shadow / grain)
 export const ITEM_PLANK: Sprite = [
   [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
   [plD,plL,plL,plL,plD,plL,plL,plL,plL,plL,plL,plD],
@@ -1408,18 +1720,33 @@ export const ITEM_CRAFTING_CART: Sprite = [
 // Fence gate: placeholder — two end posts with two horizontal rails between.
 // 8x8, post palette.
 export const ITEM_FENCE_GATE: Sprite = [
-  [psM, _, _, _, _, _, _, psM],
-  [psL, psD, psD, psD, psD, psD, psD, psL],
-  [psL, _, _, _, _, _, _, psL],
-  [psL, psD, psD, psD, psD, psD, psD, psL],
-  [psL, _, _, _, _, _, _, psL],
-  [psL, psD, psD, psD, psD, psD, psD, psL],
-  [psM, _, _, _, _, _, _, psM],
-  [psD, _, _, _, _, _, _, psD],
+  [psM, psM, _, _, _, _, _, _, _, _, psM, psM],
+  [psL, psL, psD, psD, psD, psD, psD, psD, psD, psD, psL, psL],
+  [psL, psL, _, _, _, _, _, _, _, _, psL, psL],
+  [psL, psL, psD, psD, psD, psD, psD, psD, psD, psD, psL, psL],
+  [psL, psL, _, _, _, _, _, _, _, _, psL, psL],
+  [psL, psL, psD, psD, psD, psD, psD, psD, psD, psD, psL, psL],
+  [psM, psM, _, _, _, _, _, _, _, _, psM, psM],
+  [psD, psD, _, _, _, _, _, _, _, _, psD, psD],
+]
+
+export const FENCE_GATE_OPEN: Sprite = [
+  [psM, psM],
+  [psL, psL],
+  [psD, psD],
+  [psD, psD],
+  [psD, psD],
+  [psD, psD],
+  [psD, psD],
+  [psD, psD],
+  [psD, psD],
+  [psD, psD],
+  [psM, psM],
+  [psD, psD],
 ]
 
 // ---- BRUSH GROUND ---- 8x8 ground tile
-const brL = '#949a6e'   // brush light
+const brL = '#a0a25e'   // brush light
 const brD = '#85895d'   // brush dark speck 
 export const BRUSH_GROUND: Sprite = [
   [brL,brL,brL,brL,brL,brL,brL,brL],
@@ -1430,6 +1757,21 @@ export const BRUSH_GROUND: Sprite = [
   [brL,brL,brL,brL,brL,brL,brL,brL],
   [brL,brL,brL,brL,brL,brL,brL,brL],
   [brL,brL,brL,brL,brL,brL,brL,brL],
+]
+
+// Sandy yellow-tan path dirt. Same 8x8 footprint as BRUSH_GROUND so it tiles
+// the terrain grid identically; stamped where a trail crosses grass.
+const pdL = '#e3cb89'   // sandy light
+const pdD = '#d5bb77'   // sandy dark speck
+export const PATH_DIRT: Sprite = [
+  [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdL,pdL,pdD,pdL,pdL],
+  [pdL,pdD,pdL,pdL,pdL,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdL,pdD,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
 ]
 
 export const BRUSH_EDGE_TOP: Sprite = [
@@ -1608,6 +1950,7 @@ export const HONSE_PALOMINO: Sprite = [
 const soR = '#8B3A26'   // sorrel red body
 const soW = '#C8CDD2'   // blueish-grey socks
 const soL = '#733521'  
+
 export const HONSE_SORREL_SOCKS: Sprite = [
   [_,_,_,soL,soR,soL,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
   [soR,soR,soR,soL,soR,soL,soL,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
@@ -1668,7 +2011,47 @@ export const HONSE_SPOTTED_BROWN: Sprite = [
   [_,_,_,_,_,_,hnG,hnG,_,hnG,hnG,_,_,_,_,hnG,hnG,_,hnG,hnD,_,_,_,_,_,_],
 ]
 
-// Tumbleweed: round dried-plant ball, 10x10. Browns and tans, ragged edges.
+// Coyote: side view facing right. Coat shades warm orange at the head (right)
+// to cool ash-brown at the tail (left), graded by column. 25 wide × 10 tall.
+const cy1 = '#6b5840'   // ash-brown (rear/tail)
+const cy2 = '#7e6446'
+const cy3 = '#71593c'
+const cy4 = '#7c5e3a'   // orange-brown (head/chest)
+export const COYOTE: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,cy4,cy4,_,_,_,_,_],
+  [cy1,cy1,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,cy4,cy4,cy4,cy4,_,_,_,_],
+  [cy1,cy1,cy1,cy1,_,_,_,_,_,_,_,_,cy2,cy2,cy3,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4],
+  [_,cy1,cy1,cy1,cy1,cy1,cy2,cy2,cy2,cy2,cy2,cy2,cy3,cy3,cy3,cy3,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4,_],
+  [_,_,_,cy1,cy1,cy1,cy2,cy2,cy2,cy2,cy2,cy2,cy3,cy3,cy3,cy3,cy4,cy4,cy4,cy4,cy4,_,_,_,_],
+  [_,_,_,_,cy1,cy1,cy2,cy2,cy2,cy2,cy2,cy2,cy3,cy3,cy3,cy3,cy4,cy4,_,_,_,_,_,_,_],
+  [_,_,_,_,cy1,cy1,_,cy2,cy2,_,_,_,_,cy3,cy3,_,cy4,cy4,_,_,_,_,_,_,_],
+  [_,_,_,_,cy1,cy1,cy2,cy2,cy2,cy2,_,_,_,cy3,cy3,cy3,cy4,cy4,cy4,_,_,_,_,_,_],
+  [_,_,_,_,cy1,cy1,cy2,cy2,cy2,cy2,_,_,_,cy3,cy3,cy3,cy4,cy4,cy4,_,_,_,_,_,_],
+]
+
+// Downed coyote
+const cyEMPTY: (string | null)[] = Array(25).fill(_)
+export const COYOTE_DEAD: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,cy1,cy1,cy2,cy2,cy3,cy4,cy4,cy4,cy4,cy4,cy4,_,_,_,_],
+  [cy1,cy1,cy1,cy1,cy1,cy1,cy2,cy2,cy2,cy2,cy2,cy2,cy3,cy3,cy3,cy3,cy4,cy4,cy4,cy4,cy4,cy4,_,_,_],
+  [cy1,cy1,cy1,cy1,cy1,cy1,cy2,cy2,cy2,cy2,cy2,cy2,cy3,cy3,cy3,cy3,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4],
+  [_,cy1,cy1,cy1,cy1,cy1,cy2,cy2,cy2,cy2,cy2,cy2,cy3,cy3,cy3,cy3,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4,cy4],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,soR,soR,soR,soR,soR,soR,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+
+// Solid-red silhouette of the coyote for its hurt flash, same red as the
+// player's hurt sprite (RD). Derived from COYOTE so the shape always matches.
+export const COYOTE_HURT: Sprite = COYOTE.map(row => row.map(cell => cell === _ ? _ : RD))
+
+
+
 const twdL = '#b8a568'   // dried plant light
 const twdM = '#ae8d60'   // dried plant mid
 const twdD = '#947651'   // dried plant dark (center mass)
@@ -1739,6 +2122,8 @@ export const QUIRT: Sprite = [
 export const ALL_SPRITES: Record<string, Sprite> = {
   mill: MILL,
   well: WELL,
+  dry_well: DRY_WELL,
+  grave_cross: GRAVE_CROSS,
   workshop: WORKSHOP,
   workshop_l2: WORKSHOP_L2,
   field: FIELD,
@@ -1746,13 +2131,22 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   shop: SHOP,
   general_store: GENERAL_STORE,
   abandoned_house: ABANDONED_HOUSE,
+  house_roof: HOUSE_ROOF,
+  long_house: LONG_HOUSE,
   land_office: LAND_OFFICE,
   nursery: NURSERY,
   church: CHURCH,
+  church_bell: CHURCH_BELL,
+  church_bell_back: CHURCH_BELL_BACK,
   player: PLAYER,
+  player_hurt: PLAYER_HURT,
   npc_workshop: NPC_WORKSHOP,
   gold_coin: GOLD_COIN,
-  heart: HEART,
+  heart_full: HEART_FULL,
+  heart_3q: HEART_3Q,
+  heart_half: HEART_HALF,
+  heart_1q: HEART_1Q,
+  heart_empty: HEART_EMPTY,
   arrow_right: ARROW_RIGHT,
   cow_skull: COW_SKULL,
   yucca: YUCCA,
@@ -1761,6 +2155,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_flour: ITEM_FLOUR,
   item_water: ITEM_WATER,
   item_bread: ITEM_BREAD,
+  item_snake_oil: ITEM_SNAKE_OIL,
   item_shovel: ITEM_SHOVEL,
   item_axe: ITEM_AXE,
   item_pickaxe: ITEM_PICKAXE,
@@ -1805,11 +2200,15 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   cedar_post: CEDAR_POST,
   cedar_post_v: CEDAR_POST_V,
   item_cedar_post: ITEM_CEDAR_POST,
+  iron_post: IRON_POST,
+  iron_post_v: IRON_POST_V,
+  item_iron_post: ITEM_IRON_POST,
   item_wood: ITEM_WOOD,
   item_plank: ITEM_PLANK,
   item_wheel: ITEM_WHEEL,
   item_crafting_cart: ITEM_CRAFTING_CART,
   item_fence_gate: ITEM_FENCE_GATE,
+  fence_gate_open: FENCE_GATE_OPEN,
   item_crate: ITEM_CRATE,
   item_pipe: ITEM_PIPE,
   pipe_chevron: PIPE_CHEVRON,
@@ -1823,6 +2222,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_gold: ITEM_GOLD,
   item_clay: ITEM_CLAY,
   brush_ground: BRUSH_GROUND,
+  path_dirt: PATH_DIRT,
   brush_edge_top: BRUSH_EDGE_TOP,
   brush_edge_left: BRUSH_EDGE_LEFT,
   brush_edge_right: BRUSH_EDGE_RIGHT,
@@ -1837,6 +2237,9 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   honse_sorrel_socks: HONSE_SORREL_SOCKS,
   honse_spotted: HONSE_SPOTTED,
   honse_spotted_brown: HONSE_SPOTTED_BROWN,
+  coyote: COYOTE,
+  coyote_hurt: COYOTE_HURT,
+  coyote_dead: COYOTE_DEAD,
   tumbleweed: TUMBLEWEED,
 }
 

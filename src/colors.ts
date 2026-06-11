@@ -11,6 +11,8 @@ export const FONT = {
 } as const
 
 export const COLORS = {
+  // player
+  playerShirt: 0xCC2222,    // matches RD in the player sprite; used for the hurt flash
   // world & background
   worldBg: 0xF5F0E1,        // cream
   worldBorder: 0xC8C0AA,    // warm grey

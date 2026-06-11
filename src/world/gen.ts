@@ -27,7 +27,7 @@ export interface WorldLayout {
 }
 
 // Mulberry32 — small deterministic seeded RNG.
-function makeRng(seed: number) {
+export function makeRng(seed: number) {
   let s = seed >>> 0
   return () => {
     s = (s + 0x6D2B79F5) >>> 0
@@ -176,10 +176,68 @@ const PATH_CENTERLINE_SAMPLE = 20  // emit one centerline point every N pebbles
 const PATH_WIDTH = 14              // random scatter perpendicular to path
 const PATH_VISUAL_OFFSET = 20      // shift stored centerline north so it matches where pebbles visually read
 
+const ROCK_HEAPS_PER_CLUSTER = 8
+const ROCK_CLUSTER_RADIUS = 600
+const ROCK_HEAP_SPACING = 160
+const ROCK_CLUSTER_MIN_Y_FRAC = 0.4
 
+function scatterRockCluster(
+  out: RockFormation[],
+  rng: () => number,
+  opts: GenOpts,
+  exclusions: { x: number; y: number; radius: number }[],
+) {
+  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
 
+  // roll a cluster center clear of exclusions (e.g. town); cap attempts
+  let cx = 0, cy = 0
+  let centerOk = false
+  for (let i = 0; i < 60 && !centerOk; i++) {
+    cx = margin + ROCK_CLUSTER_RADIUS + rng() * (opts.worldSize - (margin + ROCK_CLUSTER_RADIUS) * 2)
+    // clamp to southern band — north is low Y (town), rocks belong further south
+    const minY = opts.worldSize * ROCK_CLUSTER_MIN_Y_FRAC
+    const yLow = Math.max(margin + ROCK_CLUSTER_RADIUS, minY)
+    cy = yLow + rng() * (opts.worldSize - margin - ROCK_CLUSTER_RADIUS - yLow)
+    centerOk = true
+    for (const ex of exclusions) {
+      const dx = cx - ex.x
+      const dy = cy - ex.y
+      // keep the whole cluster footprint clear of the exclusion, not just its center
+      const clear = ex.radius + ROCK_CLUSTER_RADIUS
+      if (dx * dx + dy * dy < clear * clear) { centerOk = false; break }
+    }
+  }
+  if (!centerOk) return   // couldn't find a clear center; skip rocks this world
 
+  const minSq = ROCK_HEAP_SPACING * ROCK_HEAP_SPACING
+  const maxAttempts = ROCK_HEAPS_PER_CLUSTER * 30
+  let attempts = 0
+  let placed = 0
+  while (placed < ROCK_HEAPS_PER_CLUSTER && attempts < maxAttempts) {
+    attempts++
+    const angle = rng() * Math.PI * 2
+    const dist = ROCK_CLUSTER_RADIUS * Math.sqrt(rng())
+    const x = cx + Math.cos(angle) * dist
+    const y = cy + Math.sin(angle) * dist
 
+    let blocked = false
+    for (const ex of exclusions) {
+      const dx = x - ex.x
+      const dy = y - ex.y
+      if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const r of out) {
+      const dx = x - r.x
+      const dy = y - r.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+
+    out.push({ x: Math.floor(x), y: Math.floor(y) })
+    placed++
+  }
+}
 
 function buildPath(
   decor: DecorItem[],
@@ -237,6 +295,7 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   scatter(decor, rng, fullArea, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
   buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey, PATH_SNAKE_AMPLITUDE)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
+  scatterRockCluster(rocks, rng, opts, opts.exclusions)
 
   return { decor, buried, rocks }
 }

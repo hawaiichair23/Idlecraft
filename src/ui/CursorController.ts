@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { state } from '../game/state'
+import { state, WOOD_TILE } from '../game/state'
 import { grabbableSlots } from './hover'
 import { ACTION_CURSOR, type OverworldAction } from '../scenes/Overworld'
 
@@ -86,10 +86,28 @@ export class CursorController {
           if (entry === 'tool') {
             // tool-sprite cursor: use the sprite/scale carried in the action
             const a = action as { sprite: string; scale: number }
-            this.setTexture(a.sprite, a.scale)
+            const zoomedScale = a.scale * (cam?.zoom ?? 1)
+            this.setTexture(a.sprite, zoomedScale)
             // posts get ghost-alpha + grid snap
             if (action.kind === 'place-post') {
-              this.cursor.setAlpha(0.45)
+              this.cursor.setAlpha(0.65)
+              // match spawnPostSprite: iron post art draws 2px up so its base
+              // lines up with wood posts. Preview must mirror that nudge.
+              const nudgeY = a.sprite === 'item_iron_post' ? -2 : 0
+              const snapped = this.snapCursorToWorldGrid(10, undefined, undefined, nudgeY)
+              // swap ghost to the vertical world sprite when a vertical neighbor
+              // is detected, so the preview matches what actually gets planted.
+              if (snapped) {
+                const tex = overworld.previewPostTexture(snapped.x, snapped.y)
+                if (tex) this.setTexture(tex, zoomedScale)
+              }
+            }
+            if (action.kind === 'place-plank') {
+              this.cursor.setAlpha(0.65)
+              this.snapCursorToWorldGrid(WOOD_TILE, state.worldBounds.minX, state.worldBounds.minY)
+            }
+            if (action.kind === 'place-gate') {
+              this.cursor.setAlpha(0.65)
               this.snapCursorToWorldGrid(10)
             }
             // mount cursor wears the hovered honse's coat color (null = special
@@ -148,17 +166,24 @@ export class CursorController {
   // screen and set the cursor sprite there. Origin is centered so the cursor
   // visually lines up with where the placed sprite lands (placed sprites use
   // default center origin).
-  private snapCursorToWorldGrid(gridPx: number) {
+  private snapCursorToWorldGrid(gridPx: number, offsetX?: number, offsetY?: number, nudgeY = 0) {
     const overworld = this.scene.scene.manager.getScene('Overworld') as any
     const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
     if (!cam) return
     const p = this.scene.input.activePointer
     const world = cam.getWorldPoint(p.x, p.y)
-    const sx = Math.round(world.x / gridPx) * gridPx
-    const sy = Math.round(world.y / gridPx) * gridPx
+    let sx: number, sy: number
+    if (offsetX !== undefined && offsetY !== undefined) {
+      sx = Math.floor((world.x - offsetX) / gridPx) * gridPx + offsetX + gridPx / 2
+      sy = Math.floor((world.y - offsetY) / gridPx) * gridPx + offsetY + gridPx / 2
+    } else {
+      sx = Math.round(world.x / gridPx) * gridPx
+      sy = Math.round(world.y / gridPx) * gridPx
+    }
     const screenX = (sx - cam.worldView.x) * cam.zoom + cam.x
-    const screenY = (sy - cam.worldView.y) * cam.zoom + cam.y
+    const screenY = (sy + nudgeY - cam.worldView.y) * cam.zoom + cam.y
     this.cursor.setOrigin(0.5, 0.5)
     this.cursor.setPosition(screenX, screenY)
+    return { x: sx, y: sy }
   }
 }

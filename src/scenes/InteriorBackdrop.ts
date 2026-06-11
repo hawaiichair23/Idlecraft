@@ -14,6 +14,7 @@ export interface InteriorBackdropConfig {
   wallColor: number
   wallHeightFraction?: number  // defaults to DEFAULT_WALL_HEIGHT
   skyColor?: number            // pane color; defaults to pastel pink
+  openSide?: 'left' | 'right'  // omit a side wall and its window
 }
 
 export interface InteriorBackdropBounds {
@@ -34,6 +35,7 @@ export const INTERIOR_PALETTES = {
   landOffice:     { floorColor: 0xB07A45, wallColor: 0x4A2D14 },
   nursery:        { floorColor: 0x8E8550, wallColor: 0x3A3220 },
   abandonedHouse: { floorColor: 0x4A1818, wallColor: 0x1A0E1F },
+  longHouse:      { floorColor: 0x5A5A5A, wallColor: 0x2A2A2A },
   generalStore:   { floorColor: 0x6E7A4A, wallColor: 0x2A2E1A },
   church:         { floorColor: 0x2A2A2E, wallColor: 0x0E0E12, skyColor: 0xFF707F },
   mill:           { floorColor: 0x9A7B5A, wallColor: 0x3A2818 },
@@ -55,7 +57,7 @@ const WINDOW_ROWS = 2
 
 // Side wall inset at the top — how far the angled wall comes into the room
 // at the back. 0.12 = 12% of screen width.
-const SIDE_WALL_INSET = 0.12
+export const SIDE_WALL_INSET = 0.12
 
 export function buildInteriorBackdrop(
   scene: Phaser.Scene,
@@ -77,7 +79,9 @@ const playH = h - UI_BAR_HEIGHT
   const windowW = WINDOW_COLS * PANE_W + (WINDOW_COLS - 1) * PANE_GAP
   const windowH = WINDOW_ROWS * PANE_H + (WINDOW_ROWS - 1) * PANE_GAP
   const windowY = playTop + (wallH - windowH) / 2
-  const windowCenters = [w * 0.28, w * 0.72]
+  const windowCenters = config.openSide === 'left' ? [w * 0.28]
+    : config.openSide === 'right' ? [w * 0.72]
+    : [w * 0.28, w * 0.72]
   for (const cx of windowCenters) {
     const startX = cx - windowW / 2
     for (let r = 0; r < WINDOW_ROWS; r++) {
@@ -96,21 +100,62 @@ const playH = h - UI_BAR_HEIGHT
   scene.add.rectangle(w / 2, floorTop + floorDrawH / 2, w, floorDrawH, config.floorColor)
     .setDepth(-20)
 
+  if (config.openSide) {
+    const winH = windowH * 1.2
+    const winW = PANE_W
+    const winCenterY = windowY + windowH / 2 + 20
+    const winTop = winCenterY - winH / 2
+    const winBot = winCenterY + winH / 2
+    const edgeDrop = winW * (floorH / (w * SIDE_WALL_INSET))
+    const topDrop = edgeDrop
+    if (config.openSide === 'left') {
+      const baseX = w * 0.58
+      scene.add.polygon(0, 0, [
+        baseX, winTop,
+        baseX + winW, winTop + topDrop,
+        baseX + winW, winBot + edgeDrop,
+        baseX, winBot,
+      ], skyColor).setOrigin(0, 0).setDepth(-20)
+    } else {
+      const baseX = w * 0.42
+      scene.add.polygon(0, 0, [
+        baseX, winTop,
+        baseX - winW, winTop + topDrop,
+        baseX - winW, winBot + edgeDrop,
+        baseX, winBot,
+      ], skyColor).setOrigin(0, 0).setDepth(-20)
+    }
+  }
+
   // angled side walls — give the room perspective depth
   const floorBottom = floorTop + floorH
-  scene.add.polygon(0, 0, [
-    0, floorBottom,
-    0, floorTop,
-    w * SIDE_WALL_INSET, floorTop,
-    0, floorBottom,
-  ], config.wallColor).setOrigin(0, 0).setDepth(-10)
+  if (config.openSide !== 'left') {
+    const lInset = config.openSide === 'right' ? 0.35 : 0
+    const lEdge = w * lInset
+    scene.add.polygon(0, 0, [
+      lEdge, floorBottom,
+      lEdge, floorTop,
+      lEdge + w * SIDE_WALL_INSET, floorTop,
+      lEdge, floorBottom,
+    ], config.wallColor).setOrigin(0, 0).setDepth(-10)
+    if (lInset > 0) {
+      scene.add.rectangle(lEdge / 2, (floorTop + floorBottom) / 2, lEdge, floorBottom - floorTop, config.wallColor).setDepth(-8)
+    }
+  }
 
-  scene.add.polygon(0, 0, [
-    w, floorBottom,
-    w, floorTop,
-    w * (1 - SIDE_WALL_INSET), floorTop,
-    w, floorBottom,
-  ], config.wallColor).setOrigin(0, 0).setDepth(-10)
+  if (config.openSide !== 'right') {
+    const rInset = config.openSide === 'left' ? 0.35 : 0
+    const rEdge = w * (1 - rInset)
+    scene.add.polygon(0, 0, [
+      rEdge, floorBottom,
+      rEdge, floorTop,
+      rEdge - w * SIDE_WALL_INSET, floorTop,
+      rEdge, floorBottom,
+    ], config.wallColor).setOrigin(0, 0).setDepth(-10)
+    if (rInset > 0) {
+      scene.add.rectangle(rEdge + (w - rEdge) / 2, (floorTop + floorBottom) / 2, w - rEdge, floorBottom - floorTop, config.wallColor).setDepth(-8)
+    }
+  }
 
   return { floorTop, floorH, floorBottom, w, h }
 }
