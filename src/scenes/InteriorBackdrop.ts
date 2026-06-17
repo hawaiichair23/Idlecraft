@@ -15,6 +15,11 @@ export interface InteriorBackdropConfig {
   wallHeightFraction?: number  // defaults to DEFAULT_WALL_HEIGHT
   skyColor?: number            // pane color; defaults to pastel pink
   openSide?: 'left' | 'right'  // omit a side wall and its window
+  // Optional repeating floor texture key (baked from ALL_SPRITES, e.g.
+  // 'floor_wood'). When set, the floor tiles this texture instead of a flat
+  // floorColor fill. floorColor still applies as the fallback when omitted.
+  floorTexture?: string
+  floorTextureScale?: number   // pixel scale of each tile; defaults to 2
 }
 
 export interface InteriorBackdropBounds {
@@ -25,6 +30,16 @@ export interface InteriorBackdropBounds {
   h: number
 }
 
+// ---- abandoned house colors ----
+// Edit these two CSS hex strings to recolor the abandoned house interior.
+// Paste any '#RRGGBB' value (e.g. from a color picker). They're converted to
+// the numeric form Phaser needs just below.
+const abandonedHouseFloor = '#4b3125'   // floor (dark muted red)
+const abandonedHouseWall = '#422721'    // walls (dark purple-black)
+
+export const ABANDONED_HOUSE_FLOOR_COLOR = parseInt(abandonedHouseFloor.slice(1), 16)
+export const ABANDONED_HOUSE_WALL_COLOR = parseInt(abandonedHouseWall.slice(1), 16)
+
 // ---- palettes ----
 // Named palettes for each shop's interior. Adding a new shop = add an entry
 // here and pass it to buildInteriorBackdrop. Floor/wall colors should reflect
@@ -34,7 +49,7 @@ export const INTERIOR_PALETTES = {
   toolShop:       { floorColor: 0x8B6240, wallColor: 0x2E2014 },
   landOffice:     { floorColor: 0xB07A45, wallColor: 0x4A2D14 },
   nursery:        { floorColor: 0x8E8550, wallColor: 0x3A3220 },
-  abandonedHouse: { floorColor: 0x4A1818, wallColor: 0x1A0E1F },
+  abandonedHouse: { floorColor: ABANDONED_HOUSE_FLOOR_COLOR, wallColor: ABANDONED_HOUSE_WALL_COLOR, floorTexture: 'floor_wood', floorTextureScale: 6 },
   longHouse:      { floorColor: 0x5A5A5A, wallColor: 0x2A2A2A },
   generalStore:   { floorColor: 0x6E7A4A, wallColor: 0x2A2E1A },
   church:         { floorColor: 0x2A2A2E, wallColor: 0x0E0E12, skyColor: 0xFF707F },
@@ -97,8 +112,16 @@ const playH = h - UI_BAR_HEIGHT
   const floorTop = playTop + wallH
   const floorH = playH - wallH
   const floorDrawH = h - floorTop
-  scene.add.rectangle(w / 2, floorTop + floorDrawH / 2, w, floorDrawH, config.floorColor)
-    .setDepth(-20)
+  if (config.floorTexture && scene.textures.exists(config.floorTexture)) {
+    // Repeating texture floor. tileScale enlarges each pixel of the source tile.
+    const tile = scene.add.tileSprite(w / 2, floorTop + floorDrawH / 2, w, floorDrawH, config.floorTexture)
+      .setDepth(-20)
+    const ts = config.floorTextureScale ?? 2
+    tile.setTileScale(ts, ts)
+  } else {
+    scene.add.rectangle(w / 2, floorTop + floorDrawH / 2, w, floorDrawH, config.floorColor)
+      .setDepth(-20)
+  }
 
   if (config.openSide) {
     const winH = windowH * 1.2

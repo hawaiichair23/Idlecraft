@@ -7,7 +7,7 @@ import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
 import type { SlotVisual } from './InteriorTypes'
 import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
 import type { UI } from './UI'
-import { registerGrabbable } from '../ui/hover'
+import { registerGrabbable, rejectHover } from '../ui/hover'
 import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
 
 // ---------------------------------------------------------------------------
@@ -124,6 +124,14 @@ export function buildGeneralStoreInterior(
                 if ((p.event as MouseEvent).shiftKey) { onSlotShiftClick(binding); return }
                 dc.handleSlotClick(binding, p)
             })
+            // Red-X cursor while hovering this slot with an unsellable held item.
+            const updateReject = () => {
+                const held = dc.peekHeldStack()
+                rejectHover.active = !!held && !binding.accepts(held.type)
+            }
+            slotImg.on('pointerover', updateReject)
+            slotImg.on('pointermove', updateReject)
+            slotImg.on('pointerout', () => { rejectHover.active = false })
         }
     }
 

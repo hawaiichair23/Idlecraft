@@ -20,6 +20,7 @@
 
 import Phaser from 'phaser'
 import { state } from '../game/state'
+import { ITEMS } from '../items/types'
 import { getHonseNeckAnchor } from './honse'
 import { getCoyoteNeckAnchor } from './coyote'
 
@@ -55,7 +56,7 @@ export type RopeEnd =
     | { kind: 'post'; x: number; y: number }
     | { kind: 'honse'; index: number }
     | { kind: 'coyote'; index: number }
-    | { kind: 'crate'; index: number }
+    | { kind: 'crate'; index: number; offX: number; offY: number }
 
 // ---- internal rope record ----
 interface Rope {
@@ -113,7 +114,10 @@ export class RopeController {
         if (end.kind === 'post') return { x: end.x, y: end.y }
         if (end.kind === 'crate') {
             const c = state.placedCrates[end.index]
-            return c ? { x: c.x, y: c.y } : null
+            if (!c) return null
+            // Anchor at the fixed catch offset from center. The chest sprite never
+            // visually rotates, so no angle math — that was making the anchor drift.
+            return { x: c.x + end.offX, y: c.y + end.offY }
         }
         if (end.kind === 'coyote') {
             const cy = state.coyotes[end.index]
@@ -370,7 +374,8 @@ export class RopeController {
             const crateBody = (this.scene as any).getCrateBody?.(anchorEnd.index)
             if (crateBody) {
                 rope.crateConstraintA = matter.add.constraint(
-                    rope.bodies[0] as any, crateBody as any, 8, 0.2
+                    rope.bodies[0] as any, crateBody as any, 0, 0.2,
+                    { pointB: { x: anchorEnd.offX, y: anchorEnd.offY } } as any
                 ) as any
             }
         }
@@ -487,8 +492,11 @@ export class RopeController {
                             // Soft, slightly-springy link: low stiffness so the
                             // tug-of-war between the rope chain and the crate
                             // body is absorbed instead of snapping (no jitter).
+                            // pointB anchors at the local catch offset so the
+                            // solver tows from the exact spot the rope grabbed.
                             rope.crateConstraint = matter.add.constraint(
-                                tip as any, crateBody as any, 8, 0.2
+                                tip as any, crateBody as any, 0, 0.2,
+                                { pointB: { x: newEnd.offX, y: newEnd.offY } } as any
                             ) as any
                         }
                     }
@@ -531,14 +539,34 @@ export class RopeController {
             const dy = y - p.y
             if (dx * dx + dy * dy <= postR2) return { kind: 'post', x: p.x, y: p.y }
         }
-        // Crates use their own end kind so the rope reads the crate's live
-        // position each frame (it moves when dragged). Index-addressed.
+        // Containers (crates/chests) use their own end kind so the rope reads the
+        // live position each frame (it moves when dragged). Index-addressed. The
+        // catch test is rectangular — sized to the container's footprint plus the
+        // catch radius — so a wide chest catches across its whole width, not just
+        // the center.
         for (let i = 0; i < state.placedCrates.length; i++) {
             const c = state.placedCrates[i]
             if (fromEnd.kind === 'crate' && fromEnd.index === i) continue
-            const dx = x - c.x
-            const dy = y - c.y
-            if (dx * dx + dy * dy <= postR2) return { kind: 'crate', index: i }
+            const frame = this.scene.textures.getFrame(ITEMS[(c.item ?? 'crate') as keyof typeof ITEMS].sprite)
+            const scale = ITEMS[(c.item ?? 'crate') as keyof typeof ITEMS].scale
+            // Raw box half-extents (the actual surface), and the catch zone which
+            // extends ROPE_CATCH_RADIUS beyond it.
+            const boxHalfW = ((frame?.width ?? 8) * scale) / 2
+            const boxHalfH = ((frame?.height ?? 8) * scale) / 2
+            const halfW = boxHalfW + ROPE_CATCH_RADIUS
+            const halfH = boxHalfH + ROPE_CATCH_RADIUS
+            if (Math.abs(x - c.x) <= halfW && Math.abs(y - c.y) <= halfH) {
+                // Store the catch point as a fixed offset from the chest center.
+                // The chest sprite always draws upright (no visual rotation), so
+                // the anchor is center + offset — no angle math.
+                const wx = x - c.x
+                const wy = y - c.y
+                // Clamp to the box surface so the anchor sits on the chest, not
+                // out in the catch-radius padding.
+                const offX = Math.max(-boxHalfW, Math.min(boxHalfW, wx))
+                const offY = Math.max(-boxHalfH, Math.min(boxHalfH, wy))
+                return { kind: 'crate', index: i, offX, offY }
+            }
         }
         // Trees catch the same way posts do — anchor is 8px below the tree's
         // visual center, around the lower trunk where a rope would actually wrap.

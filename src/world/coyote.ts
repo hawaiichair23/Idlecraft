@@ -24,6 +24,7 @@ export interface Coyote {
   health: number       // remaining hit points; coyote despawns at <= 0
   hurtUntil: number    // gameTime ms until which the hit (red) flash shows
   knockbackUntil: number // gameTime ms until which AI movement yields to knockback
+  dying: boolean
 }
 
 export const COYOTE_MAX_HEALTH = 15
@@ -52,7 +53,7 @@ const LUNGE_REACH = 14      // this close counts as the lunge landing; peel off
 const RETREAT_DIST = 270    // back off to here before returning to roam
 const RAGE_BUILD_MS = 12000 // time roaming to build full rage (closes the ring)
 const CATCHUP_DIST = 160    // farther than this from its spot = chasing, rage resets
-const RAGE_SHRINK = 0.52    // at full rage the standoff ring shrinks by this much
+const RAGE_SHRINK = 0.62    // at full rage the standoff ring shrinks by this much
 
 // Body box for collision/shove against the player. Lower and leaner than a honse.
 export function getCoyoteBodyAABB(c: Coyote): { x: number; y: number; w: number; h: number } {
@@ -131,6 +132,7 @@ export function createCoyote(x: number, y: number): Coyote {
     health: COYOTE_MAX_HEALTH,
     hurtUntil: 0,
     knockbackUntil: 0,
+    dying: false,
   }
 }
 
@@ -168,6 +170,8 @@ export function updateCoyotes(
   const step = dt / 1000
   for (let ci = 0; ci < coyotes.length; ci++) {
     const c = coyotes[ci]
+
+    if (c.dying) continue
 
     // Knockback window: skip AI steering entirely and just carry the impulse
     // velocity (set by the hit) into position, so the coyote is visibly shoved

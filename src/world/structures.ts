@@ -7,14 +7,15 @@
 // Same split: this file is the catalog (types + metadata); state holds the
 // instances (where they're placed in the world).
 
-export type WorldStructureType = 'shop' | 'church' | 'church_bell' | 'church_bell_back' | 'general_store' | 'abandoned_house' | 'house_roof' | 'long_house' | 'land_office' | 'nursery' | 'tanner'   // future: 'npc_house', ...
+export type WorldStructureType = 'shop' | 'church' | 'church_bell' | 'church_bell_back' | 'general_store' | 'abandoned_house' | 'house_roof' | 'long_house' | 'land_office' | 'nursery' | 'tanner' | 'gunsmith'   // future: 'npc_house', ...
 
 export interface WorldStructureDef {
   name: string
   sprite: string
   scale: number
   interiorBg?: string
-  tint?: number   // applied to the (white) base sprite when no per-instance tint is set
+  tint?: number
+  hitbox?: { w: number; h: number }
 }
 
 export const WORLD_STRUCTURES: Record<WorldStructureType, WorldStructureDef> = {
@@ -23,12 +24,13 @@ export const WORLD_STRUCTURES: Record<WorldStructureType, WorldStructureDef> = {
   church_bell: { name: 'Bell Church', sprite: 'church_bell', scale: 3 },
   church_bell_back: { name: 'Bell Church', sprite: 'church_bell_back', scale: 3 },
   general_store: { name: 'General Store', sprite: 'shop', scale: 3, tint: 0xA6BC78 },
-  abandoned_house: { name: 'Abandoned House', sprite: 'abandoned_house', scale: 3 },
+  abandoned_house: { name: 'Abandoned House', sprite: 'abandoned_house', scale: 3, hitbox: { w: 36, h: 45 } },
   house_roof: { name: 'House', sprite: 'house_roof', scale: 3 },
-  long_house: { name: 'Long House', sprite: 'long_house', scale: 3 },
+  long_house: { name: 'Long House', sprite: 'long_house', scale: 3, hitbox: { w: 39, h: 81 } },
   land_office: { name: 'Land Office', sprite: 'shop', scale: 3, tint: 0xC8A86A },
   nursery: { name: 'Nursery', sprite: 'shop', scale: 3, tint: 0x9CB592 },
   tanner: { name: 'Tanner', sprite: 'shop', scale: 3, tint: 0x9C6B43 },
+  gunsmith: { name: 'Gunsmith', sprite: 'house_roof_open', scale: 3, tint: 0x7A7A8A },
 }
 
 // A single placed instance in the world.

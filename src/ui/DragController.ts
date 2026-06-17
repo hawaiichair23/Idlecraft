@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { ITEMS, type ItemStack, type ItemDef } from '../items/types'
+import { COLORS } from '../colors'
 import type { SlotBinding } from './SlotBinding'
 
 // One DragController lives in the UI scene. Slots route their pointerdown to
@@ -18,10 +19,11 @@ const HELD_DEPTH = 10000
 export class DragController {
   private scene: Phaser.Scene
   private slots: SlotBinding[] = []
-  private held: { stack: ItemStack; source: SlotBinding } | null = null
+  private held: { stack: ItemStack; source: SlotBinding | null } | null = null
   private heldContainer: Phaser.GameObjects.Container | null = null
   private heldSprite: Phaser.GameObjects.Sprite | null = null
   private heldCount: Phaser.GameObjects.BitmapText | null = null
+  private heldCountShadow: Phaser.GameObjects.BitmapText | null = null
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene
@@ -32,13 +34,17 @@ export class DragController {
   unregister(slot: SlotBinding) {
     const i = this.slots.indexOf(slot)
     if (i >= 0) this.slots.splice(i, 1)
-    if (this.held && this.held.source === slot) this.clearHeld()
+    // The hand owns the held item outright. If the slot it came from is being
+    // destroyed (e.g. the E-inventory panel closing), just sever the source
+    // reference — the item stays in hand instead of being thrown away.
+    if (this.held && this.held.source === slot) this.held.source = null
   }
 
   isHolding(): boolean { return this.held !== null }
 
   // Take the held stack and clear the held state. Returns null if not holding.
-  // Used when dropping the held stack outside the slot system (e.g. into the world).
+  // Used when dropping the held stack outside the slot system (e.g. into the
+  // world, or into the inventory when a panel closes).
   takeHeld(): ItemStack | null {
     if (!this.held) return null
     const stack = this.held.stack
@@ -46,14 +52,6 @@ export class DragController {
     return stack
   }
 
-  // Return the held item to the slot it was picked up from. Used when the
-  // interior closes while the player is holding something — the item goes
-  // back where it came from instead of vanishing.
-  restoreHeld(): void {
-    if (!this.held) return
-    this.held.source.restore(this.held.stack)
-    this.clearHeld()
-  }
 
   // Consume 1 of the held stack if it's edible. Returns true if eaten.
   tryEatHeld(): boolean {
@@ -182,9 +180,15 @@ export class DragController {
 
     if (!this.heldContainer) {
       this.heldSprite = this.scene.add.sprite(0, 0, def.sprite).setScale(def.scale)
+      // Drop shadow behind the count, matching the hotbar count labels.
+      this.heldCountShadow = this.scene.add.bitmapText(25, 25, 'main', '', 20)
+        .setOrigin(1, 1)
+        .setTint(COLORS.countShadow)
+        .setBlendMode(Phaser.BlendModes.MULTIPLY)
       this.heldCount = this.scene.add.bitmapText(23, 23, 'main', '', 20)
         .setOrigin(1, 1)
-      this.heldContainer = this.scene.add.container(p.x, p.y, [this.heldSprite, this.heldCount])
+        .setTint(COLORS.uiText)
+      this.heldContainer = this.scene.add.container(p.x, p.y, [this.heldSprite, this.heldCountShadow, this.heldCount])
         .setDepth(HELD_DEPTH)
     } else {
       this.heldSprite!.setTexture(def.sprite).setScale(def.scale)
@@ -192,9 +196,12 @@ export class DragController {
     }
 
     if (this.held.stack.count > 1) {
-      this.heldCount!.setText(String(this.held.stack.count)).setVisible(true)
+      const txt = String(this.held.stack.count)
+      this.heldCount!.setText(txt).setVisible(true)
+      this.heldCountShadow!.setText(txt).setVisible(true)
     } else {
       this.heldCount!.setVisible(false)
+      this.heldCountShadow!.setVisible(false)
     }
   }
 

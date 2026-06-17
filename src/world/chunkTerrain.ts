@@ -211,8 +211,9 @@ export class ChunkTerrain {
       for (let tx = 0; tx < woodTilesX; tx++) {
         const wx = ox + tx * WT + WT / 2
         const wy = oy + ty * WT + WT / 2
-        if (!state.woodAt(wx, wy)) continue
-        stamp('item_plank', tx * WT + WT / 2, ty * WT + WT / 2)
+        const wv = state.woodAt(wx, wy)
+        if (!wv) continue
+        stamp(wv === 3 ? 'item_sandstone' : wv === 2 ? 'item_flagstone' : 'item_plank', tx * WT + WT / 2, ty * WT + WT / 2)
       }
     }
 

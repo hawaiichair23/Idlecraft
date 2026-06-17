@@ -36,6 +36,17 @@ game.input.mouse?.disableContextMenu()
 window.addEventListener('resize', () => game.scale.updateBounds())
 document.addEventListener('fullscreenchange', () => game.scale.updateBounds())
 
+// Pause the whole game loop while the tab is backgrounded. Browsers suspend
+// requestAnimationFrame when a tab is hidden, so on return the first frame
+// would otherwise carry a delta spanning the entire time away — stepping
+// physics once over that giant gap and flinging every live body (tumbleweeds,
+// etc.) across the world at once. sleep()/wake() stop the loop and reset its
+// timing so the first frame back gets a normal delta instead of the gap.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) game.loop.sleep()
+  else game.loop.wake()
+})
+
 // ---- developer console commands ----
 // Exposed on window for use in browser devtools. Type `gold(5000)` etc.
 // in the F12 console to call them at runtime.

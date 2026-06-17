@@ -115,10 +115,10 @@ export function buildWorkshopInterior(
   // Taking pulls the stored output first, else consumes inputs to craft once.
   {
     const x = outputX
-    const getStack = () => {
+    const getStack = (): ItemStack | null => {
       const plot = state.plots[plotIndex]
-      if (plot.autoCraft) return plot.craftOutput
-      return plot.craftOutput ?? previewCraft(plotIndex)
+      if (plot.autoCraft) return plot.craftOutput ?? null
+      return plot.craftOutput ?? previewCraft(plotIndex) ?? null
     }
     const slotImg = makeSlotImage(scene, { x, y: centerY, peek: getStack, tooltipOffsetY: -38 })
     container?.add(slotImg)
@@ -133,12 +133,9 @@ export function buildWorkshopInterior(
         if (plot.craftOutput) {
           const out = plot.craftOutput
           plot.craftOutput = null
-          if (out.type === 'bread') state.hasMadeBread = true
-          scene.events.emit('bread-crafted')
           return out
         }
         const result = consumeCraft(plotIndex)
-        if (result) scene.events.emit('bread-crafted')
         return result
       },
       offer: () => 0,
@@ -184,62 +181,7 @@ export function buildWorkshopInterior(
     })
   }
 
-  // ---- NPC ---------------------------------------------------------------
-  const NPC_SCALE = 4
-  const SPRITE_PX = 8 * NPC_SCALE
-  const margin = 16
-  const npcX = margin + SPRITE_PX / 2
-  const npcY = h - UI_INVENTORY_BAR_HEIGHT - margin - SPRITE_PX / 2
-  scene.add.sprite(npcX, npcY, 'npc_workshop').setScale(NPC_SCALE)
-  const npcAnchor = { x: npcX, y: npcY - SPRITE_PX / 2 - 12 }
-
-  let npcText: Phaser.GameObjects.BitmapText | null = null
-  let npcTextTimer: Phaser.Time.TimerEvent | null = null
-
-  const showDialogue = (text: string) => {
-    if (npcTextTimer) { npcTextTimer.remove(false); npcTextTimer = null }
-    if (npcText) { npcText.destroy(); npcText = null }
-
-    const TYPE_MS_PER_CHAR = 40
-    npcText = scene.add.bitmapText(npcAnchor.x, npcAnchor.y, 'mainSmall', '', 14)
-      .setOrigin(0, 1)
-      .setTint(COLORS.white)
-      .setMaxWidth(380)
-
-    let i = 0
-    npcTextTimer = scene.time.addEvent({
-      delay: TYPE_MS_PER_CHAR,
-      loop: true,
-      callback: () => {
-        if (!npcText) return
-        i++
-        npcText.setText(text.slice(0, i))
-        if (i >= text.length) {
-          npcTextTimer?.remove(false)
-          npcTextTimer = null
-        }
-      },
-    })
-  }
-
-  if (!state.workshopFirstLineSeen) {
-    state.workshopFirstLineSeen = true
-    showDialogue(`I DON'T RECKON YOU COULD MAKE ME SOME BREAD?`)
-  }
-
-  const onBreadCrafted = () => {
-    if (state.workshopSecondLineSeen) return
-    if (!state.hasMadeBread) return
-    state.workshopSecondLineSeen = true
-    showDialogue('THANK YOU STRANGER. MY FRIEND THE SHOPKEEPER IN THE SETTLEMENT NORTH OF HERE HAS A TOOL FOR YOU.')
-  }
-  scene.events.on('bread-crafted', onBreadCrafted)
-
-  const onCleanup = () => {
-    if (npcTextTimer) { npcTextTimer.remove(false); npcTextTimer = null }
-    npcText = null
-    scene.events.off('bread-crafted', onBreadCrafted)
-  }
+  const onCleanup = () => {}
 
   // The arrow fills dark→bright ONLY while auto-craft is ON (it's the visible
   // countdown of the auto-craft timer). With auto-craft off the arrow is static.

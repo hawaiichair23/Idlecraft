@@ -16,11 +16,10 @@ export interface NurseryInteriorHandle {
 interface NurseryEntry {
   type: ItemType
   buyPrice: number
-  description: string
 }
 const NURSERY_ITEMS: NurseryEntry[] = [
-  { type: 'hemp_seed', buyPrice: 10, description: 'Plant in a field. Grows hemp.' },
-  { type: 'cottonwood_sapling', buyPrice: 30, description: 'Plant in arable ground. Grows a cottonwood.' },
+  { type: 'hemp_seed', buyPrice: 10 },
+  { type: 'cottonwood_sapling', buyPrice: 30 },
 ]
 
 export function buildNurseryInterior(scene: Phaser.Scene): NurseryInteriorHandle {
@@ -104,7 +103,7 @@ export function buildNurseryInterior(scene: Phaser.Scene): NurseryInteriorHandle
     const label = scene.add.bitmapText(labelX, rowY - 8, 'main', def.name, FONT.name)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
-    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', entry.description, FONT.desc)
+    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', def.desc ?? '', FONT.desc)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
 

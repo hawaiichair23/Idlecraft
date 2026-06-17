@@ -7,6 +7,7 @@ import { ITEMS } from '../items/types'
 import type { WorldStructure } from '../world/structures'
 import type { Honse } from '../world/honse'
 import type { Coyote } from '../world/coyote'
+import type { Bandit } from '../world/bandit'
 
 export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage'
 export type BuiltType = Exclude<BuildingType, 'empty'>
@@ -39,8 +40,10 @@ export interface WorldBounds {
 // General store sell-grid: 6 columns × 4 rows.
 export const GENERAL_STORE_SLOTS = 24
 
-// World-placed crate storage: 6 columns × 4 rows, same grid as the store.
-export const CRATE_SLOTS = 24
+// World-placed crate storage: 6 columns × 2 rows.
+export const CRATE_SLOTS = 12
+// Chest storage (interior container): 6 columns × 4 rows — twice the crate.
+export const CHEST_SLOTS = 24
 
 // Standalone world well water capacity — fills to this, then idles.
 export const WORLD_WELL_CAP = 4
@@ -148,7 +151,8 @@ export function getStorageSlotCount(level: number): number {
   return STORAGE_BASE_SLOTS + (level - 1) * STORAGE_COLS
 }
 
-export const INVENTORY_SIZE = 5
+export const INVENTORY_SIZE = 15
+export const HOTBAR_SIZE = 5
 export const MAX_BAGS = 2
 
 // True when the given item type is a bag (any tier).
@@ -170,6 +174,16 @@ export function createCrateContents(): (ItemStack | null)[] {
   return Array.from({ length: CRATE_SLOTS }, () => null)
 }
 
+// Slot count for a placed container by item type. Chests hold twice a crate.
+export function containerSlotCount(item: ItemType): number {
+  return item === 'chest' ? CHEST_SLOTS : CRATE_SLOTS
+}
+
+// Empty contents grid sized to the container's item type.
+export function createContainerContents(item: ItemType): (ItemStack | null)[] {
+  return Array.from({ length: containerSlotCount(item) }, () => null)
+}
+
 class GameState {
   gold = 20
   health = MAX_HEALTH
@@ -187,6 +201,9 @@ class GameState {
   // Invisible buried items, placed by world gen. Each entry is consumed when
   // the player digs within reveal radius.
   buriedItems: { x: number; y: number; reward: number }[] = []
+  // Invisible buried gems, placed by world gen. Seeded fresh each load from the
+  // layout (deterministic from seed), like buriedItems. Consumed on dig.
+  buriedGems: { x: number; y: number; type: string }[] = []
   // Item stacks buried by the player. Stored when a dropped item is buried
   // by a shovel-click on a dirt patch. Revealed when the spot is dug again.
   buriedStacks: { x: number; y: number; stack: ItemStack }[] = []
@@ -195,6 +212,10 @@ class GameState {
   // on the floor — items get spliced out when picked up and never respawn.
   // Initialized lazily on first entry from the spawn config.
   walkableInteriors: Record<string, WalkableInteriorItemInstance[]> = {}
+  // Per-walkable-interior crate. Keyed like walkableInteriors. null = this
+  // interior was rolled to have no crate. Otherwise a contents grid the open-UI
+  // reads, seeded once on first visit and persisted across visits.
+  walkableInteriorCrates: Record<string, { contents: (ItemStack | null)[] } | null> = {}
   // Revealed but not yet collected — sprite drawn at position, walk over to claim.
   revealedItems: { x: number; y: number; reward: number }[] = []
   // Items dropped by the player into the world — walk over them to pick up.
@@ -212,10 +233,11 @@ class GameState {
   // Mechanically identical otherwise.
   placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' | 'iron_post' }[] = []
   placedGates: { x: number; y: number; vertical: boolean; open: boolean; swingX: number; swingY: number }[] = []
-  // Crates placed by the player. Each is a sprite + obstacle in the world (like
-  // a post) plus its own storage grid in `contents` (CRATE_SLOTS long). The
-  // contents persist for the play session — open the crate to take/put items.
-  placedCrates: { x: number; y: number; contents: (ItemStack | null)[] }[] = []
+  // Containers placed by the player (crates and chests). Each is a sprite +
+  // obstacle in the world (like a post) plus its own storage grid in `contents`.
+  // `item` is the container's item type ('crate' or 'chest'), driving its sprite,
+  // footprint, and slot count. Contents persist for the play session.
+  placedCrates: { x: number; y: number; item: ItemType; contents: (ItemStack | null)[]; unlocked?: boolean }[] = []
   // Standalone world wells (e.g. the one in the north town). Each produces
   // water up to WORLD_WELL_CAP, then idles until the player takes some. Unlike
   // plot wells these have no level/upgrades — a fixed-rate water bucket you
@@ -229,6 +251,7 @@ class GameState {
   // hitboxes derive from this. Stationary for now — movement comes later.
   honses: Honse[] = []
   coyotes: Coyote[] = []
+  bandits: Bandit[] = []
   // Dead coyotes left lying in the world as carcasses. Inert (no AI, no damage,
   // not targetable). Later: vultures clean these up, then they're removed.
   carcasses: { x: number; y: number }[] = []
@@ -295,13 +318,6 @@ class GameState {
   // act against the absent player. New enemy types must respect it.
   playerInWorld = true
 
-  // NPC dialogue progression — each flag flips true the first time its line
-  // is shown, and the corresponding line is never shown again.
-  workshopFirstLineSeen = false
-  workshopSecondLineSeen = false
-  // Set to true the first time bread is crafted. Used to trigger the workshop
-  // NPC's second line.
-  hasMadeBread = false
   // Set to true the first time rope is crafted. Unlocks the rope listing in
   // the Tool Shop — the player must discover the recipe before they can buy.
   hasCraftedRope = false
@@ -420,13 +436,16 @@ class GameState {
       { type: 'land_office', x: 3030, y: 204, townId: 'northern_town' },
       { type: 'nursery', x: 3100, y: 204, townId: 'northern_town' },
       { type: 'tanner', x: 3235, y: 355, townId: 'northern_town' },
+      { type: 'gunsmith', x: 3170, y: 204, townId: 'northern_town' },
     ]
     this.discoveredTowns = new Set()
     this.unlockedBuildings = new Set(['mill', 'well', 'workshop'])
     this.dugSpots = []
     this.buriedItems = []
+    this.buriedGems = []
     this.buriedStacks = []
     this.walkableInteriors = {}
+    this.walkableInteriorCrates = {}
     this.revealedItems = []
     this.droppedItems = []
     this.plantedTrees = []
@@ -446,9 +465,11 @@ class GameState {
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    this.inventory[0] = { type: 'bread', count: 64 }
-    this.inventory[1] = { type: 'axe', count: 64 }
-    this.inventory[2] = { type: 'rope', count: 64 }
+    //this.inventory[0] = { type: 'gold_lockbox', count: 1 }
+    this.inventory[2] = { type: 'colt', count: 1 }
+    //this.inventory[3] = { type: 'shovel', count: 1 }
+    this.inventory[1] = { type: 'axe', count: 1 }
+    this.inventory[4] = { type: 'colt_ammo', count: 100 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -522,6 +543,12 @@ class GameState {
         const placed: ItemStack = { type: stack.type, count: moved }
         if (isBag(stack.type)) {
           placed.contents = stack.contents ?? createBagContents(stack.type)
+        }
+        // Lockboxes carry their own contents + unlocked state on the instance,
+        // so a picked-up box stays the same box when re-placed.
+        if (stack.type === 'silver_lockbox' || stack.type === 'gold_lockbox') {
+          if (stack.contents) placed.contents = stack.contents
+          placed.unlocked = stack.unlocked
         }
         this.inventory[i] = placed
         stack.count -= moved
@@ -622,6 +649,28 @@ class GameState {
     this.health = MAX_HEALTH
     registry.set('playerHealth', this.health)
     return this.health
+  }
+
+  // Total count of an item type across the hotbar inventory.
+  countItem(type: ItemType): number {
+    let n = 0
+    for (const s of this.inventory) if (s && s.type === type) n += s.count
+    return n
+  }
+
+  // Remove up to `want` of an item type from the inventory, emptying stacks as it
+  // goes. Returns how many were actually removed (may be less if you had fewer).
+  consumeItem(type: ItemType, want: number): number {
+    let removed = 0
+    for (let i = 0; i < this.inventory.length && removed < want; i++) {
+      const s = this.inventory[i]
+      if (!s || s.type !== type) continue
+      const take = Math.min(s.count, want - removed)
+      s.count -= take
+      removed += take
+      if (s.count <= 0) this.inventory[i] = null
+    }
+    return removed
   }
 
   trySpend(n: number, registry: Phaser.Data.DataManager): boolean {

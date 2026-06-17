@@ -3,17 +3,21 @@ import { loadSprites, spriteToTexture } from '../sprites/loader'
 import { spriteColors, recolorHouseRoof } from '../sprites/data'
 import { COLORS, FONT } from '../colors'
 import { UI_BAR_HEIGHT, UI } from './UI'
-import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createCrateContents, Terrain, TERRAIN_TILE, WOOD_TILE, PLAYER_BASE_SPEED, WORLD_WELL_CAP, type BuiltType } from '../game/state'
+import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createContainerContents, Terrain, TERRAIN_TILE, WOOD_TILE, PLAYER_BASE_SPEED, WORLD_WELL_CAP, type BuiltType } from '../game/state'
 import { previewCraft, consumeCraft } from '../items/recipes'
 import { ITEMS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
-import { generateWorld, generateRegionDecor, buildTrail, scatterTrailTrees, scatterTrailRockClusters, pickHerdSite, makeRng, type GenRect, type DecorItem } from '../world/gen'
+import { generateWorld, generateRegionDecor, generateRegionBuried, buildTrail, scatterTrailTrees, scatterTrailRockClusters, pickHerdSite, makeRng, type GenRect, type DecorItem } from '../world/gen'
 import { ChunkTerrain } from '../world/chunkTerrain'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { scatterSites, SITE_TEMPLATES, trailYAtX, type PlacedSite } from '../world/sites'
 import { registerGrabbable } from '../ui/hover'
 import { RopeController, CAT_HONSE } from '../world/ropeController'
-import { updateHonses, getHonseBodyAABB, createHonse } from '../world/honse'
+import { updateHonses, getHonseBodyAABB, createHonse, spookHonse, spookHonsesFromShot } from '../world/honse'
 import { updateCoyotes, createCoyote, getCoyoteBodyAABB, getCoyoteMouthAnchor, COYOTE_BITE_RADIUS, COYOTE_BITE_COOLDOWN_MS, COYOTE_BITE_DAMAGE } from '../world/coyote'
+import { updateBandits, createBandit, BANDIT_SPREAD, BANDIT_KNOCKBACK, BANDIT_KNOCKBACK_MS, BANDIT_MUZZLE_DY } from '../world/bandit'
+import type { Bandit } from '../world/bandit'
+import { listEnemies } from '../world/enemy'
+import type { EnemyRef } from '../world/enemy'
 import { updateTumbleweeds, clearTumbleweeds } from '../world/tumbleweed'
 import { pointToSegmentDist, pointToPolylineDist, curveBetween } from '../world/geometry'
 
@@ -22,6 +26,7 @@ const PLAYER_SPEED = PLAYER_BASE_SPEED   // single source of truth lives in stat
 const MOUNTED_SPEED_MIN = 140  
 const MOUNTED_SPEED_MAX = 250   
 const MOUNTED_RAMP_MS = 2200   
+const HORSE_GEAR_SPEEDS = [130, 200, 280]            
 // Permanent westward expansion applied once at world start — the frontier leg
 // toward Fort Worth. Snapped to whole tiles by growWorld. Tune here.
 const PERMANENT_WEST_PX = 50000
@@ -89,14 +94,18 @@ const TREE_CULL_DESTROY_MARGIN = 600
 const MOUNT_RANGE = 40
 const TOOL_RANGE = 150
 const CRATE_RANGE = 80
+// Per-frame push force (× body mass) applied when the player shoves a container.
+// Tuned with the body's frictionAir below: enough to move it at a heavy walk,
+// not so much it rockets. Lower = heavier/harder to move.
+const PUSH_FORCE = 0.0012
 
 const ORE_ROLL_TABLE: { type: ItemType; weight: number }[] = [
-  { type: 'stone',  weight: 78 },
-  { type: 'coal',   weight: 11 },
+  { type: 'stone',  weight: 69 },
+  { type: 'coal',   weight: 10 },
   { type: 'iron',   weight: 6 },
   { type: 'copper', weight: 3 },
-  { type: 'silver', weight: 1.5 },
-  { type: 'gold',   weight: 0.5 },
+  { type: 'silver', weight: 2 },
+  { type: 'gold',   weight: 1 },
 ]
 
 // Roll the ore table once. Returns the dropped item type.
@@ -159,6 +168,9 @@ export type OverworldAction =
   | { kind: 'place-gate'; sprite: string; scale: number }
   | { kind: 'throw-rope'; sprite: string; scale: number }
   | { kind: 'tool-generic'; sprite: string; scale: number }
+  | { kind: 'quirt'; sprite: string; scale: number; gear: number }
+  | { kind: 'aim'; sprite: string; scale: number; bullets?: string }
+  | { kind: 'eat-food'; sprite: string; scale: number }
   | { kind: 'mount'; sprite: string; scale: number; tint: number | null }
   | { kind: 'open-crate' }
   | { kind: 'toggle-gate' }
@@ -181,6 +193,9 @@ export const ACTION_CURSOR: Record<OverworldAction['kind'], { texture: string; s
   'place-gate':    'tool',
   'throw-rope':    'tool',
   'tool-generic':  'tool',
+  'quirt':         'tool',
+  'aim':           'tool',
+  'eat-food':      'tool',
   'mount':         'tool',
   'open-crate':    { texture: 'cursor_grab', scale: 2 },
   'toggle-gate':   { texture: 'item_fence_gate', scale: 2 },
@@ -197,6 +212,7 @@ interface PlotView {
 export class Overworld extends Phaser.Scene {
   private player!: Phaser.GameObjects.Sprite
   private playerShadow!: Phaser.GameObjects.Sprite
+  private ePrompt!: Phaser.GameObjects.Container
   private inPopup = false
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
   private arrows!: Phaser.Types.Input.Keyboard.CursorKeys
@@ -204,6 +220,7 @@ export class Overworld extends Phaser.Scene {
   private mountedRampTime = 0
   private mountedLastDx = 0
   private mountedLastDy = 0
+  private horseGear = 0
   private honsesSpawned = false
   private plotViews: PlotView[] = []
   // Non-enterable roofed houses; recorded so world gen keeps trees/rocks clear.
@@ -272,6 +289,24 @@ export class Overworld extends Phaser.Scene {
   // synced from state each frame in update().
   private honseSprites: Phaser.GameObjects.Sprite[] = []
   private coyoteSprites: Phaser.GameObjects.Sprite[] = []
+  private banditSprites: Phaser.GameObjects.Sprite[] = []
+  // Player velocity (px/sec), derived each frame from position delta. Bandits
+  // read this to lead their shots.
+  private playerVX = 0
+  private playerVY = 0
+  private playerLastX = 0
+  private playerLastY = 0
+  // Active bullets fired from the derringer. Transient; move in a straight line
+  // each frame, hit coyotes, and despawn off-screen. Not persisted to state.
+  private bullets: { x: number; y: number; vx: number; vy: number; sprite: Phaser.GameObjects.Rectangle; fromBandit: boolean }[] = []
+  private bulletRng: () => number = makeRng(0)
+  // Separate seeded stream for bandit dodge decisions, so consuming randomness for
+  // dodges doesn't desync the bullet-spread stream (determinism stays intact).
+  private banditRng: () => number = makeRng(0)
+  private lastFireAt = 0
+  private gunAmmo = 5
+  private gunFullReloadUntil = 0
+  private lastGunSlot = -1
   // Carcass sprites, parallel to state.carcasses by index.
   private carcassSprites: Phaser.GameObjects.Sprite[] = []
   // gameTime ms until which the player is invulnerable (i-frames after a hit)
@@ -297,6 +332,18 @@ export class Overworld extends Phaser.Scene {
   private pipeSourceMarker: Phaser.GameObjects.Sprite | null = null
   // Locked side of the clicked source plot, so its solid pipe doesn't move.
   private pendingPipeSide: 'top' | 'bottom' | 'left' | 'right' | null = null
+
+  private postDragAnchor: { x: number; y: number } | null = null
+  private postDragSpecies: 'post' | 'cedar_post' | 'iron_post' | null = null
+  // Drag preview composites into a single RenderTexture so overlapping post
+  // sprites don't double up their alpha where they meet. Drawn at full opacity,
+  // shown at 0.65 as one layer.
+  private postDragRT: Phaser.GameObjects.RenderTexture | null = null
+  // One off-display stamp sprite per texture key. draw() in Phaser 4 buffers the
+  // command and renders at render() time using the object's CURRENT texture, so a
+  // single shared stamp can't have its texture swapped mid-batch — each variant
+  // needs its own sprite.
+  private postDragStamps: Map<string, Phaser.GameObjects.Sprite> = new Map()
   private static PIPE_GHOST_ALPHA = 0.65
   // On-screen length of one item_pipe tile (12px native × scale 2).
   private static PIPE_TILE = 24
@@ -341,11 +388,52 @@ export class Overworld extends Phaser.Scene {
       .setStrokeStyle(2, COLORS.worldBorder)
       .setDepth(-200000)
       .setInteractive()
+    this.input.on('pointerup', () => {
+      const ui = this.scene.get('UI') as UI
+      ui.getCursorController()?.setAxeSwung(false)
+      if (this.postDragAnchor) {
+        const path = this.computePostDragPath()
+        if (path.length <= 1) {
+          this.tryPlacePost(this.postDragAnchor.x, this.postDragAnchor.y)
+        } else {
+          for (const cell of path) this.tryPlacePost(cell.x, cell.y)
+        }
+        this.clearPostDragGhosts()
+      }
+    })
     this.worldBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
       const ui = this.scene.get('UI') as UI
       const drag = ui.getDragController()
       if (!drag) return   // UI not fully initialized yet (early click during scene boot)
       const isRight = p.rightButtonDown()
+
+      // A free-floating drag item owns this click. Handle it (drop to world, or
+      // plant a held sapling) before any tool/mount/eat logic so nothing else
+      // fires while something is in hand.
+      if (drag.isHolding()) {
+        if (isRight) return  // right-click while holding does nothing on the world
+        // Over inventory UI (bottom bar or an open panel) → keep in hand.
+        if (ui.isPointerOverInventory(p.x, p.y)) return
+        const heldStack = drag.peekHeldStack()
+        if (heldStack && heldStack.type === 'cottonwood_sapling') {
+          if (this.tryPlantFromStack(p.worldX, p.worldY, heldStack)) {
+            if (heldStack.count <= 0) drag.takeHeld()
+            else drag.refreshHeldVisual()
+            return
+          }
+        }
+        const stack = drag.takeHeld()
+        if (stack) this.dropStack(p.worldX, p.worldY, stack)
+        return
+      }
+
+
+      // Left-click with food selected eats it (same as right-click). Skip while
+      // dragging a stack — that click is a drop, not an eat.
+      if (!isRight && !drag.isHolding() && this.peekSelectedEdibleDef()) {
+        if (this.eatSelectedFood()) return
+      }
+
 
       // While mounted: clicks normally dismount, but destructive actions
       // (untie rope, destroy post/crate/plot, chop, mine) take precedence —
@@ -390,41 +478,10 @@ export class Overworld extends Phaser.Scene {
           else if (heldDef.healHearts) state.changeHealth(heldDef.healHearts, this.registry)
           return
         }
-        const selectedDef = this.peekSelectedEdibleDef()
-        if (selectedDef && this.tryEatSelected()) {
-          this.spawnCrumbs(this.player.x, this.player.y, selectedDef.crumbColor!)
-          state.speedBuffEndsAt = state.gameTime + FOOD_BUFF_MS
-          state.speedBuffAmount = selectedDef.speedBuff!
-          if (selectedDef.healFull) state.healToFull(this.registry)
-          else if (selectedDef.healHearts) state.changeHealth(selectedDef.healHearts, this.registry)
-          return
-        }
+        if (this.eatSelectedFood()) return
         return  // right-click with non-food does nothing on the world
       }
 
-      // left-click — existing behavior
-      // if the player is holding a stack (drag-and-drop):
-      //   - if it's a sapling and dropped on a dirt patch → plant it
-      //   - otherwise drop the stack on the ground
-      if (drag.isHolding()) {
-        // If the click is over inventory UI (the bottom bar or an open bag
-        // panel) — including the gaps between slots — don't drop to the world.
-        // Keep the item in hand so a missed slot isn't a lost item.
-        const ui = this.scene.get('UI') as UI
-        if (ui.isPointerOverInventory(p.x, p.y)) return
-        const heldStack = drag.peekHeldStack()
-        if (heldStack && heldStack.type === 'cottonwood_sapling') {
-          if (this.tryPlantFromStack(p.worldX, p.worldY, heldStack)) {
-            // sapling count decremented; if empty, clear held
-            if (heldStack.count <= 0) drag.takeHeld()
-            else drag.refreshHeldVisual()
-            return
-          }
-        }
-        const stack = drag.takeHeld()
-        if (stack) this.dropStack(p.worldX, p.worldY, stack)
-        return
-      }
       // click on a tied rope to untie and destroy it
       if (this.rope.untieAtClick(p.worldX, p.worldY)) return
       // Pipe held: a click near a built plot (including the gap between plots)
@@ -442,6 +499,7 @@ export class Overworld extends Phaser.Scene {
       if (this.trySaplingPlant(p.worldX, p.worldY)) return
       // axe selected? try to chop a nearby mature tree, else destroy a post or crate
       if (state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+        ui.getCursorController().setAxeSwung(true)
         if (this.tryAxeEnemy(p.worldX, p.worldY, Overworld.WEAPON_DAMAGE.axe)) return
         if (this.tryChop(p.worldX, p.worldY)) return
         if (this.tryAxePost(p.worldX, p.worldY)) return
@@ -454,6 +512,7 @@ export class Overworld extends Phaser.Scene {
       // pickaxe selected? try to mine a nearby rock formation, then fall back
       // to the same destroy targets the axe handles (tree / post / crate).
       if (state.inventory[state.selectedInventorySlot]?.type === 'pickaxe') {
+        ui.getCursorController().setAxeSwung(true)
         if (this.tryMine(p.worldX, p.worldY)) return
         if (this.tryAxePost(p.worldX, p.worldY)) return
         if (this.tryAxeCrate(p.worldX, p.worldY)) return
@@ -462,8 +521,24 @@ export class Overworld extends Phaser.Scene {
         if (this.tryDestroyPipe(p.worldX, p.worldY)) return
         if (this.tryPickupWood(p.worldX, p.worldY)) return
       }
-      // post selected? try to place it in the world
-      if (this.tryPlacePost(p.worldX, p.worldY)) return
+      if (state.inventory[state.selectedInventorySlot]?.type === 'quirt' && state.mounted !== null) {
+        this.horseGear = (this.horseGear + 1) % 3
+        return
+      }
+      // post selected? start a drag to place a line of posts on release
+      const postStack = state.inventory[state.selectedInventorySlot]
+      if (postStack && (postStack.type === 'post' || postStack.type === 'cedar_post' || postStack.type === 'iron_post')) {
+        const POST_GRID = Overworld.POST_GRID
+        const sx = Math.round(p.worldX / POST_GRID) * POST_GRID
+        const sy = Math.round(p.worldY / POST_GRID) * POST_GRID
+        const dx = sx - this.player.x
+        const dy = sy - this.player.y
+        if (dx * dx + dy * dy <= TOOL_RANGE * TOOL_RANGE) {
+          this.postDragAnchor = { x: sx, y: sy }
+          this.postDragSpecies = postStack.type as 'post' | 'cedar_post' | 'iron_post'
+          return
+        }
+      }
       // crate selected? try to place it in the world
       if (this.tryPlaceCrate(p.worldX, p.worldY)) return
       if (this.tryPlacePlank(p.worldX, p.worldY)) return
@@ -472,6 +547,31 @@ export class Overworld extends Phaser.Scene {
       // one rope when the throw resolves (caught-and-thrown, or missed).
       const sel = state.inventory[state.selectedInventorySlot]
       if (sel && sel.type === 'rope' && this.rope.throw(p.worldX, p.worldY)) return
+      const selDef = sel ? ITEMS[sel.type] : null
+      if (selDef && selDef.gunSpread != null) {
+        if (state.selectedInventorySlot !== this.lastGunSlot) {
+          this.lastFireAt = 0
+          this.gunFullReloadUntil = 0
+          this.gunAmmo = selDef.gunAmmo ?? 1
+          this.lastGunSlot = state.selectedInventorySlot
+        }
+        if (state.gameTime < this.gunFullReloadUntil) return
+        const reloadMs = selDef.gunReloadMs ?? 0
+        if (state.gameTime - this.lastFireAt < reloadMs) return
+        if (selDef.gunAmmo != null && this.gunAmmo <= 0) return
+        this.lastFireAt = state.gameTime
+        this.fireBullet(p.worldX, p.worldY, selDef.gunSpread)
+        if (selDef.gunAmmo != null) {
+          this.gunAmmo--
+          if (this.gunAmmo <= 0) {
+            // Mag emptied — start the reload cooldown. The refill + ammo charge
+            // happen when that cooldown expires (handled above), so the gun is
+            // genuinely empty during the window.
+            this.gunFullReloadUntil = state.gameTime + (selDef.gunFullReloadMs ?? 0)
+          }
+        }
+        return
+      }
       if (!state.getSelectedTool() && this.toggleGate(p.worldX, p.worldY)) return
     })
 
@@ -574,6 +674,8 @@ export class Overworld extends Phaser.Scene {
       exclusions,
       tightExclusions,
     })
+    this.bulletRng = makeRng(state.worldSeed + 7777)
+    this.banditRng = makeRng(state.worldSeed + 9001)
     this.decorData.push(...layout.decor)
     for (const r of layout.rocks) {
       this.spawnRockFormation(r.x, r.y)
@@ -585,6 +687,7 @@ export class Overworld extends Phaser.Scene {
     this.spawnRockFormation(cx - 240, cy + 280)
     // seed buried items from the layout
     state.buriedItems = layout.buried.map(b => ({ x: b.x, y: b.y, reward: b.reward }))
+    state.buriedGems = layout.buriedGems.map(g => ({ x: g.x, y: g.y, type: g.type }))
     // restore any dirt patches already in state
     for (const d of state.dugSpots) {
       const sprite = this.add.sprite(d.x, d.y, 'dirt_patch').setScale(2).setDepth(1)
@@ -616,13 +719,9 @@ export class Overworld extends Phaser.Scene {
       this.obstacles.push(obs)
       this.placedGateBodies.set(`${g.x},${g.y}`, this.addBlocker(obs))
     }
-    // restore any placed crates already in state (contents persist on the entry)
+    // restore any placed containers already in state (contents persist on the entry)
     for (const c of state.placedCrates) {
-      const sprite = this.add.sprite(c.x, c.y, 'item_crate').setScale(2).setDepth(c.y - 8).setInteractive()
-      this.attachCrateOpenHandler(sprite)
-      this.crateSprites.push(sprite)
-      this.crateBodies.push(this.matter.add.rectangle(c.x, c.y, 16, 16, { frictionAir: 0.1 }))
-      this.obstacles.push(this.makeCrateObstacle(c.x, c.y))
+      this.spawnContainer(c.x, c.y, c.item ?? 'crate')
     }
     // restore any revealed-but-uncollected coins
     for (const r of state.revealedItems) {
@@ -759,6 +858,8 @@ export class Overworld extends Phaser.Scene {
     this.coyoteSprites = state.coyotes.map(c =>
       this.add.sprite(c.x, c.y, 'coyote').setScale(2).setDepth(c.y - 8)
     )
+    // TEMP: test bandit spawned behind the rock at 2072,2612 to watch his cover use.
+    this.spawnBandit(2072, 2612)
     this.carcassSprites = state.carcasses.map(k =>
       this.add.sprite(k.x, k.y, 'coyote_dead').setScale(2).setDepth(k.y - 8)
     )
@@ -775,6 +876,17 @@ export class Overworld extends Phaser.Scene {
     // in front and sprites north render behind (standard overhead y-sort).
     this.player = this.add.sprite(cx, cy, 'player').setScale(PLAYER_SCALE).setDepth(cy)
     this.playerShadow = this.add.sprite(cx + 4, cy + 10, 'tree_shadow').setScale(1.5).setDepth(cy - 1).setAlpha(0.25)
+    // Floating "E" interact prompt — shadow + main letter, matching the hotbar
+    // stack-count style. Reused: repositioned above the nearest E-target each
+    // frame, hidden when there's nothing to interact with.
+    {
+      const E_SIZE = 14
+      const shadow = this.add.bitmapText(1.5, 1.5, 'main', 'E', E_SIZE).setOrigin(0.5, 1)
+        .setTint(0x303030).setBlendMode(Phaser.BlendModes.MULTIPLY)
+      const main = this.add.bitmapText(0, 0, 'main', 'E', E_SIZE).setOrigin(0.5, 1)
+        .setTint(COLORS.uiText)
+      this.ePrompt = this.add.container(0, 0, [shadow, main]).setDepth(100000).setVisible(false)
+    }
     this.rope = new RopeController(this, this.player)
     this.rope.onRopeConsumed = () => {
       // Remove one rope from inventory — search by type, not selected slot,
@@ -1472,16 +1584,18 @@ export class Overworld extends Phaser.Scene {
     const dy = clickY - this.player.y
     if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
 
-    // Hit area = the coyote's body AABB expanded by a margin, so a click
-    // anywhere on the visible animal lands (the raw body box is only 13x5, far
-    // smaller than the sprite, which made aiming feel strict).
+    // Hit area = each enemy's body AABB expanded by a margin, so a click anywhere
+    // on the visible enemy lands (raw body boxes are smaller than the sprites).
     const M = 14
-    for (let i = 0; i < state.coyotes.length; i++) {
-      const b = getCoyoteBodyAABB(state.coyotes[i])
+    for (const ref of listEnemies(state.coyotes, state.bandits)) {
+      if (ref.enemy.dying) continue
+      const b = ref.body
       if (clickX < b.x - M || clickX > b.x + b.w + M) continue
       if (clickY < b.y - M || clickY > b.y + b.h + M) continue
+      // An enemy still in its i-frame flash can't be hit — skip it so a click can
+      // still land on another valid enemy under the cursor instead of whiffing.
+      if (!this.damageEnemy(ref, damage, this.player.x, this.player.y)) continue
       this.lastChopAt = now   // start cooldown only on a landed hit
-      this.damageCoyote(i, damage, this.player.x, this.player.y)
       return true
     }
     return false
@@ -1835,6 +1949,11 @@ export class Overworld extends Phaser.Scene {
   // for field/workshop (currently only tools matter there — no position
   // predicates). worldX/worldY are the pointer's world-space coords.
   resolveOverworldAction(worldX: number, worldY: number): OverworldAction | null {
+    // A free-floating drag item owns the cursor — suppress all tool/aim cursors
+    // and world actions so there's only ever one thing on the cursor at a time.
+    const ui = this.scene.get('UI') as UI
+    if (ui.getDragController().isHolding()) return null
+
     const sel = state.inventory[state.selectedInventorySlot]
     const heldType = sel?.type ?? null
     const tool = state.getSelectedTool()
@@ -1844,6 +1963,12 @@ export class Overworld extends Phaser.Scene {
     // Works mounted or on foot.
     if (this.rope.isNearTiedRope(worldX, worldY)) {
       return { kind: 'untie-rope' }
+    }
+
+    // Selected food shows its sprite on the cursor (signals "click to eat").
+    // No range — you're eating it, not aiming at the world.
+    if (heldType !== null && ITEMS[heldType].edible) {
+      return { kind: 'eat-food', sprite: ITEMS[heldType].sprite, scale: ITEMS[heldType].scale }
     }
 
     // 2. Destroy targets (axe or pickaxe held)
@@ -1866,7 +1991,7 @@ export class Overworld extends Phaser.Scene {
     if (tool) {
       const dx = worldX - this.player.x
       const dy = worldY - this.player.y
-      const reach = heldType === 'crate' ? CRATE_RANGE : TOOL_RANGE
+      const reach = (heldType === 'crate' || heldType === 'chest' || heldType === 'silver_lockbox' || heldType === 'gold_lockbox') ? CRATE_RANGE : TOOL_RANGE
       const inRange = dx * dx + dy * dy <= reach * reach
 
       if (heldType === 'shovel' && inRange) {
@@ -1881,10 +2006,10 @@ export class Overworld extends Phaser.Scene {
       if ((heldType === 'post' || heldType === 'cedar_post' || heldType === 'iron_post') && inRange) {
         return { kind: 'place-post', sprite: tool.sprite, scale: tool.scale }
       }
-      if (heldType === 'crate' && inRange) {
+      if ((heldType === 'crate' || heldType === 'chest') && inRange) {
         return { kind: 'place-crate', sprite: tool.sprite, scale: tool.scale }
       }
-      if (heldType === 'plank' && inRange) {
+      if ((heldType === 'plank' || heldType === 'flagstone' || heldType === 'sandstone') && inRange) {
         return { kind: 'place-plank', sprite: tool.sprite, scale: tool.scale }
       }
       if (heldType === 'fence_gate' && inRange) {
@@ -1892,6 +2017,25 @@ export class Overworld extends Phaser.Scene {
       }
       if (heldType === 'rope') {
         return { kind: 'throw-rope', sprite: tool.sprite, scale: tool.scale }
+      }
+      if (heldType === 'quirt') {
+        return { kind: 'quirt', sprite: tool.sprite, scale: tool.scale, gear: this.horseGear }
+      }
+      if (tool.gunSpread != null) {
+        if (state.selectedInventorySlot !== this.lastGunSlot) {
+          this.lastFireAt = 0
+          this.gunFullReloadUntil = 0
+          this.gunAmmo = tool.gunAmmo ?? 1
+          this.lastGunSlot = state.selectedInventorySlot
+        }
+        const reloading = state.gameTime < this.gunFullReloadUntil
+          || state.gameTime - this.lastFireAt < (tool.gunReloadMs ?? 0)
+        const reticle = reloading ? 'crosshair_empty' : 'crosshair'
+        if (tool.gunAmmo != null) {
+          const shown = reloading && state.gameTime < this.gunFullReloadUntil ? 0 : this.gunAmmo
+          return { kind: 'aim', sprite: reticle, scale: 3, bullets: `bullets_${shown}` }
+        }
+        return { kind: 'aim', sprite: reticle, scale: 3 }
       }
       // any other tool in range → show its cursor
       if (inRange) {
@@ -1977,48 +2121,64 @@ export class Overworld extends Phaser.Scene {
     if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
 
     const hitSq = 26 * 26
+    let best = -1
+    let bestDistSq = hitSq
     for (let i = 0; i < state.placedCrates.length; i++) {
       const c = state.placedCrates[i]
       const cdx = clickX - c.x
       const cdy = clickY - c.y
-      if (cdx * cdx + cdy * cdy > hitSq) continue
+      const distSq = cdx * cdx + cdy * cdy
+      if (distSq <= bestDistSq) {
+        bestDistSq = distSq
+        best = i
+      }
+    }
+    if (best < 0) return false
 
-      // capture contents + position before we splice the entry away
-      const contents = c.contents
-      const cx = c.x
-      const cy = c.y
+    const i = best
+    const c = state.placedCrates[i]
 
-      // remove the visual (crates are index-aligned to state.placedCrates)
-      this.crateSprites[i]?.destroy()
-      this.crateSprites.splice(i, 1)
-      // remove the physics body
-      const body = this.crateBodies[i]
-      if (body) this.matter.world.remove(body)
-      this.crateBodies.splice(i, 1)
+    // capture contents + position before we splice the entry away
+    const contents = c.contents
+    const cx = c.x
+    const cy = c.y
 
-      // remove the collision body (found by the stamped origin)
-      const obsIdx = this.obstacles.findIndex(
-        o => o.kind === 'crate' && o.originX === cx && o.originY === cy,
-      )
-      if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
+    // remove the visual (crates are index-aligned to state.placedCrates)
+    this.crateSprites[i]?.destroy()
+    this.crateSprites.splice(i, 1)
+    // remove the physics body
+    const body = this.crateBodies[i]
+    if (body) this.matter.world.remove(body)
+    this.crateBodies.splice(i, 1)
 
-      // remove the data
-      state.placedCrates.splice(i, 1)
+    // remove the collision body (found by the stamped origin)
+    const obsIdx = this.obstacles.findIndex(
+      o => o.kind === 'crate' && o.originX === cx && o.originY === cy,
+    )
+    if (obsIdx !== -1) this.obstacles.splice(obsIdx, 1)
 
-      this.spawnParticles(cx, cy, spriteColors('item_crate'))
-      // the crate itself drops back
-      this.dropStack(cx, cy, { type: 'crate', count: 1 })
-      // spill every stored stack, scattered around the crate. Pass the actual
-      // stack object so bag contents survive the drop→pickup round trip.
+    // remove the data
+    state.placedCrates.splice(i, 1)
+
+    this.spawnParticles(cx, cy, spriteColors(ITEMS[(c.item ?? 'crate') as keyof typeof ITEMS].sprite))
+
+    const itemType = (c.item ?? 'crate')
+    const isLockbox = itemType === 'silver_lockbox' || itemType === 'gold_lockbox'
+    if (isLockbox) {
+      // A lockbox is picked up as the SAME box: it carries its unlocked state
+      // and its stored contents on the item stack, and nothing spills out.
+      this.dropStack(cx, cy, { type: itemType, count: 1, unlocked: c.unlocked, contents })
+    } else {
+      // Crates/chests: the empty container drops back and contents spill around it.
+      this.dropStack(cx, cy, { type: itemType, count: 1 })
       for (const stack of contents) {
         if (!stack) continue
         const landX = cx + (Math.random() - 0.5) * 48
         const landY = cy + (Math.random() - 0.5) * 48
         this.dropStack(landX, landY, stack, cx)
       }
-      return true
     }
-    return false
+    return true
   }
 
   // Axe/pickaxe-destroy a built plot: tears down the building and reverts the
@@ -2238,6 +2398,7 @@ export class Overworld extends Phaser.Scene {
 
   dismount() {
     if (state.mounted === null) return
+    this.horseGear = 0
     const dismountedIdx = state.mounted
     const h = state.honses[dismountedIdx]
     if (h) h.tame = true
@@ -2258,36 +2419,183 @@ export class Overworld extends Phaser.Scene {
   private static ENEMY_KNOCKBACK = 250
   // How long the enemy's AI yields to that impulse (the shove duration).
   private static ENEMY_KNOCKBACK_MS = 200
+  // Knockback impulse speed for honses, in Matter body velocity units (the
+  // body is driven by setVelocity, a different scale than coyote px/sec).
+  private static HONSE_KNOCKBACK_V = 6
   // Peak height (px) of the little up-and-down hop on a hit, Minecraft-style.
   private static ENEMY_HOP_H = 8
   // How long the enemy's red hit-flash shows.
   private static ENEMY_HURT_MS = 400
+  private static ENEMY_DEATH_MS = 200
 
-  // Damage a coyote, flash it red for the same window as the player's hurt
-  // state, and knock it back away from (fromX, fromY). Despawns it at <= 0 hp.
-  private damageCoyote(index: number, amount: number, fromX: number, fromY: number) {
-    const c = state.coyotes[index]
-    if (!c) return
-    c.health -= amount
-    c.hurtUntil = state.gameTime + Overworld.ENEMY_HURT_MS
-    let kx = c.x - fromX
-    let ky = c.y - fromY
+  // Spawn a bullet from the player toward (tx, ty). Straight-line travel,
+  // updated each frame in updateBullets. Damages coyotes on contact.
+  private static BULLET_SPEED = 600   // px/sec
+  private static BULLET_DAMAGE = 5    // 3 shots kill a 15-hp coyote
+  private fireBullet(tx: number, ty: number, spread: number) {
+    const dx = tx - this.player.x
+    const dy = ty - this.player.y
+    let angle = Math.atan2(dy, dx)
+    if (spread > 0) angle += (this.bulletRng() - 0.5) * spread
+    const vx = Math.cos(angle) * Overworld.BULLET_SPEED
+    const vy = Math.sin(angle) * Overworld.BULLET_SPEED
+    const sprite = this.add.rectangle(this.player.x, this.player.y, 8, 3, 0x2A2A2A)
+      .setDepth(50000)
+      .setRotation(angle)
+    this.bullets.push({ x: this.player.x, y: this.player.y, vx, vy, sprite, fromBandit: false })
+    spookHonsesFromShot(state.honses, this.player.x, this.player.y, state.gameTime, state.mounted)
+  }
+
+  // A bandit fires from its own position along a pre-computed unit aim direction
+  // (already lead-solved). Same straight-line bullet as the player's, flagged as
+  // hostile so updateBullets tests it against the player instead of enemies.
+  private fireBanditBullet(bx: number, by: number, dirX: number, dirY: number) {
+    // Perturb the exact lead angle by the bandit's spread cone, same seeded RNG
+    // as the player's gun so shots stay deterministic with worldgen.
+    const angle = Math.atan2(dirY, dirX) + (this.bulletRng() - 0.5) * BANDIT_SPREAD
+    const vx = Math.cos(angle) * Overworld.BULLET_SPEED
+    const vy = Math.sin(angle) * Overworld.BULLET_SPEED
+    const sprite = this.add.rectangle(bx, by, 8, 3, 0x2A2A2A)
+      .setDepth(50000)
+      .setRotation(angle)
+    this.bullets.push({ x: bx, y: by, vx, vy, sprite, fromBandit: true })
+  }
+
+  // Move bullets, check coyote hits, despawn off-screen. Called each frame.
+  private updateBullets(dt: number) {
+    if (this.bullets.length === 0) return
+    const cam = this.cameras.main
+    const margin = 80
+    const viewLeft = cam.worldView.x - margin
+    const viewRight = cam.worldView.x + cam.worldView.width + margin
+    const viewTop = cam.worldView.y - margin
+    const viewBottom = cam.worldView.y + cam.worldView.height + margin
+    const hitSq = 24 * 24
+    const sec = dt / 1000
+    for (let i = this.bullets.length - 1; i >= 0; i--) {
+      const b = this.bullets[i]
+      b.x += b.vx * sec
+      b.y += b.vy * sec
+      b.sprite.setPosition(b.x, b.y)
+
+      let hit = false
+
+      if (b.fromBandit) {
+        // Hostile bullet: only the player can be hit.
+        const pdx = b.x - this.player.x
+        const pdy = b.y - this.player.y
+        if (pdx * pdx + pdy * pdy <= hitSq) {
+          this.damagePlayer(Overworld.BULLET_DAMAGE)
+          hit = true
+        }
+      } else {
+        // Friendly bullet: any enemy, then (below) honses. Original radius test
+        // around a point lifted 8px toward the sprite center — unchanged feel.
+        for (const ref of listEnemies(state.coyotes, state.bandits)) {
+          if (ref.enemy.dying) continue
+          const cdx = b.x - ref.enemy.x
+          const cdy = b.y - (ref.enemy.y - 8)
+          if (cdx * cdx + cdy * cdy <= hitSq) {
+            // Bullets bypass the i-frame (melee-only); they always land.
+            // Knock back along the bullet's TRAVEL direction, not from its impact
+            // point (which sits almost on the enemy's center, collapsing the
+            // horizontal push and making him pop straight up). A point just behind
+            // the bullet on its path gives a clean "shoved the way the shot flew".
+            this.damageEnemy(ref, Overworld.BULLET_DAMAGE, b.x - b.vx, b.y - b.vy, true)
+            hit = true
+            break
+          }
+        }
+      }
+
+      // Obstacles block both teams.
+      if (!hit) {
+        for (const o of this.obstacles) {
+          if (b.x >= o.x && b.x <= o.x + o.w && b.y >= o.y && b.y <= o.y + o.h) {
+            hit = true
+            break
+          }
+        }
+      }
+
+      // Honses block/absorb friendly bullets only (player's own mount excepted).
+      if (!hit && !b.fromBandit) {
+        for (let hi = 0; hi < state.honses.length; hi++) {
+          if (hi === state.mounted) continue   // your own mount doesn't block your shots
+          if (state.honses[hi].dying) continue
+          const hb = getHonseBodyAABB(state.honses[hi])
+          if (b.x >= hb.x && b.x <= hb.x + hb.w && b.y >= hb.y && b.y <= hb.y + hb.h) {
+            this.damageHonse(hi, Overworld.BULLET_DAMAGE, b.x, b.y)
+            hit = true
+            break
+          }
+        }
+      }
+
+      // Despawn on hit or once off-screen
+      if (hit || b.x < viewLeft || b.x > viewRight || b.y < viewTop || b.y > viewBottom) {
+        b.sprite.destroy()
+        this.bullets.splice(i, 1)
+      }
+    }
+  }
+
+  // Damage any enemy: subtract hp, flash red, knock back away from (fromX,fromY),
+  // and mark it dying at <= 0 hp. The per-type sprite-sync loops handle the death
+  // tail (carcass, removal). Knockback magnitude is the one per-kind difference —
+  // a coyote darts back, a bandit just staggers.
+  // Returns true if the hit landed. An enemy still in its hurt-flash window is
+  // invulnerable — the flash IS the i-frame window — so rapid repeat hits on the
+  // same enemy are ignored until it stops flashing.
+  // Returns true if the hit landed. An enemy still in its hurt-flash window is
+  // invulnerable to MELEE (the flash IS the i-frame, stopping spam-clicks) — but
+  // bullets bypass it via ignoreInvuln, since they're already rate-limited by the
+  // gun's fire rate and travel time.
+  private damageEnemy(ref: EnemyRef, amount: number, fromX: number, fromY: number, ignoreInvuln = false): boolean {
+    const e = ref.enemy
+    if (e.dying) return false
+    if (!ignoreInvuln && state.gameTime < e.hurtUntil) return false   // still flashing → melee can't hit
+    e.health -= amount
+    e.hurtUntil = state.gameTime + Overworld.ENEMY_HURT_MS
+    let kx = e.x - fromX
+    let ky = e.y - fromY
     const len = Math.sqrt(kx * kx + ky * ky) || 1
     kx /= len; ky /= len
-    c.vx = kx * Overworld.ENEMY_KNOCKBACK
-    c.vy = ky * Overworld.ENEMY_KNOCKBACK
-    c.knockbackUntil = state.gameTime + Overworld.ENEMY_KNOCKBACK_MS
-    if (c.health <= 0) {
-      // Convert to an inert carcass at the spot it fell: drop the live coyote
-      // (ending its AI/bite/targeting) and leave a downed sprite lying there.
-      const dx = c.x, dy = c.y
-      this.coyoteSprites[index]?.destroy()
-      this.coyoteSprites.splice(index, 1)
-      state.coyotes.splice(index, 1)
-      state.carcasses.push({ x: dx, y: dy })
-      this.carcassSprites.push(
-        this.add.sprite(dx, dy, 'coyote_dead').setScale(2).setDepth(dy - 8)
-      )
+    const kb = ref.kind === 'bandit' ? BANDIT_KNOCKBACK : Overworld.ENEMY_KNOCKBACK
+    const kbMs = ref.kind === 'bandit' ? BANDIT_KNOCKBACK_MS : Overworld.ENEMY_KNOCKBACK_MS
+    // A dormant bandit who gets shot wakes up — no free kills while he's holding.
+    if (ref.kind === 'bandit') (e as Bandit).active = true
+    e.vx = kx * kb
+    e.vy = ky * kb
+    e.knockbackUntil = state.gameTime + kbMs
+    if (e.health <= 0) {
+      e.dying = true
+      e.hurtUntil = state.gameTime + Overworld.ENEMY_DEATH_MS
+    }
+    return true
+  }
+
+  private damageHonse(index: number, amount: number, fromX: number, fromY: number) {
+    const h = state.honses[index]
+    if (!h || h.dying) return
+    h.health -= amount
+    h.hurtUntil = state.gameTime + Overworld.ENEMY_HURT_MS
+    spookHonse(h, fromX, fromY, state.gameTime, true)
+    let kx = h.x - fromX
+    let ky = h.y - fromY
+    const len = Math.sqrt(kx * kx + ky * ky) || 1
+    kx /= len; ky /= len
+    h.knockbackUntil = state.gameTime + Overworld.ENEMY_KNOCKBACK_MS
+    // Honses are Matter bodies — knock them back with an impulse on the body,
+    // never by writing position. The body drives h.x/h.y back into state.
+    const mb = this.honseBodies[index]
+    if (mb) {
+      if (mb.isSleeping) { mb.isSleeping = false; (mb as any).sleepCounter = 0 }
+      this.matter.body.setVelocity(mb, { x: kx * Overworld.HONSE_KNOCKBACK_V, y: ky * Overworld.HONSE_KNOCKBACK_V })
+    }
+    if (h.health <= 0) {
+      h.dying = true
+      h.hurtUntil = state.gameTime + Overworld.ENEMY_DEATH_MS
     }
   }
 
@@ -2476,6 +2784,20 @@ export class Overworld extends Phaser.Scene {
     return true
   }
 
+  // Eat the selected hotbar food (if any), applying crumbs + buffs + heal.
+  // Returns true if something was eaten. Shared by left and right click so
+  // either button consumes the held-in-hotbar food.
+  private eatSelectedFood(): boolean {
+    const def = this.peekSelectedEdibleDef()
+    if (!def || !this.tryEatSelected()) return false
+    this.spawnCrumbs(this.player.x, this.player.y, def.crumbColor!)
+    state.speedBuffEndsAt = state.gameTime + FOOD_BUFF_MS
+    state.speedBuffAmount = def.speedBuff!
+    if (def.healFull) state.healToFull(this.registry)
+    else if (def.healHearts) state.changeHealth(def.healHearts, this.registry)
+    return true
+  }
+
   // Returns the ItemDef of the selected hotbar item if edible, else undefined.
   private peekSelectedEdibleDef(): ItemDef | undefined {
     const stack = state.inventory[state.selectedInventorySlot]
@@ -2582,32 +2904,64 @@ export class Overworld extends Phaser.Scene {
     return true
   }
 
-  spawnCrate(x: number, y: number) {
-    state.placedCrates.push({ x, y, contents: createCrateContents() })
-    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(y - 8).setInteractive()
-    this.attachCrateOpenHandler(sprite)
-    this.crateSprites.push(sprite)
-    this.crateBodies.push(this.matter.add.rectangle(x, y, 16, 16, { frictionAir: 0.1 }))
-    this.obstacles.push(this.makeCrateObstacle(x, y))
+  spawnCrate(x: number, y: number, item: string = 'crate') {
+    const isLockbox = item === 'silver_lockbox' || item === 'gold_lockbox'
+    state.placedCrates.push({ x, y, item: item as any, contents: createContainerContents(item as any), unlocked: isLockbox ? false : true })
+    this.spawnContainer(x, y, item)
   }
 
-  private makeCrateObstacle(cx: number, cy: number) {
-    const SIZE = 16
+  // Footprint (w,h) of a placed container's collision box, derived from its
+  // rendered sprite so a wider chest gets a wider box — no magic numbers.
+  private containerFootprint(item: string): { w: number; h: number } {
+    const def = ITEMS[item as keyof typeof ITEMS]
+    // Use the texture frame's real dimensions — works for baked (generated)
+    // textures where getSourceImage() may not carry width/height.
+    const frame = this.textures.getFrame(def.sprite)
+    const tw = frame?.width ?? 8
+    const th = frame?.height ?? 8
+    const scale = def.scale
+    const w = tw * scale
+    const h = th * scale
+    return { w, h }
+  }
+
+  private makeCrateObstacle(cx: number, cy: number, item = 'crate') {
+    const { w, h } = this.containerFootprint(item)
     return {
-      x: cx - SIZE / 2,
-      y: cy - SIZE / 2,
-      w: SIZE,
-      h: SIZE,
+      x: cx - w / 2,
+      y: cy - h / 2,
+      w,
+      h,
       kind: 'crate' as ObstacleKind,
       originX: cx,
       originY: cy,
     }
   }
 
+  // Single container spawn used by placement and restore-on-load. Builds the
+  // sprite, open handler, Matter body, and obstacle for a crate or chest,
+  // sizing the body/obstacle to the item's footprint. Pushes nothing to
+  // state.placedCrates — the caller owns that (so placement can roll contents
+  // and restore can reuse the persisted entry).
+  private spawnContainer(x: number, y: number, item: string) {
+    const def = ITEMS[item as keyof typeof ITEMS]
+    const { w, h } = this.containerFootprint(item)
+    const sprite = this.add.sprite(x, y, def.sprite).setScale(def.scale).setDepth(y - 8).setInteractive()
+    this.attachCrateOpenHandler(sprite)
+    this.crateSprites.push(sprite)
+    const cbody = this.matter.add.rectangle(x, y, w, h, { frictionAir: 0.4 })
+    // Lock rotation: the sprite always draws upright, so the body must not spin
+    // (otherwise the rope anchor / constraint pointB drift off the visual box).
+    this.matter.body.setInertia(cbody, Infinity)
+    this.crateBodies.push(cbody)
+    this.obstacles.push(this.makeCrateObstacle(x, y, item))
+  }
+
   private tryPlaceCrate(clickX: number, clickY: number): boolean {
     const slotIdx = state.selectedInventorySlot
     const stack = state.inventory[slotIdx]
-    if (!stack || stack.type !== 'crate') return false
+    if (!stack || (stack.type !== 'crate' && stack.type !== 'chest' && stack.type !== 'silver_lockbox' && stack.type !== 'gold_lockbox')) return false
+    const item = stack.type
     const dx = clickX - this.player.x
     const dy = clickY - this.player.y
   
@@ -2628,8 +2982,8 @@ export class Overworld extends Phaser.Scene {
     for (const s of state.worldStructures) {
       if (Math.abs(x - s.x) < 32 && Math.abs(y - s.y) < 32) return false
     }
-    // refuse if the crate would overlap ANY existing obstacle (no interlock)
-    const newObs = this.makeCrateObstacle(x, y)
+    // refuse if the container would overlap ANY existing obstacle (no interlock)
+    const newObs = this.makeCrateObstacle(x, y, item)
     for (const o of this.obstacles) {
       if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, o.x, o.y, o.w, o.h)) return false
     }
@@ -2639,13 +2993,15 @@ export class Overworld extends Phaser.Scene {
       if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, b.x, b.y, b.w, b.h)) return false
     }
 
-    state.placedCrates.push({ x, y, contents: createCrateContents() })
-    const sprite = this.add.sprite(x, y, 'item_crate').setScale(2).setDepth(y - 8).setInteractive()
-    this.attachCrateOpenHandler(sprite)
-    this.crateSprites.push(sprite)
-    this.crateBodies.push(this.matter.add.rectangle(x, y, 16, 16, { frictionAir: 0.1 }))
-    this.obstacles.push(newObs)
-    this.logPlacement('crate', x, y)
+    const isLockbox = item === 'silver_lockbox' || item === 'gold_lockbox'
+    // A lockbox placed from a stack that carries its own state is the SAME box:
+    // reuse its stored contents and unlocked flag instead of rolling fresh. A
+    // brand-new lockbox (no carried state) starts locked with rolled contents.
+    const contents = isLockbox && stack.contents ? stack.contents : createContainerContents(item)
+    const unlocked = isLockbox ? (stack.unlocked ?? false) : true
+    state.placedCrates.push({ x, y, item, contents, unlocked })
+    this.spawnContainer(x, y, item)
+    this.logPlacement(item, x, y)
 
     stack.count -= 1
     if (stack.count <= 0) state.inventory[slotIdx] = null
@@ -2656,7 +3012,7 @@ export class Overworld extends Phaser.Scene {
   private tryPlacePlank(clickX: number, clickY: number): boolean {
     const slotIdx = state.selectedInventorySlot
     const stack = state.inventory[slotIdx]
-    if (!stack || stack.type !== 'plank') return false
+    if (!stack || (stack.type !== 'plank' && stack.type !== 'flagstone' && stack.type !== 'sandstone')) return false
     const dx = clickX - this.player.x
     const dy = clickY - this.player.y
     if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
@@ -2666,7 +3022,7 @@ export class Overworld extends Phaser.Scene {
     const wy = Math.floor((clickY - wb.minY) / T) * T + wb.minY + T / 2
     if (state.terrainAt(wx, wy) === Terrain.Water) return false
     if (state.woodAt(wx, wy)) return false
-    state.setWoodAt(wx, wy, 1)
+    state.setWoodAt(wx, wy, stack.type === 'sandstone' ? 3 : stack.type === 'flagstone' ? 2 : 1)
     this.chunkTerrain.markTileDirty(wx, wy)
     stack.count -= 1
     if (stack.count <= 0) state.inventory[slotIdx] = null
@@ -2682,10 +3038,11 @@ export class Overworld extends Phaser.Scene {
     const wb = state.worldBounds
     const wx = Math.floor((clickX - wb.minX) / T) * T + wb.minX + T / 2
     const wy = Math.floor((clickY - wb.minY) / T) * T + wb.minY + T / 2
-    if (!state.woodAt(wx, wy)) return false
+    const wv = state.woodAt(wx, wy)
+    if (!wv) return false
     state.setWoodAt(wx, wy, 0)
     this.chunkTerrain.markTileDirty(wx, wy)
-    this.dropStack(wx, wy, { type: 'plank', count: 1 })
+    this.dropStack(wx, wy, { type: wv === 3 ? 'sandstone' : wv === 2 ? 'flagstone' : 'plank', count: 1 })
     return true
   }
 
@@ -3030,7 +3387,7 @@ export class Overworld extends Phaser.Scene {
     this.roofedHousePositions.push({ x, y })
     // box grows upward from a fixed base line so changing h extends the top edge,
     // not the bottom — the house footprint stays planted on the ground.
-    const h = 26
+    const h = 38
     const baseY = y + 20
     const obs = { x: x - 18, y: baseY - h, w: 36, h, kind: 'solid' as ObstacleKind }
     this.obstacles.push(obs)
@@ -3152,6 +3509,10 @@ export class Overworld extends Phaser.Scene {
         if (b.flipX) spr.setFlipX(true)
         const sprTint = tint ?? def.tint
         if (sprTint !== undefined) spr.setTint(sprTint)
+        const hb = def.hitbox ?? { w: 48, h: 48 }
+        const obs = { x: bx - hb.w / 2, y: by - hb.h / 2, w: hb.w, h: hb.h, kind: 'building' as ObstacleKind }
+        this.obstacles.push(obs)
+        this.addBlocker(obs)
       } else if (b.type === 'house_roof') {
         this.placeRoofedHouse(bx, by, WORLD_STRUCTURES.house_roof.scale)
       } else {
@@ -3318,6 +3679,11 @@ export class Overworld extends Phaser.Scene {
     const stripSeed = state.worldSeed + Math.floor(strip.x) + Math.floor(strip.y)
     const decor = generateRegionDecor(strip, stripSeed, ['pebbles', 'grass', 'cow_skull'])
     this.decorData.push(...decor)
+    // Buried coins and gems for the new strip, at the same densities as the
+    // original world. Without this, all treasure stays locked in the spawn box.
+    const { buried, buriedGems } = generateRegionBuried(strip, stripSeed + 1)
+    state.buriedItems.push(...buried)
+    state.buriedGems.push(...buriedGems)
     this.cullDecor()
     return added
   }
@@ -3458,6 +3824,15 @@ export class Overworld extends Phaser.Scene {
     state.coyotes.push(createCoyote(x, y))
     this.coyoteSprites.push(
       this.add.sprite(x, y, 'coyote').setScale(2).setDepth(y - 8)
+    )
+  }
+
+  // Placeholder art: reuses the player sprite so the targeting can be tested
+  // before bandit art exists.
+  spawnBandit(x: number, y: number) {
+    state.bandits.push(createBandit(x, y))
+    this.banditSprites.push(
+      this.add.sprite(x, y, 'player').setScale(PLAYER_SCALE).setDepth(y - 8)
     )
   }
 
@@ -3872,6 +4247,98 @@ export class Overworld extends Phaser.Scene {
     return this.resolvePostTexture(x, y, species)
   }
 
+  isPostDragging(): boolean {
+    return this.postDragAnchor !== null
+  }
+
+  private computePostDragPath(): { x: number; y: number }[] {
+    if (!this.postDragAnchor) return []
+    const G = Overworld.POST_GRID
+    const ptr = this.input.activePointer
+    const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y)
+    const cx = Math.round(w.x / G) * G
+    const cy = Math.round(w.y / G) * G
+    const ax = this.postDragAnchor.x
+    const ay = this.postDragAnchor.y
+    const path: { x: number; y: number }[] = []
+    const stepX = cx > ax ? G : -G
+    if (cx !== ax) {
+      for (let x = ax; x !== cx + stepX; x += stepX) path.push({ x, y: ay })
+    } else {
+      path.push({ x: ax, y: ay })
+    }
+    const stepY = cy > ay ? G : -G
+    if (cy !== ay) {
+      for (let y = ay + stepY; y !== cy + stepY; y += stepY) path.push({ x: cx, y })
+    }
+    const rangeSq = TOOL_RANGE * TOOL_RANGE
+    const stack = state.inventory[state.selectedInventorySlot]
+    const maxCount = stack?.count ?? 0
+    const filtered: { x: number; y: number }[] = []
+    for (const cell of path) {
+      if (filtered.length >= maxCount) break
+      const dx = cell.x - this.player.x
+      const dy = cell.y - this.player.y
+      if (dx * dx + dy * dy > rangeSq) continue
+      filtered.push(cell)
+    }
+    return filtered
+  }
+
+  private updatePostDragGhosts() {
+    const path = this.computePostDragPath()
+    const species = this.postDragSpecies!
+    const anchor = this.postDragAnchor!
+    const dragging = path.length > 1 || (path.length === 1 && (path[0].x !== anchor.x || path[0].y !== anchor.y))
+    const showPath = dragging ? path : []
+
+    const cam = this.cameras.main
+    const view = cam.worldView
+    if (!this.postDragRT) {
+      this.postDragRT = this.add.renderTexture(view.x, view.y, view.width, view.height)
+        .setOrigin(0, 0)
+        .setAlpha(0.65)
+        .setDepth(900000)
+    }
+    const rt = this.postDragRT
+    // Resize/reposition to the live viewport so a moving/zooming camera always
+    // has the whole reachable area covered.
+    if (rt.width !== view.width || rt.height !== view.height) rt.setSize(view.width, view.height)
+    rt.setPosition(view.x, view.y)
+    rt.clear()
+    if (showPath.length === 0) { rt.render(); return }
+
+    const G = Overworld.POST_GRID
+    const pathSet = new Set(showPath.map(p => `${p.x},${p.y}`))
+    for (const cell of showPath) {
+      if (this.placedPostSprites.has(`${cell.x},${cell.y}`)) continue
+      const hasAbove = pathSet.has(`${cell.x},${cell.y - G}`) || state.placedPosts.some(p => p.x === cell.x && p.y === cell.y - G)
+      const hasBelow = pathSet.has(`${cell.x},${cell.y + G}`) || state.placedPosts.some(p => p.x === cell.x && p.y === cell.y + G)
+      let tex = species as string
+      if (hasAbove || hasBelow) {
+        if (species === 'cedar_post') tex = 'cedar_post_v'
+        else if (species === 'iron_post') tex = 'iron_post_v'
+        else tex = 'post_v'
+      }
+      let stamp = this.postDragStamps.get(tex)
+      if (!stamp) {
+        stamp = this.make.sprite({ x: 0, y: 0, key: tex, add: false }).setScale(2)
+        this.postDragStamps.set(tex, stamp)
+      }
+      const drawY = species === 'iron_post' ? cell.y - 2 : cell.y
+      rt.draw(stamp, cell.x - view.x, drawY - view.y)
+    }
+    rt.render()
+  }
+
+  private clearPostDragGhosts() {
+    if (this.postDragRT) { this.postDragRT.destroy(); this.postDragRT = null }
+    for (const s of this.postDragStamps.values()) s.destroy()
+    this.postDragStamps.clear()
+    this.postDragAnchor = null
+    this.postDragSpecies = null
+  }
+
   // Determine if a post at (x,y) should use the vertical sprite variant.
   // Vertical = has a neighbor directly above or below (same x, y ± 10)
   // but NOT left or right (x ± 10, same y).
@@ -4092,6 +4559,21 @@ export class Overworld extends Phaser.Scene {
           state.buriedStacks.splice(i, 1)
           state.droppedItems.push({ x, y, stack: b.stack })
           this.droppedSprites.push(this.spawnDroppedSprite(x, y, b.stack.type, true))
+          revealed = true
+          break
+        }
+      }
+
+      if (!revealed) {
+        for (let i = state.buriedGems.length - 1; i >= 0; i--) {
+          const g = state.buriedGems[i]
+          const dx = g.x - x
+          const dy = g.y - y
+          if (dx * dx + dy * dy > revSq) continue
+          state.buriedGems.splice(i, 1)
+          const stack = { type: g.type as ItemType, count: 1 }
+          state.droppedItems.push({ x, y, stack })
+          this.droppedSprites.push(this.spawnDroppedSprite(x, y, stack.type, true))
           break
         }
       }
@@ -4144,6 +4626,22 @@ export class Overworld extends Phaser.Scene {
     })
   }
 
+  // Mag refill happens the instant the reload cooldown elapses — not on the next
+  // click — and that's when the ammo is deducted from inventory. gunFullReloadUntil
+  // is nonzero only while a reload is pending, so clearing it self-gates this.
+  private refillGunIfReloaded() {
+    if (this.gunFullReloadUntil === 0) return
+    if (state.gameTime < this.gunFullReloadUntil) return
+    const sel = state.inventory[state.selectedInventorySlot]
+    const selDef = sel ? ITEMS[sel.type] : null
+    if (selDef && selDef.gunAmmo != null) {
+      this.gunAmmo = selDef.gunAmmo
+      state.consumeItem('colt_ammo', selDef.gunAmmo)
+      this.registry.events.emit('inventory-changed')
+    }
+    this.gunFullReloadUntil = 0
+  }
+
   update(_t: number, dt: number) {
     // Advance the pausable game clock. This is the ONLY site that advances it.
     // Overworld.update runs every frame even while an interior scene is open
@@ -4152,6 +4650,18 @@ export class Overworld extends Phaser.Scene {
     // Everything below that gates a game mechanic reads state.gameTime, so a
     // single guard here freezes the entire simulation on pause.
     if (!state.paused) state.gameTime += dt
+
+    this.refillGunIfReloaded()
+
+
+    // Derive the player's velocity (px/sec) from this frame's position delta, so
+    // bandits can lead their shots. Done before any enemy AI reads it.
+    if (dt > 0) {
+      this.playerVX = (this.player.x - this.playerLastX) * 1000 / dt
+      this.playerVY = (this.player.y - this.playerLastY) * 1000 / dt
+    }
+    this.playerLastX = this.player.x
+    this.playerLastY = this.player.y
 
     const overworldVisible = this.cameras.main.visible
 
@@ -4194,11 +4704,28 @@ export class Overworld extends Phaser.Scene {
     // systems belong inside this guard too.
     if (state.playerInWorld) {
       updateCoyotes(state.coyotes, dt, state.gameTime, (px, py) => this.collidesAt(px, py, undefined, true), { x: this.player.x, y: this.player.y }, (i) => this.rope.getCoyoteTetherAnchor(i), state.mounted !== null, this.playerInSafeZone())
+      updateBandits(
+        state.bandits,
+        dt,
+        state.gameTime,
+        (px, py) => this.collidesAt(px, py, undefined, true),
+        { x: this.player.x, y: this.player.y, vx: this.playerVX, vy: this.playerVY },
+        Overworld.BULLET_SPEED,
+        (bi, dx, dy) => {
+          const ba = state.bandits[bi]
+          this.fireBanditBullet(ba.x, ba.y + BANDIT_MUZZLE_DY, dx, dy)
+        },
+        // Threats he can dodge: the player's own bullets in flight.
+        this.bullets.filter(bl => !bl.fromBandit).map(bl => ({ x: bl.x, y: bl.y, vx: bl.vx, vy: bl.vy })),
+        this.banditRng,
+      )
+      this.updateBullets(dt)
       // Coyote bite: player within bite radius of a coyote's mouth takes damage,
       // gated per-coyote by a cooldown. Roped coyotes flee and don't bite.
       const biteR2 = COYOTE_BITE_RADIUS * COYOTE_BITE_RADIUS
       for (let i = 0; i < state.coyotes.length; i++) {
         const c = state.coyotes[i]
+        if (c.dying) continue
         if (this.rope.getCoyoteTetherAnchor(i)) continue   // leashed: not attacking
         if (state.gameTime - c.lastBiteAt < COYOTE_BITE_COOLDOWN_MS) continue
         const m = getCoyoteMouthAnchor(c)
@@ -4217,6 +4744,15 @@ export class Overworld extends Phaser.Scene {
       this.updatePipeGhosts(w.x, w.y)
     } else if (this.pendingPipeFrom !== null || this.pipeHoverGhost || this.pipeSourceMarker) {
       this.clearPipeGhosts()
+    }
+
+    if (this.postDragAnchor) {
+      const stack = state.inventory[state.selectedInventorySlot]
+      if (!stack || (stack.type !== 'post' && stack.type !== 'cedar_post' && stack.type !== 'iron_post')) {
+        this.clearPostDragGhosts()
+      } else {
+        this.updatePostDragGhosts()
+      }
     }
 
     // Teleport horse back to spawn if left game area
@@ -4282,11 +4818,12 @@ export class Overworld extends Phaser.Scene {
       if (!s) continue
       const mb = this.honseBodies[i]
       if (mb) {
-        if (i !== state.mounted) {
+        const knocked = h.dying || state.gameTime < h.knockbackUntil
+        if (i !== state.mounted && !knocked) {
           if (mb.isSleeping) { mb.isSleeping = false; (mb as any).sleepCounter = 0 }
           this.matter.body.setVelocity(mb, { x: h.x - mb.position.x, y: (h.y + 3) - mb.position.y })
         }
-
+        // While knocked back, the body carries the impulse freely; state follows it.
         h.x = mb.position.x
         h.y = mb.position.y - 3
       }
@@ -4294,6 +4831,41 @@ export class Overworld extends Phaser.Scene {
       s.y = h.y
       s.setDepth(h.y - 8)
       s.setFlipX(h.facingRight)
+
+      // Red hit-flash: swap to the shared red silhouette, then back to the
+      // honse's own coat sprite after the flash window.
+      if (state.gameTime < h.hurtUntil) {
+        if (s.texture.key !== 'honse_hurt') { s.setTexture('honse_hurt'); s.clearTint() }
+      } else if (s.texture.key !== h.sprite) {
+        s.setTexture(h.sprite)
+        if (h.tinted) s.setTint(h.tint); else s.clearTint()
+      }
+
+      // Deferred death: once the flash expires on a dying honse, remove it
+      // entirely — sprite, Matter body, and state.
+      if (h.dying && state.gameTime >= h.hurtUntil) {
+        s.destroy()
+        this.honseSprites.splice(i, 1)
+        const mb = this.honseBodies[i]
+        if (mb) this.matter.world.remove(mb)
+        this.honseBodies.splice(i, 1)
+        state.honses.splice(i, 1)
+        this.honseLastPrint.delete(i)
+        if (state.mounted !== null && state.mounted > i) state.mounted--
+        i--
+        continue
+      }
+
+
+      // Hit flash: tint red while hurt, restore the coat tint (or none) after.
+      if (state.gameTime < h.hurtUntil) {
+        s.setTint(0xFF3030)
+      } else if (h.tinted) {
+        s.setTint(h.tint)
+      } else {
+        s.clearTint()
+      }
+
 
       const last = this.honseLastPrint.get(i)
       if (!last) {
@@ -4325,10 +4897,44 @@ export class Overworld extends Phaser.Scene {
       s.setDepth(c.y - 8)
       s.setFlipX(!c.facingRight)
       s.setTexture(state.gameTime < c.hurtUntil ? 'coyote_hurt' : 'coyote')
+      if (c.dying && state.gameTime >= c.hurtUntil) {
+        s.destroy()
+        this.coyoteSprites.splice(i, 1)
+        state.coyotes.splice(i, 1)
+        state.carcasses.push({ x: c.x, y: c.y })
+        this.carcassSprites.push(
+          this.add.sprite(c.x, c.y, 'coyote_dead').setScale(2).setDepth(c.y - 8)
+        )
+        i--
+        continue
+      }
+    }
+
+    for (let i = 0; i < state.bandits.length; i++) {
+      const ba = state.bandits[i]
+      const s = this.banditSprites[i]
+      if (!s) continue
+      s.x = ba.x
+      let hop = 0
+      if (state.gameTime < ba.knockbackUntil) {
+        const t = 1 - (ba.knockbackUntil - state.gameTime) / Overworld.ENEMY_KNOCKBACK_MS
+        hop = Math.sin(t * Math.PI) * Overworld.ENEMY_HOP_H
+      }
+      s.y = ba.y - hop
+      s.setDepth(ba.y - 8)
+      s.setFlipX(!ba.facingRight)
+      s.setTint(state.gameTime < ba.hurtUntil ? 0xFF3030 : 0xFFFFFF)
+      if (ba.dying && state.gameTime >= ba.hurtUntil) {
+        s.destroy()
+        this.banditSprites.splice(i, 1)
+        state.bandits.splice(i, 1)
+        i--
+        continue
+      }
     }
 
 
-    // Sync dynamic crate bodies 
+    // Sync dynamic crate bodies  
     for (let i = 0; i < this.crateBodies.length; i++) {
       const body = this.crateBodies[i]
       if (!body || body.isSleeping) continue
@@ -4350,10 +4956,13 @@ export class Overworld extends Phaser.Scene {
         sprite.y = by
         sprite.setDepth(by - 8)
       }
-      // update obstacle AABB
+      // update obstacle AABB (sized to the container's footprint, not a fixed 8)
       if (obs) {
-        obs.x = bx - 8
-        obs.y = by - 8
+        const fp = this.containerFootprint(c.item ?? 'crate')
+        obs.x = bx - fp.w / 2
+        obs.y = by - fp.h / 2
+        obs.w = fp.w
+        obs.h = fp.h
         obs.originX = bx
         obs.originY = by
       }
@@ -4381,12 +4990,49 @@ export class Overworld extends Phaser.Scene {
         // crate open → E closes it (single owner of the toggle, so the same
         // keypress can never close-then-reopen)
         ui.closeCrate()
+      } else if (ui.isUpperInventoryOpen()) {
+        // upper inventory open → E closes it
+        this.registry.events.emit('toggle-inventory')
       } else if (state.mounted !== null) {
         this.dismount()
       } else if (!this.mountNearestHonse()) {
         // no honse in range — open the nearest crate within reach (E has no
         // cursor, so search a radius around the player, not a tight on-sprite hit)
-        this.tryOpenCrate(this.player.x, this.player.y, CRATE_RANGE)
+        if (!this.tryOpenCrate(this.player.x, this.player.y, CRATE_RANGE)) {
+          // nothing interactable in range — toggle inventory
+          this.registry.events.emit('toggle-inventory')
+        }
+      }
+    }
+
+    // ---- floating "E" prompt above the nearest interactable ----
+    // Mirrors exactly what an E-press would target: nearest honse (mount) or
+    // crate (open). Hidden while mounted, while a crate panel is open, or when
+    // the overworld isn't the active view.
+    {
+      const uiE = this.scene.get('UI') as UI
+      let target: { x: number; y: number } | null = null
+      if (overworldVisible && state.mounted === null && !uiE.isCrateOpen()) {
+        let bestSq = Infinity
+        const mountSq = MOUNT_RANGE * MOUNT_RANGE
+        for (const h of state.honses) {
+          const dx = h.x - this.player.x
+          const dy = h.y - this.player.y
+          const d = dx * dx + dy * dy
+          if (d <= mountSq && d < bestSq) { bestSq = d; target = { x: h.x, y: h.y - 20 } }
+        }
+        const crateSq = CRATE_RANGE * CRATE_RANGE
+        for (const c of state.placedCrates) {
+          const dx = c.x - this.player.x
+          const dy = c.y - this.player.y
+          const d = dx * dx + dy * dy
+          if (d <= crateSq && d < bestSq) { bestSq = d; target = { x: c.x, y: c.y - 16 } }
+        }
+      }
+      if (target) {
+        this.ePrompt.setPosition(target.x, target.y).setVisible(true)
+      } else if (this.ePrompt.visible) {
+        this.ePrompt.setVisible(false)
       }
     }
 
@@ -4418,7 +5064,9 @@ export class Overworld extends Phaser.Scene {
       this.mountedLastDy = dy
 
       const rampFrac = this.mountedRampTime / MOUNTED_RAMP_MS
-      const speed = (MOUNTED_SPEED_MIN + (MOUNTED_SPEED_MAX - MOUNTED_SPEED_MIN) * rampFrac) * h.speedMul
+      const speed = state.inventory[state.selectedInventorySlot]?.type === 'quirt'
+        ? HORSE_GEAR_SPEEDS[this.horseGear] * h.speedMul
+        : (MOUNTED_SPEED_MIN + (MOUNTED_SPEED_MAX - MOUNTED_SPEED_MIN) * rampFrac) * h.speedMul
 
       const tether = this.rope.getHonseTetherAnchor(mountedIdx) ?? (this.rope.isAttached() ? this.rope.getLeashAnchor() : null)
       if (tether && (dx !== 0 || dy !== 0)) {
@@ -4546,7 +5194,9 @@ export class Overworld extends Phaser.Scene {
           }
         }
       }
-      // Pushable crates: if the player is moving into a placed crate, shove Matter body
+      // Pushable containers: apply a force toward the player's movement so the
+      // body's mass + friction resist (feels heavy), instead of hard-setting
+      // velocity (which would ignore friction and track the player exactly).
       if (dx !== 0 || dy !== 0) {
         const half = Overworld.PLAYER_HALF
         for (let ci = 0; ci < state.placedCrates.length; ci++) {
@@ -4555,10 +5205,13 @@ export class Overworld extends Phaser.Scene {
           if (!body) continue
           const npx = this.player.x + dx * step
           const npy = this.player.y + dy * step
-          if (aabbOverlap(npx, npy, half, c.x - 8, c.y - 8, 16, 16)) {
+          const fp = this.containerFootprint(c.item ?? 'crate')
+          if (aabbOverlap(npx, npy, half, c.x - fp.w / 2, c.y - fp.h / 2, fp.w, fp.h)) {
             if (body.isSleeping) { body.isSleeping = false; (body as any).sleepCounter = 0 }
-            const pushSpeed = ((state.playerSpeedOverride ?? PLAYER_SPEED) / 60) * 1.1   // slightly faster than her so she stays in contact
-            this.matter.body.setVelocity(body, { x: dx * pushSpeed, y: dy * pushSpeed })
+            // Force scales with the body's mass so heavier containers still move,
+            // but the push has to overcome inertia + friction each frame.
+            const f = PUSH_FORCE * body.mass
+            this.matter.body.applyForce(body, body.position, { x: dx * f, y: dy * f })
           }
         }
       }
@@ -4698,6 +5351,10 @@ export class Overworld extends Phaser.Scene {
         const added = state.inventoryAddAnywhere(d.stack)
         if (added > 0) {
           this.registry.events.emit('inventory-changed')
+          // Pickup toast — uses `added` (what actually fit), not d.stack.count.
+          // The buried-coin path at ~line 4771 stays out of this: that's gold,
+          // already handled by spawnGoldFloat. This is item pickups only.
+          this.registry.events.emit('item-picked-up', { type: d.stack.type, count: added })
         }
         if (d.stack.count <= 0) {
           state.droppedItems.splice(i, 1)

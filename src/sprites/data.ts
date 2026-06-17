@@ -303,7 +303,7 @@ export const WORKSHOP: Sprite = [
 // solid STONE building (slate roof, stone-block walls) but keeping the red
 // brick chimney. No forge glow. 16x16.
 const stL = '#9a9488'  // stone block light
-const stM = '#7d776b'  // stone block mid
+const st = '#7d776b'  // stone block mid
 const stD = '#5a554c'  // stone block dark / mortar
 const slT = '#4a4640'  // slate roof
 const bkL = '#A65238'  // brick light (red chimney)
@@ -317,15 +317,15 @@ export const WORKSHOP_L2: Sprite = [
   [_,_,_,_,slT,slT,slT,slT,slT,slT,bkD,bkL,bkD,_,_,_],
   [_,_,_,slT,slT,slT,slT,slT,slT,slT,bkD,bkL,bkD,_,_,_],
   [_,_,slT,slT,slT,slT,slT,slT,slT,slT,slT,slT,slT,_,_,_],
-  [_,_,stD,stL,stM,stL,stD,stL,stM,stL,stD,stL,stM,stD,_,_],
-  [_,_,stL,stM,wsWn,wsWn,stD,stL,stM,wsWn,wsWn,stM,stL,stD,_,_],
-  [_,_,stD,stL,wsWn,wsWn,stD,stL,stM,wsWn,wsWn,stL,stD,stL,_,_],
-  [_,_,stL,stM,stL,stD,stL,stM,stL,stD,stL,stD,stL,stM,_,_],
-  [_,_,stD,stL,stM,stL,stD,stL,stM,stL,stM,stL,stD,stL,_,_],
-  [_,_,stL,stM,stL,stD,stL,stM,stL,stD,stL,stM,stL,stD,_,_],
-  [_,_,stD,stL,stM,stL,dD,dD,stL,stM,stL,stD,stL,stM,_,_],
-  [_,_,stL,stM,stL,stD,dD,dD,stD,stL,stM,stL,stD,stL,_,_],
-  [_,_,stD,stL,stM,stL,dD,dD,stL,stD,stL,stM,stL,stD,_,_],
+  [_,_,stD,stL,st,stL,stD,stL,st,stL,stD,stL,st,stD,_,_],
+  [_,_,stL,st,wsWn,wsWn,stD,stL,st,wsWn,wsWn,st,stL,stD,_,_],
+  [_,_,stD,stL,wsWn,wsWn,stD,stL,st,wsWn,wsWn,stL,stD,stL,_,_],
+  [_,_,stL,st,stL,stD,stL,st,stL,stD,stL,stD,stL,st,_,_],
+  [_,_,stD,stL,st,stL,stD,stL,st,stL,st,stL,stD,stL,_,_],
+  [_,_,stL,st,stL,stD,stL,st,stL,stD,stL,st,stL,stD,_,_],
+  [_,_,stD,stL,st,stL,dD,dD,stL,st,stL,stD,stL,st,_,_],
+  [_,_,stL,st,stL,stD,dD,dD,stD,stL,st,stL,stD,stL,_,_],
+  [_,_,stD,stL,st,stL,dD,dD,stL,stD,stL,st,stL,stD,_,_],
 ]
 
 // ---- ITEMS (placeholders) ----
@@ -561,22 +561,21 @@ const ahS = '#3f3f3f'   // deep shadow / sign frame
 const ahA = '#363636'   // doorway hollow
 const ahB = '#705242'   // board-up plank (warm brown, contrasts grays)
 export const ABANDONED_HOUSE: Sprite = [
-  [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-  [_,_,wwW,wwW,wwW,_,_,wwW,wwW,wwW,wwW,_,wwW,_,_,_,_],
-  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
-  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
-  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_,_],
-  [_,wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
-  [_,_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW,_,_,_,_],
-  [_,wwW,wwW,wwW,wwW,wwW,ahS,ahS,wwW,wwW,wwW,wwW,wwW,_,_,_,_],
-  [_,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahP,ahP,_,_,_,_],
-  [_,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,_,_,_,_],
-  [_,ahP,ahP,ahD,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahD,ahP,_,_,_,_],
-  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahP,ahD,_,_,_,_],
-  [_,ahP,ahD,ahP,ahB,ahB,ahP,ahP,ahD,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahP,ahP,_,_,_,_],
-  [_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_,_,_,_],
+  [_,wwW,wwW,wwW,_,_,wwW,wwW,wwW,wwW,_,wwW],
+  [wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW],
+  [wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW],
+  [wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,_],
+  [wwW,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW],
+  [_,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,wwW],
+  [wwW,wwW,wwW,wwW,wwW,ahS,ahS,wwW,wwW,wwW,wwW,wwW],
+  [ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahP,ahP],
+  [ahP,ahD,ahP,ahP,ahP,ahP,ahP,ahD,ahP,ahP,ahP,ahP],
+  [ahP,ahP,ahD,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahD,ahP],
+  [ahP,ahD,ahP,ahB,ahB,ahP,ahP,ahD,ahA,ahA,ahP,ahP],
+  [ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahP,ahD],
+  [ahP,ahD,ahP,ahB,ahB,ahP,ahP,ahD,ahA,ahA,ahP,ahP],
+  [ahP,ahP,ahP,ahB,ahB,ahP,ahP,ahP,ahA,ahA,ahP,ahP],
+  [ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS,ahS],
 ]
 
 // ---- HOUSE WITH ROOF ---- Copy of ABANDONED_HOUSE to iterate a roofed,
@@ -605,6 +604,26 @@ export const HOUSE_ROOF: Sprite = [
   [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
   [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
   [hrP,hrP,hrP,hrP,hrB,hrB,hrB,hrB,hrP,hrP,hrP,hrP],
+  [hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS],
+]
+
+// Gunsmith variant — same as HOUSE_ROOF but with the door open (black).
+export const HOUSE_ROOF_OPEN: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_],
+  [hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR],
+  [hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR,hrR],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG,hrR,hrG],
+  [hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA],
+  [hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA,hrA],
+  [hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrA,hrA,hrA,hrA,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrA,hrA,hrA,hrA,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrA,hrA,hrA,hrA,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrA,hrA,hrA,hrA,hrP,hrP,hrP,hrP],
+  [hrP,hrP,hrP,hrP,hrA,hrA,hrA,hrA,hrP,hrP,hrP,hrP],
   [hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS,hrS],
 ]
 
@@ -783,23 +802,22 @@ export const YUCCA: Sprite = [
 ]
 
 
-const svH = '#8B5A2B'   // handle wood
+const svH = '#653d18'   // handle wood
 const svM = '#777777'   // metal scoop
 const svD = '#444444'   // metal shadow
 // Cursor — solid gold arrow, classic pointer shape. 8x8. Tip at (0,0) top-left.
 const curG = '#D4A017'   // gold
-// Grab cursor — a small open hand for hovering over interactive things. 8x8.
-// Same gold color so it reads as part of the cursor family.
-const grG = '#D4A017'
+// Grab cursor — for hovering over interactive things
+
 export const CURSOR_GRAB: Sprite = [
-  [_,grG,_,_,_,_,_,_],
-  [_,grG,_,_,_,_,_,_],
-  [_,grG,grG,grG,grG,grG,_,_],
-  [grG,grG,grG,grG,grG,grG,_,_],
-  [_,grG,grG,grG,grG,grG,_,_],
-  [_,_,grG,grG,grG,grG,_,_],
-  [_,_,grG,grG,grG,grG,_,_],
-  [_,_,_,grG,grG,_,_,_],
+  [_,wwW,_,_,_,_,_,_],
+  [_,wwW,_,_,_,_,_,_],
+  [_,wwW,wwW,wwW,wwW,wwW,_,_],
+  [wwW,wwW,wwW,wwW,wwW,wwW,_,_],
+  [_,wwW,wwW,wwW,wwW,wwW,_,_],
+  [_,_,wwW,wwW,wwW,wwW,_,_],
+  [_,_,wwW,wwW,wwW,wwW,_,_],
+  [_,_,_,wwW,wwW,_,_,_],
 ]
 
 // Rope-dissolve cursor — a red X shown over a tied rope to signal "click to
@@ -818,14 +836,14 @@ export const CURSOR_X: Sprite = [
 ]
 
 export const CURSOR: Sprite = [
-  [curG,_,_,_,_,_,_,_],
-  [curG,curG,_,_,_,_,_,_],
-  [curG,curG,curG,_,_,_,_,_],
-  [curG,curG,curG,curG,_,_,_,_],
-  [curG,curG,curG,curG,curG,_,_,_],
-  [curG,curG,curG,curG,curG,curG,_,_],
-  [curG,curG,_,curG,_,_,_,_],
-  [_,_,_,_,curG,_,_,_],
+  [wwW,_,_,_,_,_,_,_],
+  [wwW,wwW,_,_,_,_,_,_],
+  [wwW,wwW,wwW,_,_,_,_,_],
+  [wwW,wwW,wwW,wwW,_,_,_,_],
+  [wwW,wwW,wwW,wwW,wwW,_,_,_],
+  [wwW,wwW,wwW,wwW,wwW,wwW,_,_],
+  [wwW,wwW,_,wwW,_,_,_,_],
+  [_,_,_,_,wwW,_,_,_],
 ]
 
 // Dirt patch — left behind by the shovel. Small oblong brown blob.
@@ -1053,8 +1071,60 @@ export const PIPE_CHEVRON_FLIP: Sprite = [
 
 // Crate: an 8x8 wooden storage box. Hard outline, plank fill, cross-batten on
 // the face — reads as a crate at item size. Wood-brown palette kept in step
-// with the post particle browns so placed crates sit in the same material
-// family as posts/fences. Declared with its palette just above per the
+// ---- WOOD FLOOR TILE ----
+// 16x16 seamless tile of horizontal planks for interior floors. Tiles cleanly
+// on all edges: planks run full width (wrap left/right) and the board-end seams
+// are staggered between rows so the vertical repeat doesn't read as a grid.
+// Edit these four hex strings to recolor the wood; same family as the crate.
+const wfA = '#7a5237'   // plank face A
+const wfG = '#704930'   // groove between planks / board-end seam
+const wfH = '#896246'   // top-edge highlight on each plank
+export const FLOOR_WOOD: Sprite = [
+  [wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
+  [wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
+  [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
+  [wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
+  [wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
+  [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
+]
+
+// Chest (item_chest). Two crate faces side by side (16x8) — same plank palette
+// as the crate, so a chest reads as two crates joined. Their dark outlines meet
+// in the middle as a seam.
+const cstL = '#9C7248'   // light plank
+const cstM = '#8B5A2B'   // mid plank
+const cstD = '#4A3318'   // dark outline / batten shadow
+export const ITEM_CHEST: Sprite = [
+  [cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD],
+  [cstD,cstM,cstL,cstM,cstM,cstL,cstM,cstD,cstD,cstM,cstL,cstM,cstM,cstL,cstM,cstD],
+  [cstD,cstL,cstD,cstM,cstM,cstD,cstL,cstD,cstD,cstL,cstD,cstM,cstM,cstD,cstL,cstD],
+  [cstD,cstM,cstM,cstD,cstD,cstM,cstM,cstD,cstD,cstM,cstM,cstD,cstD,cstM,cstM,cstD],
+  [cstD,cstM,cstM,cstD,cstD,cstM,cstM,cstD,cstD,cstM,cstM,cstD,cstD,cstM,cstM,cstD],
+  [cstD,cstL,cstD,cstM,cstM,cstD,cstL,cstD,cstD,cstL,cstD,cstM,cstM,cstD,cstL,cstD],
+  [cstD,cstM,cstL,cstM,cstM,cstL,cstM,cstD,cstD,cstM,cstL,cstM,cstM,cstL,cstM,cstD],
+  [cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD,cstD],
+]
+
+// Crate (item_crate). Plank-brown palette so placed crates sit in the same
+// material family as posts/fences. Declared with its palette just above per the
 // no-hoist rule.
 const crL = '#9C7248'   // light plank
 const crM = '#8B5A2B'   // mid plank
@@ -1068,6 +1138,38 @@ export const ITEM_CRATE: Sprite = [
   [crD,crL,crD,crM,crM,crD,crL,crD],
   [crD,crM,crL,crM,crM,crL,crM,crD],
   [crD,crD,crD,crD,crD,crD,crD,crD],
+]
+
+// Silver lockbox — same shape as crate, silver palette
+const slL = '#C0C0C0'   // light silver
+const slM = '#9A9A9A'   // mid silver
+const slD = '#4A4A4A'   // dark outline
+
+export const ITEM_SILVER_LOCKBOX: Sprite = [
+  [slD,slD,slD,slD,slD,slD,slD,slD],
+  [slD,slM,slL,slM,slM,slL,slM,slD],
+  [slD,slL,slD,slM,slM,slD,slL,slD],
+  [slD,slM,slM,slD,slD,slM,slM,slD],
+  [slD,slM,slM,slD,slD,slM,slM,slD],
+  [slD,slL,slD,slM,slM,slD,slL,slD],
+  [slD,slM,slL,slM,slM,slL,slM,slD],
+  [slD,slD,slD,slD,slD,slD,slD,slD],
+]
+
+// Gold lockbox — same shape as crate, gold palette
+const glL = '#FFD700'   // light gold
+const glM = '#DAA520'   // mid gold
+const glD = '#8c5c09'   // dark outline
+
+export const ITEM_GOLD_LOCKBOX: Sprite = [
+  [glD,glD,glD,glD,glD,glD,glD,glD],
+  [glD,glM,glL,glM,glM,glL,glM,glD],
+  [glD,glL,glD,glM,glM,glD,glL,glD],
+  [glD,glM,glM,glD,glD,glM,glM,glD],
+  [glD,glM,glM,glD,glD,glM,glM,glD],
+  [glD,glL,glD,glM,glM,glD,glL,glD],
+  [glD,glM,glL,glM,glM,glL,glM,glD],
+  [glD,glD,glD,glD,glD,glD,glD,glD],
 ]
 
 // ---- ORES ---- same rounded-chunk shape as ITEM_STONE, recolored per ore.
@@ -1367,12 +1469,12 @@ export const ITEM_SUGAR: Sprite = [
   [sugK,sugK,sugK,sugK,sugK,sugK,sugK,sugK],
 ]
 
-// Pastry: golden flaky bun, swirled sugar glaze on top. 8x8.
+// Tart: golden flaky bun, swirled sugar glaze on top. 8x8.
 const pasL = '#F4D17E'   // dough light
 const pasM = '#D8A848'   // dough mid
 const pasD = '#9C6E20'   // crust dark
 const pasG = '#FFFFFF'   // sugar glaze
-export const ITEM_PASTRY: Sprite = [
+export const ITEM_TART: Sprite = [
   [_,pasD,pasM,pasM,pasM,pasM,pasD,_],
   [pasD,pasM,pasL,pasG,pasG,pasL,pasM,pasD],
   [pasM,pasL,pasG,pasL,pasL,pasG,pasL,pasM],
@@ -1390,7 +1492,7 @@ const cotBkD = '#4a3928'  // bark shadow
 const cotLfL = '#929a6e'  // leaves light (grey-green)
 const cotLfM = '#5F6B48'  // leaves mid (muted green)
 const cotLfD = '#3F4A2E'  // leaves dark (deep muted green)
-const brrW = '#b1c243' // highlight
+const brrW = '#b6c940' // highlight
 
 export const COTTONWOOD: Sprite = [
   [_,_,_,_,brrW,cotLfL,brrW,brrW,_,_,_,_],
@@ -1692,6 +1794,43 @@ export const ITEM_PLANK: Sprite = [
   [plD,plM,plM,plM,plM,plM,plM,plM,plM,plM,plM,plD],
 ]
 
+// Flagstone: floor tile. 12x12.
+const stM = '#52493c'   // stone (single fill, matches rock mid rkM)
+const rk = '#7d7161'
+
+export const ITEM_FLAGSTONE: Sprite = [
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,stM],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [stM,stM,stM,stM,stM,stM,stM,stM,stM,stM,rk,rk],
+  [rk,rk,rk,rk,rk,rk,rk,rk,rk,rk,rk,rk],
+  [stM,rk,rk,rk,rk,rk,rk,rk,rk,rk,rk,_],
+]
+
+// Sandstone: same tile as flagstone, recolored to reddish sandy tones. 12x12.
+const saM = '#b1805d'   // sandstone main (reddish sand)
+const saK = '#ca9e77'   // sandstone seam (lighter sandy)
+export const ITEM_SANDSTONE: Sprite = [
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saM],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saM,saM,saM,saM,saM,saM,saM,saM,saM,saM,saK,saK],
+  [saK,saK,saK,saK,saK,saK,saK,saK,saK,saK,saK,saK],
+  [saM,saK,saK,saK,saK,saK,saK,saK,saK,saK,saK,_],
+]
+
 // Wheel: round wooden wheel with a square stone hub in the center. 12x12.
 // Wood ring (post palette psL/psM/psD), stone center (rock palette rkL/rkM/rkD).
 export const ITEM_WHEEL: Sprite = [
@@ -1746,8 +1885,8 @@ export const FENCE_GATE_OPEN: Sprite = [
 ]
 
 // ---- BRUSH GROUND ---- 8x8 ground tile
-const brL = '#a0a25e'   // brush light
-const brD = '#85895d'   // brush dark speck 
+const brL = '#9aa153'   // brush light
+const brD = '#788751'   // brush dark speck 
 export const BRUSH_GROUND: Sprite = [
   [brL,brL,brL,brL,brL,brL,brL,brL],
   [brL,brL,brL,brL,brL,brL,brL,brL],
@@ -1761,11 +1900,11 @@ export const BRUSH_GROUND: Sprite = [
 
 // Sandy yellow-tan path dirt. Same 8x8 footprint as BRUSH_GROUND so it tiles
 // the terrain grid identically; stamped where a trail crosses grass.
-const pdL = '#e3cb89'   // sandy light
+const pdL = '#e8d17f'   // sandy light
 const pdD = '#d5bb77'   // sandy dark speck
 export const PATH_DIRT: Sprite = [
   [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
-  [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
+  [pdL,pdL,pdL,pdD,pdL,pdL,pdL,pdL],
   [pdL,pdL,pdL,pdL,pdL,pdL,pdL,pdL],
   [pdL,pdL,pdL,pdL,pdL,pdD,pdL,pdL],
   [pdL,pdD,pdL,pdL,pdL,pdL,pdL,pdL],
@@ -1855,7 +1994,10 @@ export const HONSE: Sprite = [
   [_,_,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,hnB,hnB,_,hnB,hnB,_,_,_,_,_,_],
 ]
 
-// Brown honse: its own sprite (not tinted) so it can have a custom lighter mane.
+// Shared red hit-flash silhouette — every coat swaps to this for the flash
+// window, then back to its own sprite. Same red as the coyote/player hurt
+// flash (RD), derived from HONSE so the shape always matches.
+export const HONSE_HURT: Sprite = HONSE.map(row => row.map(cell => cell === _ ? _ : RD))
 // hbB = body, hbM = mane (edit the mane pixels by hand).
 const hbB = '#55341e'   // brown body
 export const HONSE_BROWN: Sprite = [
@@ -2119,6 +2261,291 @@ export const QUIRT: Sprite = [
   [ltD,_,_,_,_,_,_,_],
 ]
 
+// Derringer: a small pocket pistol. 8x8. Dark metal body, wood grip.
+const dgM = '#6B6B6B'   // metal barrel/frame
+const dgD = '#4A4A4A'   // dark metal shadow
+const dgW = '#815c39'   // wood grip
+const dgH = '#6b4d30'   // grip shadow
+const dgB = '#888888'   // bright metal highlight
+
+export const ITEM_DERRINGER: Sprite = [
+  [_,_,_,_,dgM,dgM,dgM,dgM,dgM,dgM,dgM,dgD,dgD],
+  [_,_,_,dgW,dgH,dgH,dgH,dgH,dgH,dgD,dgD,_,_],
+  [_,_,dgW,dgH,dgH,dgH,dgH,_,_,_,_,_,_],
+  [_,dgW,dgH,dgH,dgH,dgW,dgW,_,_,_,_,_,_],
+  [dgW,dgH,dgH,dgW,dgW,_,_,dgW,_,_,_,_,_],
+  [dgH,dgH,dgH,dgH,_,dgW,dgW,_,_,_,_,_,_],
+  [dgH,dgH,dgH,_,_,_,_,_,_,_,_,_,_],
+  [_,dgH,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+// Ammo: a small box of pistol cartridges. Brass rounds standing in a cardboard
+// box. ~10x9.
+const amBr = '#d9a441'   // brass casing
+const amBh = '#999999'   // highlight
+const amLd = '#868686'   // tip
+const amBx = '#8a5a32'   // cardboard box
+const amBxD = '#6b4427'  // box shadow
+const amBxL = '#a06f43'  // box highlight
+export const ITEM_AMMO: Sprite = [
+  [_,amBh,amBh,_,amBh,amBh,_,amBh,amBh,_,amBh,amBh,_,_],
+  [_,amLd,amLd,_,amLd,amLd,_,amLd,amLd,_,amLd,amLd,_,_],
+  [_,amBr,amBr,_,amBr,amBr,_,amBr,amBr,_,amBr,amBr,_,_],
+  [_,amBr,amBr,_,amBr,amBr,_,amBr,amBr,_,amBr,amBr,_,_],
+  [amBxL,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,_],
+  [amBxL,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,amBx,_],
+  [amBxL,amBx,amBxD,amBx,amBx,amBxD,amBx,amBx,amBxD,amBx,amBx,amBxD,amBx,_],
+  [amBxL,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,_],
+  [_,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,amBxD,_,_],
+]
+
+
+const clH = '#76310f'
+const clHH = '#9c481e'
+
+export const ITEM_COLT: Sprite = [
+  [_,_,_,_,dgB,dgM,dgM,dgM,dgM,dgM,dgD,dgD,dgD],
+  [_,_,dgB,dgB,dgM,dgM,dgM,dgD,dgD,dgD,dgD,_],
+  [_,clHH,clHH,dgM,dgM,dgD,dgD,_,_,_,_,_],
+  [_,clHH,clHH,clH,_,_,_,_,_,_,_,_],
+  [clHH,clHH,clH,_,_,_,_,_,_,_,_],
+  [clH,clH,clH,clH,_,_,_,_,_,_,_,_],
+  [clH,clH,clH,_,_,_,_,_,_,_,_,_],
+  [_,clH,_,_,_,_,_,_,_,_,_,_],
+]
+
+// Keyhole icon — 8x8, dark circle top with a vertical slot below.
+// Used as the slot visual in the locked lockbox UI.
+const khD = '#1A1A1A'   // keyhole dark
+
+export const KEYHOLE: Sprite = [
+[_,_,_,khD,khD,_,_,_],
+[_,_,khD,khD,khD,khD,_,_],
+[_,_,khD,khD,khD,khD,_,_],
+[_,_,khD,khD,khD,khD,_,_],
+[_,_,_,khD,khD,_,_,_],
+[_,_,_,khD,khD,_,_,_],
+[_,_,_,khD,khD,_,_,_],
+[_,_,_,khD,khD,_,_,_],
+]
+
+// Silver key — 8x8
+const skL = '#c1c0c6'
+const skM = '#97989e'
+const skD = '#7a7b7f'
+
+export const ITEM_SILVER_KEY: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,skL,skM,skL,_,_,_,_,_,_,_,_,_,_],
+  [skL,skM,_,skM,skL,_,_,_,_,_,_,_,_,_],
+  [skL,skM,_,skM,skM,skM,skM,skM,skM,skM,skM,skM,skM,skM],
+  [skD,skD,_,skD,skD,_,_,_,_,_,_,skD,_,skD],
+  [_,skD,skD,skD,_,_,_,_,_,_,_,skD,_,skD],
+  [_,_,_,_,_,_,_,_,_,_,_,skD,_,skD],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+// Silver key inserted — ring + short stub, shaft hidden in keyhole
+export const SILVER_KEY_INSERTED: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,skL,skM,skL,_,_,_,_,_,_,_,_,_,_],
+  [skL,skM,_,skM,skL,_,_,_,_,_,_,_,_,_],
+  [skL,skM,_,skM,skM,skM,skM,skM,skM,skM,skM,skM,skM,skM],
+  [skD,skD,_,skD,skD,_,_,_,_,_,_,_,_,_],
+  [_,skD,skD,skD,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+// Gold key — 8x8
+const gkL = '#f2d949'
+const gkM = '#d2aa43'
+const gkD = '#b58c26'
+
+export const ITEM_GOLD_KEY: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,gkL,gkM,gkL,_,_,_,_,_,_,_,_,_,_],
+  [gkL,gkM,_,gkM,gkL,_,_,_,_,_,_,_,_,_],
+  [gkL,gkM,_,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM],
+  [gkD,gkD,_,gkD,gkD,_,_,_,_,_,_,gkD,_,gkD],
+  [_,gkD,gkD,gkD,_,_,_,_,_,_,_,gkD,_,gkD],
+  [_,_,_,_,_,_,_,_,_,_,_,gkD,_,gkD],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+// Gold key inserted — ring + short stub, shaft hidden in keyhole
+export const GOLD_KEY_INSERTED: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,gkL,gkM,gkL,_,_,_,_,_,_,_,_,_,_],
+  [gkL,gkM,_,gkM,gkL,_,_,_,_,_,_,_,_,_],
+  [gkL,gkM,_,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM,gkM],
+  [gkD,gkD,_,gkD,gkD,_,_,_,_,_,_,_,_,_],
+  [_,gkD,gkD,gkD,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+// Crosshair reticle — 9x9, used as cursor when Derringer is selected
+
+export const CROSSHAIR: Sprite = [
+  [_,_,_,_,RD,_,_,_,_],
+  [_,_,_,RD,RD,RD,_,_,_],
+  [_,_,RD,_,_,_,RD,_,_],
+  [_,RD,_,_,_,_,_,RD,_],
+  [RD,RD,_,_,RD,_,_,RD,RD],
+  [_,RD,_,_,_,_,_,RD,_],
+  [_,_,RD,_,_,_,RD,_,_],
+  [_,_,_,RD,RD,RD,_,_,_],
+  [_,_,_,_,RD,_,_,_,_],
+]
+
+export const CROSSHAIR_EMPTY: Sprite = [
+  [_,_,_,_,RD,_,_,_,_],
+  [_,_,_,RD,RD,RD,_,_,_],
+  [_,_,RD,_,_,_,RD,_,_],
+  [_,RD,_,_,_,_,_,RD,_],
+  [RD,RD,_,_,_,_,_,RD,RD],
+  [_,RD,_,_,_,_,_,RD,_],
+  [_,_,RD,_,_,_,RD,_,_],
+  [_,_,_,RD,RD,RD,_,_,_],
+  [_,_,_,_,RD,_,_,_,_],
+]
+
+const BL = '#868686'
+
+// Bullet-count pips — 9 wide, single row. Layered below the reticle by the
+// cursor controller. 5 pixels at cols 0,2,4,6,8, removed right-to-left.
+export const BULLETS_5: Sprite = [
+  [BL,_,BL,_,BL,_,BL,_,BL],
+]
+
+export const BULLETS_4: Sprite = [
+  [BL,_,BL,_,BL,_,BL,_,_],
+]
+
+export const BULLETS_3: Sprite = [
+  [BL,_,BL,_,BL,_,_,_,_],
+]
+
+export const BULLETS_2: Sprite = [
+  [BL,_,BL,_,_,_,_,_,_],
+]
+
+export const BULLETS_1: Sprite = [
+  [BL,_,_,_,_,_,_,_,_],
+]
+
+export const BULLETS_0: Sprite = [
+  [_,_,_,_,_,_,_,_,_],
+]
+
+// Rough gems — 8x8 placeholder pixel art, each a distinct cut/shape and palette.
+// Refine freely; sprite keys stay the same.
+
+// Agate — rounded banded nodule
+const agL = '#E8A87C', agM = '#C9683E', agD = '#8A3D1F'
+export const ITEM_GEM_AGATE: Sprite = [
+  [_,_,agM,agM,agM,_,_,_],
+  [_,agM,agL,agL,agL,agM,_,_],
+  [agM,agL,agD,agD,agL,agL,agM,_],
+  [agM,agL,agD,agL,agD,agL,agM,_],
+  [agM,agL,agL,agD,agD,agL,agM,_],
+  [agM,agL,agL,agL,agL,agL,agM,_],
+  [_,agM,agL,agL,agL,agM,_,_],
+  [_,_,agM,agM,agM,_,_,_],
+]
+
+// Turquoise — chunky squarish stone with dark matrix veins
+const tqL = '#7FE3DB', tqM = '#3FB5AE', tqD = '#1F5A58'
+export const ITEM_GEM_TURQUOISE: Sprite = [
+  [_,tqM,tqM,tqM,tqM,tqM,_,_],
+  [tqM,tqL,tqL,tqL,tqD,tqL,tqM,_],
+  [tqM,tqL,tqD,tqL,tqL,tqL,tqM,_],
+  [tqM,tqL,tqL,tqL,tqD,tqL,tqM,_],
+  [tqM,tqD,tqL,tqL,tqL,tqL,tqM,_],
+  [tqM,tqL,tqL,tqD,tqL,tqL,tqM,_],
+  [tqM,tqL,tqL,tqL,tqL,tqL,tqM,_],
+  [_,tqM,tqM,tqM,tqM,tqM,_,_],
+]
+
+// Chalcedony — waxy translucent lump, soft top highlight
+const cyL = '#EEF4F8', cyM = '#A9BDC9', cyD = '#76909E'
+export const ITEM_GEM_CHALCEDONY: Sprite = [
+  [_,_,cyM,cyM,cyM,cyM,_,_],
+  [_,cyM,cyL,cyL,cyL,cyM,cyM,_],
+  [cyM,cyL,cyL,cyL,cyM,cyM,cyD,_],
+  [cyM,cyL,cyL,cyM,cyM,cyD,cyD,_],
+  [cyM,cyL,cyM,cyM,cyD,cyD,cyD,_],
+  [cyM,cyM,cyM,cyD,cyD,cyD,cyD,_],
+  [_,cyM,cyD,cyD,cyD,cyD,_,_],
+  [_,_,cyD,cyD,cyD,_,_,_],
+]
+
+// Topaz — emerald-cut rectangle, beveled corners
+const tpL = '#FBE08A', tpM = '#E6B23F', tpD = '#B5811C'
+export const ITEM_GEM_TOPAZ: Sprite = [
+  [_,tpM,tpM,tpM,tpM,tpM,_,_],
+  [tpM,tpL,tpL,tpL,tpL,tpM,tpD,_],
+  [tpM,tpL,tpM,tpM,tpL,tpM,tpD,_],
+  [tpM,tpL,tpM,tpM,tpM,tpM,tpD,_],
+  [tpM,tpM,tpM,tpM,tpD,tpD,tpD,_],
+  [tpD,tpM,tpD,tpD,tpD,tpD,tpD,_],
+  [_,tpD,tpD,tpD,tpD,tpD,_,_],
+  [_,_,_,_,_,_,_,_],
+]
+
+// Amethyst — pointed crystal cluster (tall facets)
+const amL = '#D2A8E8', amM = '#9A5BC9', amD = '#653089'
+export const ITEM_GEM_AMETHYST: Sprite = [
+  [_,_,amL,_,amL,_,_,_],
+  [_,amL,amM,amL,amM,amL,_,_],
+  [_,amL,amM,amM,amM,amM,amL,_],
+  [amL,amM,amM,amD,amM,amM,amM,_],
+  [amM,amM,amD,amD,amD,amM,amD,_],
+  [amM,amD,amD,amD,amD,amD,amD,_],
+  [_,amD,amD,amD,amD,amD,_,_],
+  [_,_,amD,amD,amD,_,_,_],
+]
+
+// Diamond — brilliant cut, table on top, point at bottom
+const dmL = '#FFFFFF', dmM = '#D6E4EC', dmD = '#A7BCC9'
+export const ITEM_GEM_DIAMOND: Sprite = [
+  [_,dmM,dmM,dmM,dmM,dmM,_,_],
+  [dmM,dmL,dmL,dmL,dmL,dmL,dmM,_],
+  [dmM,dmL,dmM,dmM,dmM,dmD,dmM,_],
+  [_,dmM,dmL,dmM,dmD,dmD,_,_],
+  [_,_,dmM,dmM,dmD,_,_,_],
+  [_,_,_,dmM,dmD,_,_,_],
+  [_,_,_,dmD,_,_,_,_],
+  [_,_,_,_,_,_,_,_],
+]
+
+// Ruby — round brilliant, deep red with bright crown facet
+const ruL = '#F08A9C', ruM = '#C8334F', ruD = '#8A1226'
+export const ITEM_GEM_RUBY: Sprite = [
+  [_,_,ruM,ruM,ruM,_,_,_],
+  [_,ruM,ruL,ruL,ruM,ruM,_,_],
+  [ruM,ruL,ruL,ruM,ruM,ruD,ruM,_],
+  [ruM,ruL,ruM,ruM,ruD,ruD,ruM,_],
+  [ruM,ruM,ruM,ruD,ruD,ruD,ruM,_],
+  [_,ruM,ruD,ruD,ruD,ruD,_,_],
+  [_,_,ruM,ruD,ruD,ruM,_,_],
+  [_,_,_,ruM,ruM,_,_,_],
+]
+
+
+
+// Small right arrow icon — 5x5, for inline use in UI text
+const arW = '#F5F0E1'   // same as COLORS.uiText
+
+export const ARROW_SMALL: Sprite = [
+  [_,_,arW,_,_],
+  [_,_,_,arW,_],
+  [arW,arW,arW,arW,arW],
+  [_,_,_,arW,_],
+  [_,_,arW,_,_],
+]
+
 export const ALL_SPRITES: Record<string, Sprite> = {
   mill: MILL,
   well: WELL,
@@ -2132,6 +2559,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   general_store: GENERAL_STORE,
   abandoned_house: ABANDONED_HOUSE,
   house_roof: HOUSE_ROOF,
+  house_roof_open: HOUSE_ROOF_OPEN,
   long_house: LONG_HOUSE,
   land_office: LAND_OFFICE,
   nursery: NURSERY,
@@ -2186,7 +2614,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_rope: ITEM_ROPE,
   item_sugar_cane: ITEM_SUGAR_CANE,
   item_sugar: ITEM_SUGAR,
-  item_pastry: ITEM_PASTRY,
+  item_tart: ITEM_TART,
   cottonwood: COTTONWOOD,
   cottonwood_stump: COTTONWOOD_STUMP,
   cottonwood_dead: COTTONWOOD_DEAD,
@@ -2205,11 +2633,41 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_iron_post: ITEM_IRON_POST,
   item_wood: ITEM_WOOD,
   item_plank: ITEM_PLANK,
+  item_flagstone: ITEM_FLAGSTONE,
+  item_sandstone: ITEM_SANDSTONE,
   item_wheel: ITEM_WHEEL,
   item_crafting_cart: ITEM_CRAFTING_CART,
   item_fence_gate: ITEM_FENCE_GATE,
+  item_derringer: ITEM_DERRINGER,
+  item_colt: ITEM_COLT,
+  item_ammo: ITEM_AMMO,
+  keyhole: KEYHOLE,
+  item_silver_key: ITEM_SILVER_KEY,
+  silver_key_inserted: SILVER_KEY_INSERTED,
+  item_gold_key: ITEM_GOLD_KEY,
+  gold_key_inserted: GOLD_KEY_INSERTED,
+  arrow_small: ARROW_SMALL,
+  crosshair: CROSSHAIR,
+  crosshair_empty: CROSSHAIR_EMPTY,
+  bullets_5: BULLETS_5,
+  bullets_4: BULLETS_4,
+  bullets_3: BULLETS_3,
+  bullets_2: BULLETS_2,
+  bullets_1: BULLETS_1,
+  bullets_0: BULLETS_0,
+  item_gem_agate: ITEM_GEM_AGATE,
+  item_gem_turquoise: ITEM_GEM_TURQUOISE,
+  item_gem_chalcedony: ITEM_GEM_CHALCEDONY,
+  item_gem_topaz: ITEM_GEM_TOPAZ,
+  item_gem_amethyst: ITEM_GEM_AMETHYST,
+  item_gem_diamond: ITEM_GEM_DIAMOND,
+  item_gem_ruby: ITEM_GEM_RUBY,
   fence_gate_open: FENCE_GATE_OPEN,
   item_crate: ITEM_CRATE,
+  item_silver_lockbox: ITEM_SILVER_LOCKBOX,
+  item_gold_lockbox: ITEM_GOLD_LOCKBOX,
+  item_chest: ITEM_CHEST,
+  floor_wood: FLOOR_WOOD,
   item_pipe: ITEM_PIPE,
   pipe_chevron: PIPE_CHEVRON,
   select_frame: SELECT_FRAME,
@@ -2230,6 +2688,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   brush_speck: BRUSH_SPECK,
   tree_shadow: TREE_SHADOW,
   honse: HONSE,
+  honse_hurt: HONSE_HURT,
   honse_brown: HONSE_BROWN,
   honse_chestnut: HONSE_CHESTNUT,
   honse_sorrel: HONSE_SORREL,

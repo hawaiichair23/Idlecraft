@@ -1,4 +1,4 @@
-// TannerInterior.ts — buy menu for leather. Same layout as the Nursery.
+// GunsmithInterior.ts — buy menu for firearms. Same layout as the Tanner.
 
 import Phaser from 'phaser'
 import { COLORS, FONT } from '../colors'
@@ -8,19 +8,20 @@ import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
 import { attachSlotHover } from '../ui/hover'
 import { buildInteriorBackdrop, INTERIOR_PALETTES } from './InteriorBackdrop'
 
-export interface TannerInteriorHandle {
+export interface GunsmithInteriorHandle {
   onCleanup: () => void
 }
 
-interface TannerEntry {
+interface GunsmithEntry {
   type: ItemType
   buyPrice: number
 }
-const TANNER_ITEMS: TannerEntry[] = [
-  { type: 'leather', buyPrice: 35 },
+const GUNSMITH_ITEMS: GunsmithEntry[] = [
+  { type: 'derringer', buyPrice: 600 },
+  { type: 'colt', buyPrice: 1200 },
 ]
 
-export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {
+export function buildGunsmithInterior(scene: Phaser.Scene): GunsmithInteriorHandle {
   buildInteriorBackdrop(scene, INTERIOR_PALETTES.nursery)
 
   const w = scene.cameras.main.width
@@ -40,9 +41,9 @@ export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {
   const TITLE_BAND = 36
 
   const BULK_W = 48
-  const hasAnyBulk = TANNER_ITEMS.some(e => ITEMS[e.type].maxStack > 1)
+  const hasAnyBulk = GUNSMITH_ITEMS.some(e => ITEMS[e.type].maxStack > 1)
   const ROW_W = ICON_W + GAP + NAME_W + GAP + COST_W + (hasAnyBulk ? GAP + BULK_W : 0)
-  const rowStackH = TANNER_ITEMS.length * ROW_H + Math.max(0, TANNER_ITEMS.length - 1) * ROW_GAP
+  const rowStackH = GUNSMITH_ITEMS.length * ROW_H + Math.max(0, GUNSMITH_ITEMS.length - 1) * ROW_GAP
   const PANEL_W = ROW_W + PANEL_PAD_X * 2
   const PANEL_H = TITLE_BAND + rowStackH + PANEL_PAD_Y * 2
 
@@ -53,7 +54,7 @@ export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {
     .setTint(COLORS.interiorPanel)
 
   const topRowY = panelY - rowStackH / 2 + ROW_H / 2
-  scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Tanner', FONT.title)
+  scene.add.bitmapText(panelX, topRowY - ROW_H / 2 - 18, 'main', 'Gunsmith', FONT.title)
     .setOrigin(0.5, 0.5)
     .setTint(COLORS.uiText)
 
@@ -70,7 +71,7 @@ export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {
       .setTint(COLORS.uiText)
   }
 
-  const rowTexts: { entry: TannerEntry; texts: Phaser.GameObjects.BitmapText[]; bulkTexts: Phaser.GameObjects.BitmapText[] }[] = []
+  const rowTexts: { entry: GunsmithEntry; texts: Phaser.GameObjects.BitmapText[]; bulkTexts: Phaser.GameObjects.BitmapText[] }[] = []
 
   const refreshAffordability = () => {
     const gold = (scene.registry.get('gold') as number | undefined) ?? 0
@@ -84,7 +85,7 @@ export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {
     }
   }
 
-  TANNER_ITEMS.forEach((entry, i) => {
+  GUNSMITH_ITEMS.forEach((entry, i) => {
     const def = ITEMS[entry.type]
     const rowY = topRowY + i * (ROW_H + ROW_GAP)
 
@@ -113,7 +114,7 @@ export function buildTannerInterior(scene: Phaser.Scene): TannerInteriorHandle {
     rowTexts.push({ entry, texts: [label, desc, cost], bulkTexts: [] })
 
     const onClick = (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
-      if (!p.leftButtonDown()) return        // buy on left-click only
+      if (!p.leftButtonDown()) return
       ev.stopPropagation()
       const gold = (scene.registry.get('gold') as number | undefined) ?? 0
       if (gold < entry.buyPrice) return

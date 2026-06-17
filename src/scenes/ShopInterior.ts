@@ -18,18 +18,17 @@ export interface ShopInteriorHandle {
 interface ShopEntry {
   type: ItemType
   buyPrice: number
-  description: string
   gatedBy?: () => boolean
 }
 const SHOP_ITEMS: ShopEntry[] = [
-  { type: 'shovel', buyPrice: 100, description: 'For digging and burying.' },
-  { type: 'axe',    buyPrice: 500, description: 'For felling trees into wood.' },
-{ type: 'pickaxe', buyPrice: 800, description: 'For breaking, prying, and digging.' },
-  { type: 'rope',   buyPrice: 75,  description: 'A grouping of twine.', gatedBy: () => state.hasCraftedRope },
-  { type: 'post',   buyPrice: 50,  description: 'For tying leads and building fences.', gatedBy: () => state.hasCraftedPost },
-  { type: 'bag',    buyPrice: 280, description: 'Extra storage.', gatedBy: () => state.hasCraftedBag },
-  { type: 'pipe',   buyPrice: 35,  description: 'Connects two plots for manufacturing.', gatedBy: () => state.hasPipeUnlock },
-  { type: 'fence_gate', buyPrice: 60, description: 'To open and close a fence line.', gatedBy: () => state.hasCraftedPost },
+  { type: 'shovel', buyPrice: 100 },
+  { type: 'axe',    buyPrice: 500 },
+  { type: 'pickaxe', buyPrice: 800 },
+  { type: 'rope',   buyPrice: 75,  gatedBy: () => state.hasCraftedRope },
+  { type: 'post',   buyPrice: 50,  gatedBy: () => state.hasCraftedPost },
+  { type: 'bag',    buyPrice: 280, gatedBy: () => state.hasCraftedBag },
+  { type: 'pipe',   buyPrice: 35,  gatedBy: () => state.hasPipeUnlock },
+  { type: 'fence_gate', buyPrice: 60, gatedBy: () => state.hasCraftedPost },
 ]
 
 export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number): ShopInteriorHandle {
@@ -122,7 +121,7 @@ export function buildShopInterior(scene: Phaser.Scene, _structureIndex: number):
     const label = scene.add.bitmapText(labelX, rowY - 8, 'main', def.name, FONT.name)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
-    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', entry.description, FONT.desc)
+    const desc = scene.add.bitmapText(labelX, rowY + 10, 'mainSmall', def.desc ?? '', FONT.desc)
       .setOrigin(0, 0.5)
       .setTint(COLORS.uiText)
 

@@ -26,7 +26,9 @@ export const RECIPES: Recipe[] = [
   { inputs: [{ type: 'canvas', count: 1 }, { type: 'canvas', count: 1 }, { type: 'twine', count: 1 }, { type: 'twine', count: 1 }], output: 'bag' },
   { inputs: [{ type: 'leather', count: 1 }, { type: 'twine', count: 1 }], output: 'quirt' },
   { inputs: [{ type: 'sugar_cane', count: 1 }, { type: 'sugar_cane', count: 1 }], output: 'sugar', outputCount: 2 },
-  { inputs: [{ type: 'sugar', count: 1 }, { type: 'bread', count: 1 }], output: 'pastry' },
+  // Two crates combine into one chest (double-width container, 24 slots).
+  { inputs: [{ type: 'crate', count: 1 }, { type: 'crate', count: 1 }], output: 'chest' },
+  { inputs: [{ type: 'sugar', count: 1 }, { type: 'bread', count: 1 }], output: 'tart' },
   { inputs: [{ type: 'hemp', count: 1 }, { type: 'hemp', count: 1 }], output: 'twine', outputCount: 2 },
   { inputs: [{ type: 'twine', count: 1 }, { type: 'twine', count: 1 }], output: 'rope' },
   { inputs: [{ type: 'wood', count: 1 }, { type: 'wood', count: 1 }], output: 'post' },
@@ -62,6 +64,20 @@ export const RECIPES: Recipe[] = [
     inputs: [{ type: 'plank', count: 4 }],
     pattern: ['plank', 'plank', 'plank', 'plank'],
     output: 'crate',
+  },
+  // Level 2 (2x2 shaped): stone in all four slots -> 4 flagstones.
+  {
+    inputs: [{ type: 'stone', count: 4 }],
+    pattern: ['stone', 'stone', 'stone', 'stone'],
+    output: 'flagstone',
+    outputCount: 4,
+  },
+  // Level 2 (2x2 shaped): clay in all four slots -> 4 sandstones.
+  {
+    inputs: [{ type: 'clay', count: 4 }],
+    pattern: ['clay', 'clay', 'clay', 'clay'],
+    output: 'sandstone',
+    outputCount: 4,
   },
 ]
 

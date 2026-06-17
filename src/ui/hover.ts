@@ -6,6 +6,16 @@ import { ITEMS, type ItemStack } from '../items/types'
 // when the pointer is hovering one of these.
 export const grabbableSlots = new Set<Phaser.GameObjects.GameObject>()
 
+// Explicit grab-cursor flag for objects that drive their own hover via
+// pointerover/pointerout (e.g. the interior crate), bypassing the cross-scene
+// hit-test. CursorController treats this as equivalent to hovering a slot.
+export const grabHover = { active: false }
+
+// Reject-cursor flag: set while the pointer hovers a sell slot that won't
+// accept the currently-held item (e.g. an ore over the general store). The
+// CursorController shows the red X cursor when this is active.
+export const rejectHover = { active: false }
+
 // Register any interactive game object (slot frame, button, link, etc.) as
 // a grab-cursor trigger. Auto-unregisters when the object is destroyed.
 export function registerGrabbable(obj: Phaser.GameObjects.GameObject) {
@@ -27,13 +37,16 @@ export function attachSlotHover(
   width: number = 48,
   height: number = 48,
 ) {
-  const overlay = scene.add.rectangle(x, y, width, height, HOVER_COLOR, HOVER_ALPHA)
+  const radius = 6
+  const gfx = scene.add.graphics()
+    .fillStyle(HOVER_COLOR, HOVER_ALPHA)
+    .fillRoundedRect(x - width / 2, y - height / 2, width, height + 0.5, radius)
     .setDepth(HOVER_DEPTH)
     .setVisible(false)
-  slotFrame.on('pointerover', () => overlay.setVisible(true))
-  slotFrame.on('pointerout', () => overlay.setVisible(false))
+  slotFrame.on('pointerover', () => gfx.setVisible(true))
+  slotFrame.on('pointerout', () => gfx.setVisible(false))
   registerGrabbable(slotFrame)
-  return overlay
+  return gfx
 }
 
 // Attach a hover tooltip showing the slot's current item name. Reads the
@@ -76,10 +89,6 @@ export function attachSlotTooltip(
     bg.setVisible(false)
   })
 
-  // When the slot frame is destroyed (panel close), tear down its tooltip too.
-  // Otherwise a tooltip left visible — e.g. E-closing the crate mid-hover, where
-  // no pointerout fires — is orphaned on screen. Ties the tooltip's lifetime to
-  // the slot, so any panel that destroys its slots is cleaned up automatically.
   slotFrame.once('destroy', () => {
     text.destroy()
     bg.destroy()

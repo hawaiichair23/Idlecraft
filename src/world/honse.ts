@@ -1,5 +1,5 @@
 
-export type HonseMode = 'idle'
+export type HonseMode = 'idle' | 'flee'
 
 export interface Honse {
   x: number         
@@ -20,7 +20,17 @@ export interface Honse {
   sprite: string     // texture key for this honse
   tinted: boolean    // whether `tint` is applied to the sprite (false for special coats)
   spacing: number    // personal-space radius for herd separation, rolled at spawn
+  health: number       // remaining hit points; becomes a carcass at <= 0
+  hurtUntil: number    // gameTime ms until which the hit (red) flash shows
+  knockbackUntil: number
+  dying: boolean
+  fleeDirX: number
+  fleeDirY: number
+  fleeSpeed: number
+  spookCooldownUntil: number
 }
+
+export const HONSE_MAX_HEALTH = 30
 
 // Natural coat colors with spawn weights. Tint is independent of speed — you
 // can't judge a honse by its color. Higher weight = more common; grey/white is
@@ -87,6 +97,14 @@ export function createHonse(x: number, y: number): Honse {
     sprite,
     tinted,
     spacing: 32 + Math.random() * 38,   // personal space: 32..70px
+    health: HONSE_MAX_HEALTH,
+    hurtUntil: 0,
+    knockbackUntil: 0,
+    dying: false,
+    fleeDirX: 0,
+    fleeDirY: 0,
+    fleeSpeed: 0,
+    spookCooldownUntil: 0,
   }
 }
 
@@ -96,6 +114,48 @@ const WALK_SPEED = 75
 const AVOID_RADIUS = 360
 const AVOID_SPEED_MIN = 140
 const AVOID_SPEED_MAX = 480
+
+const SPOOK_BOOST = 220
+const SPOOK_MIN_SPEED = 420
+const SPOOK_RADIUS = 460
+const SPOOK_FLEE_MIN_MS = 1500
+const SPOOK_FLEE_MAX_MS = 2400
+const SPOOK_EASE_MS = 1100
+const SPOOK_COOLDOWN_MS = 2500
+
+export function spookHonse(h: Honse, fromX: number, fromY: number, gameTime: number, force = false) {
+  if (h.dying) return
+  if (!force && gameTime < h.spookCooldownUntil) return
+  if (!force && h.mode === 'flee' && gameTime < h.modeUntil) return
+  let dx = h.x - fromX
+  let dy = h.y - fromY
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1
+  h.fleeDirX = dx / dist
+  h.fleeDirY = dy / dist
+  const curSpeed = Math.sqrt(h.vx * h.vx + h.vy * h.vy)
+  h.fleeSpeed = Math.max(SPOOK_MIN_SPEED, curSpeed + SPOOK_BOOST)
+  h.mode = 'flee'
+  const fleeMs = SPOOK_FLEE_MIN_MS + Math.random() * (SPOOK_FLEE_MAX_MS - SPOOK_FLEE_MIN_MS)
+  h.modeUntil = gameTime + fleeMs
+  h.spookCooldownUntil = gameTime + fleeMs + SPOOK_COOLDOWN_MS
+}
+
+export function spookHonsesFromShot(
+  honses: Honse[],
+  sx: number,
+  sy: number,
+  gameTime: number,
+  mountedIndex: number | null = null,
+) {
+  for (let i = 0; i < honses.length; i++) {
+    if (i === mountedIndex) continue
+    const h = honses[i]
+    const dx = h.x - sx
+    const dy = h.y - sy
+    if (dx * dx + dy * dy > SPOOK_RADIUS * SPOOK_RADIUS) continue
+    spookHonse(h, sx, sy, gameTime)
+  }
+}
 
 const IDLE_PAUSE_MIN_MS = 3000
 const IDLE_PAUSE_MAX_MS = 6000
@@ -144,6 +204,7 @@ export function getHonseBodyAABB(h: Honse): { x: number; y: number; w: number; h
 
 // Roll a fresh idle sub-behavior 
 function pickIdleBehavior(h: Honse, now: number) {
+  h.mode = 'idle'
   if (Math.random() < IDLE_WALK_CHANCE) {
     const dx = h.homeX - h.x
     const dy = h.homeY - h.y
@@ -314,6 +375,11 @@ export function updateHonses(
     if (i === mountedIndex) continue
     const h = honses[i]
 
+    // Dying or mid-knockback: the Matter body in the scene owns the honse's
+    // motion (it carries the knockback impulse and collides). Skip AI entirely
+    // so we don't fight the impulse; position is driven from the body in update().
+    if (h.dying || now < h.knockbackUntil) continue
+
     // Wild-avoidance: untamed honses keep their distance from the player.
     const tether = getTether(i)
     let avoiding = false
@@ -330,6 +396,32 @@ export function updateHonses(
         h.vy = (ay / dist) * speed
         avoiding = true
       }
+    }
+
+    if (h.mode === 'flee' && now < h.modeUntil) {
+      const remaining = h.modeUntil - now
+      const ease = remaining < SPOOK_EASE_MS ? remaining / SPOOK_EASE_MS : 1
+      const speed = h.fleeSpeed * h.speedMul * ease
+      const vx = h.fleeDirX * speed
+      const vy = h.fleeDirY * speed
+      if (now >= h.facingLockedUntil) {
+        const newFacing = vx > 0.001 ? true : vx < -0.001 ? false : h.facingRight
+        if (newFacing !== h.facingRight) {
+          h.facingRight = newFacing
+          h.facingLockedUntil = now + FACING_LOCK_MS
+        }
+      }
+      if (vx !== 0) {
+        const nextX = h.x + vx * step
+        if (!collidesAt(nextX, h.y, i)) h.x = nextX
+      }
+      if (vy !== 0) {
+        const nextY = h.y + vy * step
+        if (!collidesAt(h.x, nextY, i)) h.y = nextY
+      }
+      h.vx = vx
+      h.vy = vy
+      continue
     }
 
     // mode tick: if the current sub-behavior has expired, pick a new one.

@@ -15,6 +15,12 @@ export interface BuriedItem {
   reward: number
 }
 
+export interface BuriedGem {
+  x: number
+  y: number
+  type: string
+}
+
 export interface RockFormation {
   x: number
   y: number
@@ -23,6 +29,7 @@ export interface RockFormation {
 export interface WorldLayout {
   decor: DecorItem[]
   buried: BuriedItem[]
+  buriedGems: BuriedGem[]
   rocks: RockFormation[]
 }
 
@@ -60,7 +67,7 @@ const PEBBLE_DENSITY = 0.0000094
 const PEBBLE_SPACING = 12
 const GRASS_DENSITY = 0.0000094     
 const GRASS_SPACING = 16
-const BURIED_COIN_DENSITY = 0.00007125 
+const BURIED_COIN_DENSITY = 0.0000655  
 
 const SCATTER_TUNING: Record<DecorType, { density: number; spacing: number }> = {
   cow_skull: { density: SKULL_DENSITY, spacing: SKULL_SPACING },
@@ -87,6 +94,28 @@ function pickReward(rng: () => number): number {
     if (r <= 0) return e.amount
   }
   return COIN_REWARD_TABLE[0].amount
+}
+
+// Buried gem frequency, independent of coins. Weighted common→rare.
+const BURIED_GEM_DENSITY = 0.00002375
+const GEM_RARITY_TABLE: { type: string; weight: number }[] = [
+  { type: 'gem_agate',      weight: 30 },
+  { type: 'gem_chalcedony', weight: 24 },
+  { type: 'gem_turquoise',  weight: 18 },
+  { type: 'gem_topaz',      weight: 13 },
+  { type: 'gem_amethyst',   weight: 9 },
+  { type: 'gem_ruby',       weight: 4 },
+  { type: 'gem_diamond',    weight: 2 },
+]
+
+function pickGem(rng: () => number): string {
+  const total = GEM_RARITY_TABLE.reduce((s, e) => s + e.weight, 0)
+  let r = rng() * total
+  for (const e of GEM_RARITY_TABLE) {
+    r -= e.weight
+    if (r <= 0) return e.type
+  }
+  return GEM_RARITY_TABLE[0].type
 }
 
 const BURIED_MIN_SPACING = 32
@@ -121,6 +150,47 @@ function scatterBuried(
     }
     if (blocked) continue
     out.push({ x: Math.floor(x), y: Math.floor(y), reward: pickReward(rng) })
+    placed++
+  }
+}
+
+function scatterBuriedGems(
+  out: BuriedGem[],
+  rng: () => number,
+  opts: GenOpts,
+  count: number,
+  exclusions: { x: number; y: number; radius: number }[],
+  avoid: BuriedItem[],
+) {
+  const maxAttempts = count * 30
+  const minSq = BURIED_MIN_SPACING * BURIED_MIN_SPACING
+  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
+  let attempts = 0
+  let placed = 0
+  while (placed < count && attempts < maxAttempts) {
+    attempts++
+    const x = margin + rng() * (opts.worldSize - margin * 2)
+    const y = margin + rng() * (opts.worldSize - margin * 2)
+    let blocked = false
+    for (const ex of exclusions) {
+      const dx = x - ex.x
+      const dy = y - ex.y
+      if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const b of avoid) {
+      const dx = x - b.x
+      const dy = y - b.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const g of out) {
+      const dx = x - g.x
+      const dy = y - g.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    out.push({ x: Math.floor(x), y: Math.floor(y), type: pickGem(rng) })
     placed++
   }
 }
@@ -279,6 +349,7 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   const rng = makeRng(opts.seed)
   const decor: DecorItem[] = []
   const buried: BuriedItem[] = []
+  const buriedGems: BuriedGem[] = []
   const rocks: RockFormation[] = []
 
   const worldArea = opts.worldSize * opts.worldSize
@@ -286,6 +357,7 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   const pebbleCount = Math.floor(PEBBLE_DENSITY * worldArea)
   const grassCount = Math.floor(GRASS_DENSITY * worldArea)
   const coinCount = Math.floor(BURIED_COIN_DENSITY * worldArea)
+  const gemCount = Math.floor(BURIED_GEM_DENSITY * worldArea)
 
   const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
   const fullArea: GenRect = { x: margin, y: margin, w: opts.worldSize - margin * 2, h: opts.worldSize - margin * 2 }
@@ -295,9 +367,10 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   scatter(decor, rng, fullArea, 'grass', grassCount, opts.tightExclusions, GRASS_SPACING)
   buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey, PATH_SNAKE_AMPLITUDE)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
+  scatterBuriedGems(buriedGems, rng, opts, gemCount, opts.exclusions, buried)
   scatterRockCluster(rocks, rng, opts, opts.exclusions)
 
-  return { decor, buried, rocks }
+  return { decor, buried, buriedGems, rocks }
 }
 
 // Scatter decor into a sub-rectangle of the world at the SAME per-area densities
@@ -318,6 +391,83 @@ export function generateRegionDecor(
     scatter(decor, rng, region, type, count, exclusions, tuning.spacing)
   }
   return decor
+}
+
+// Scatter buried coins and gems into an arbitrary region rect (world-pixel
+// coords, may be negative). Used to fill grown world strips at the same
+// densities as the original world, so treasure exists everywhere — not just
+// the original spawn box.
+export function generateRegionBuried(
+  region: GenRect,
+  seed: number,
+  exclusions: { x: number; y: number; radius: number }[] = [],
+): { buried: BuriedItem[]; buriedGems: BuriedGem[] } {
+  const rng = makeRng(seed)
+  const buried: BuriedItem[] = []
+  const buriedGems: BuriedGem[] = []
+  const area = region.w * region.h
+  const coinCount = Math.floor(BURIED_COIN_DENSITY * area)
+  const gemCount = Math.floor(BURIED_GEM_DENSITY * area)
+  const minSq = BURIED_MIN_SPACING * BURIED_MIN_SPACING
+
+  // Spatial hash so spacing checks stay O(1) per placement instead of O(n).
+  // Cell size = spacing, so a point only conflicts with items in its own and
+  // the 8 neighbouring cells.
+  const cell = BURIED_MIN_SPACING
+  const cols = Math.max(1, Math.ceil(region.w / cell))
+  const grid = new Map<number, { x: number; y: number }[]>()
+  const keyOf = (cx: number, cy: number) => cy * cols + cx
+
+  const conflicts = (x: number, y: number): boolean => {
+    const cx = Math.floor((x - region.x) / cell)
+    const cy = Math.floor((y - region.y) / cell)
+    for (let gx = cx - 1; gx <= cx + 1; gx++) {
+      for (let gy = cy - 1; gy <= cy + 1; gy++) {
+        const bucket = grid.get(keyOf(gx, gy))
+        if (!bucket) continue
+        for (const o of bucket) {
+          const dx = x - o.x, dy = y - o.y
+          if (dx * dx + dy * dy < minSq) return true
+        }
+      }
+    }
+    return false
+  }
+  const addToGrid = (x: number, y: number) => {
+    const cx = Math.floor((x - region.x) / cell)
+    const cy = Math.floor((y - region.y) / cell)
+    const k = keyOf(cx, cy)
+    let bucket = grid.get(k)
+    if (!bucket) { bucket = []; grid.set(k, bucket) }
+    bucket.push({ x, y })
+  }
+
+  const place = (maxItems: number, isGem: boolean) => {
+    let attempts = 0
+    let placed = 0
+    const maxAttempts = maxItems * 30
+    while (placed < maxItems && attempts < maxAttempts) {
+      attempts++
+      const x = region.x + rng() * region.w
+      const y = region.y + rng() * region.h
+      let blocked = false
+      for (const ex of exclusions) {
+        const dx = x - ex.x, dy = y - ex.y
+        if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
+      }
+      if (blocked) continue
+      if (conflicts(x, y)) continue
+      const fx = Math.floor(x), fy = Math.floor(y)
+      if (isGem) buriedGems.push({ x: fx, y: fy, type: pickGem(rng) })
+      else buried.push({ x: fx, y: fy, reward: pickReward(rng) })
+      addToGrid(x, y)
+      placed++
+    }
+  }
+
+  place(coinCount, false)
+  place(gemCount, true)
+  return { buried, buriedGems }
 }
 
 // Build a pebble trail through a sequence of waypoints. Runs the existing

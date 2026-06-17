@@ -3,6 +3,7 @@ import { COLORS, FONT } from '../colors'
 import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, getStorageSlotCount, STORAGE_COLS, WORLD_WELL_CAP, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack, type ItemType } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
+import { rollAbandonedHouseChest } from '../items/lootTables'
 import { type WorldStructureType } from '../world/structures'
 import { UI_BAR_HEIGHT, UI_INVENTORY_BAR_HEIGHT } from './UI'
 import type { UI } from './UI'
@@ -19,6 +20,7 @@ import { buildLandOfficeInterior } from './LandOfficeInterior'
 import { buildChurchInterior } from './ChurchInterior'
 import { buildNurseryInterior } from './NurseryInterior'
 import { buildTannerInterior } from './TannerInterior'
+import { buildGunsmithInterior } from './GunsmithInterior'
 import { INTERIOR_PALETTES } from './InteriorBackdrop'
 
 export type InteriorData =
@@ -332,6 +334,14 @@ export class Interior extends Phaser.Scene {
         ...INTERIOR_PALETTES.abandonedHouse,
         wallHeightFraction: 0.45,
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
+        // TODO: lower crateSpawnChance to its real low-empty value once tested.
+        crateSeed: state.worldSeed + this.interiorData.structureIndex,
+        crateSpawnChance: 0.9,
+        // Seeded loot-table roll for the chest contents. Offset the seed from the
+        // spawn-chance seed so "does a chest exist" and "what's inside" are
+        // independent rolls, still deterministic per house + world.
+        crateContents: rollAbandonedHouseChest(state.worldSeed + this.interiorData.structureIndex * 31 + 7),
+        cratePos: { x: 0.5, y: 0.3 },
       }, () => this.exit())
       this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
       this.moduleCleanups.push(handle.onCleanup)
@@ -343,6 +353,10 @@ export class Interior extends Phaser.Scene {
         wallHeightFraction: 0.45,
         openSide: this.interiorData.flipX ? 'left' : 'right',
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
+        crateSeed: state.worldSeed + this.interiorData.structureIndex,
+        crateSpawnChance: 0.9,
+        crateContents: rollAbandonedHouseChest(state.worldSeed + this.interiorData.structureIndex * 31 + 7),
+        cratePos: { x: 0.5, y: 0.3 },
       }, () => this.exit())
       this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
       this.moduleCleanups.push(handle.onCleanup)
@@ -358,9 +372,26 @@ export class Interior extends Phaser.Scene {
     } else if (this.interiorData.buildingType === 'tanner') {
       const handle = buildTannerInterior(this)
       this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'gunsmith') {
+      const handle = buildGunsmithInterior(this)
+      this.moduleCleanups.push(handle.onCleanup)
     }
 
     this.events.on('shutdown', () => this.cleanup())
+
+    // Non-gated interiors (shops, church, etc.) build their panel right here in
+    // create(), so the inventory can dock immediately. Gated plot/well interiors
+    // build later in update() after the 150ms walk-in beat and emit it there
+    // instead. Walkable rooms (abandoned/long house) have no menu — skip them.
+    const gated =
+      (this.interiorData.source === 'plot' && this.interiorData.buildingType !== 'field') ||
+      this.interiorData.source === 'worldWell'
+    const isField = this.interiorData.source === 'plot' && this.interiorData.buildingType === 'field'
+    // Land office runs its own panel and shouldn't dock the player inventory.
+    const noInventory = this.interiorData.source === 'world' && this.interiorData.buildingType === 'land_office'
+    if (!gated && !isWalkable && !isField && !noInventory) {
+      this.registry.events.emit('interior-panel-ready')
+    }
   }
 
   private buildPlotPanel(
@@ -375,7 +406,7 @@ export class Interior extends Phaser.Scene {
 
     // ---- panel dimensions ----
     const TAB_BAR_H = 36
-    const TITLE_H = 44
+    const TITLE_H = 54
     // Storage needs a taller content area to fit its slot grid.
     let CONTENT_H = 160
     if (buildingType === 'storage') {
@@ -414,6 +445,7 @@ export class Interior extends Phaser.Scene {
     const tabW = (PANEL_W - PANEL_PAD * 2) / tabNames.length
     const tabLabels: Phaser.GameObjects.BitmapText[] = []
     const tabUnderlines: Phaser.GameObjects.Rectangle[] = []
+    const tabHitZones: Phaser.GameObjects.Rectangle[] = []
     const tabContainers: Phaser.GameObjects.Container[] = []
 
     // content area center
@@ -423,9 +455,14 @@ export class Interior extends Phaser.Scene {
     const tabStartX = panelX - PANEL_W / 2 + PANEL_PAD + tabW / 2
     for (let i = 0; i < tabNames.length; i++) {
       const tx = tabStartX + i * tabW
+      // Invisible hit zone covering the full tab area so clicks anywhere in the
+      // tab region work, not just on the text glyphs.
+      const hitZone = this.add.rectangle(tx, tabY, tabW, TAB_BAR_H, 0x000000, 0)
+        .setInteractive()
+      registerGrabbable(hitZone)
+      tabHitZones.push(hitZone)
       const label = this.add.bitmapText(tx, tabY, 'mainSmall', tabNames[i], FONT.desc)
-        .setOrigin(0.5, 0.5).setTint(COLORS.uiText).setInteractive()
-      registerGrabbable(label)
+        .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
       tabLabels.push(label)
       const underline = this.add.rectangle(tx, tabY + 12, tabW - 8, 2, COLORS.uiGold)
         .setVisible(false)
@@ -522,58 +559,84 @@ export class Interior extends Phaser.Scene {
       const levelNextText = this.add.bitmapText(panelX, startY, 'mainSmall', '', FONT.name)
         .setOrigin(0.5, 0.5).setTint(COLORS.upgradeGreen)
 
-      const speedStatText = this.add.bitmapText(panelX, startY + lineH, 'mainSmall', '', FONT.desc)
+      const speedStatText = this.add.bitmapText(panelX, startY + lineH + 5, 'mainSmall', '', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-      const speedNextText = this.add.bitmapText(panelX, startY + lineH, 'mainSmall', '', FONT.desc)
+      const speedNextText = this.add.bitmapText(panelX, startY + lineH + 5, 'mainSmall', '', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.upgradeGreen)
 
-      const storageStatText = this.add.bitmapText(panelX, startY + lineH * 2, 'mainSmall', '', FONT.desc)
+      const storageStatText = this.add.bitmapText(panelX, startY + lineH * 2 + 5, 'mainSmall', '', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-      const storageNextText = this.add.bitmapText(panelX, startY + lineH * 2, 'mainSmall', '', FONT.desc)
+      const storageNextText = this.add.bitmapText(panelX, startY + lineH * 2 + 5, 'mainSmall', '', FONT.desc)
         .setOrigin(0.5, 0.5).setTint(COLORS.upgradeGreen)
 
-      const btnY = startY + lineH * 3 + 12
-      const coinSprite = this.add.sprite(panelX - 80, btnY, 'gold_coin').setScale(2)
-      const costText = this.add.bitmapText(panelX - 64, btnY, 'mainSmall', '', FONT.desc)
-        .setOrigin(0, 0.5).setTint(COLORS.uiGold)
-      const btn = this.add.rectangle(panelX + 60, btnY, 140, 36, COLORS.uiBarBg).setInteractive()
+      const btnY = startY + lineH * 3 + 32
+      const btn = this.add.rectangle(panelX, btnY, 200, 36, COLORS.uiBarBg).setInteractive().setDepth(0)
       registerGrabbable(btn)
-      const btnLabel = this.add.bitmapText(panelX + 60, btnY, 'mainSmall', 'UPGRADE', FONT.name)
-        .setOrigin(0.5, 0.5).setTint(COLORS.uiGold)
+      const btnLabel = this.add.bitmapText(panelX, btnY, 'mainSmall', 'UPGRADE', FONT.name)
+        .setOrigin(0.5, 0.5).setTint(COLORS.uiGold).setDepth(1)
+      const costText = this.add.bitmapText(panelX, btnY, 'mainSmall', '', FONT.name)
+        .setOrigin(0, 0.5).setTint(COLORS.uiGold).setDepth(1)
+      const coinSprite = this.add.sprite(panelX, btnY - 3, 'gold_coin').setScale(2).setDepth(1)
+
+      const levelArrow = this.add.sprite(panelX, startY, 'arrow_small').setScale(2).setTint(COLORS.upgradeGreen)
+      const speedArrow = this.add.sprite(panelX, startY + lineH + 5, 'arrow_small').setScale(2).setTint(COLORS.upgradeGreen)
+      const storageArrow = this.add.sprite(panelX, startY + lineH * 2 + 5, 'arrow_small').setScale(2).setTint(COLORS.upgradeGreen)
 
       upgradesContainer.add([
-        levelText, levelNextText, speedStatText, speedNextText,
-        storageStatText, storageNextText, coinSprite, costText, btn, btnLabel,
+        levelText, levelArrow, levelNextText, speedStatText, speedArrow, speedNextText,
+        storageStatText, storageArrow, storageNextText, btn, btnLabel, costText, coinSprite,
       ])
 
       const refreshUpgradeText = () => {
         const lvl = plot.level
         const next = lvl + 1
 
-        levelText.setText(`Level ${lvl}  ->  `)
-        levelNextText.setText(`${next}`)
-        const totalW = levelText.width + levelNextText.width
-        const sx = panelX - totalW / 2
+        levelText.setText(`Level ${lvl}  `)
+        levelNextText.setText(`  ${next}`)
+        const levelTotalW = levelText.width + 10 + levelNextText.width
+        const sx = panelX - levelTotalW / 2
         levelText.setOrigin(0, 0.5).setX(sx)
-        levelNextText.setOrigin(0, 0.5).setX(sx + levelText.width)
+        levelArrow.setX(sx + levelText.width + 5)
+        levelNextText.setOrigin(0, 0.5).setX(sx + levelText.width + 10)
 
         const baseTickMs = def.itemTickMs ?? def.tickMs
         const curSpeed = (getEffectiveTickMs(baseTickMs, lvl) / 1000).toFixed(1)
         const nextSpeed = (getEffectiveTickMs(baseTickMs, next) / 1000).toFixed(1)
-        speedStatText.setText(`Speed: ${curSpeed}s  ->  `).setOrigin(0, 0.5).setX(leftX)
-        speedNextText.setText(`${nextSpeed}s`).setOrigin(0, 0.5).setX(leftX + speedStatText.width)
+        speedStatText.setText(`Speed: ${curSpeed}s  `)
+        speedNextText.setText(`  ${nextSpeed}s`)
+        const speedTotalW = speedStatText.width + 10 + speedNextText.width
+        const speedSx = panelX - speedTotalW / 2
+        speedStatText.setOrigin(0, 0.5).setX(speedSx)
+        speedArrow.setX(speedSx + speedStatText.width + 5)
+        speedNextText.setOrigin(0, 0.5).setX(speedSx + speedStatText.width + 10)
 
         const curCap = getStorageCap(lvl)
         const nextCap = getStorageCap(next)
         if (buildingType === 'workshop') {
-          storageStatText.setText('Unlocks 2x2 crafting').setOrigin(0, 0.5).setX(leftX)
+          storageStatText.setText('Unlocks 2x2 crafting').setOrigin(0.5, 0.5).setX(panelX)
           storageNextText.setText('')
+          storageArrow.setVisible(false)
         } else {
-          storageStatText.setText(`Storage: ${curCap}  ->  `).setOrigin(0, 0.5).setX(leftX)
-          storageNextText.setText(`${nextCap}`).setOrigin(0, 0.5).setX(leftX + storageStatText.width)
+          storageArrow.setVisible(true)
+          storageStatText.setOrigin(0, 0.5).setText(`Storage: ${curCap}  `)
+          storageNextText.setOrigin(0, 0.5).setText(`  ${nextCap}`)
+          const storageTotalW = storageStatText.width + 10 + storageNextText.width
+          const storageSx = panelX - storageTotalW / 2
+          storageStatText.setX(storageSx)
+          storageArrow.setX(storageSx + storageStatText.width + 5)
+          storageNextText.setX(storageSx + storageStatText.width + 10)
         }
 
-        costText.setText(`${getUpgradeCost(lvl)}g`)
+        const cost = getUpgradeCost(lvl)
+        costText.setText(`${cost}`)
+        // Layout: UPGRADE <gap> cost coin — all centered in the button
+        const gap = 8
+        const coinW = 16  // gold_coin at scale 2
+        const totalW = btnLabel.width + gap + costText.width + 4 + coinW
+        const startX = panelX - totalW / 2
+        btnLabel.setOrigin(0, 0.5).setX(startX)
+        costText.setX(startX + btnLabel.width + gap)
+        coinSprite.setX(startX + btnLabel.width + gap + costText.width + 4 + coinW / 2)
       }
 
       refreshUpgradeText()
@@ -604,18 +667,18 @@ export class Interior extends Phaser.Scene {
       const leftX = panelX - PANEL_W / 2 + PANEL_PAD + 12
 
       // building art
-      const artSprite = this.add.sprite(panelX, startY + 10, buildingType).setScale(4)
+      const artSprite = this.add.sprite(panelX, startY + 22, buildingType).setScale(4)
       infoContainer.add(artSprite)
 
-      const descY = startY + 46
-      const descText = this.add.bitmapText(leftX, descY, 'mainSmall', def.description, FONT.desc)
-        .setOrigin(0, 0.5).setTint(COLORS.uiText).setMaxWidth(PANEL_W - PANEL_PAD * 2 - 24)
+      const descY = startY + 76
+      const descText = this.add.bitmapText(panelX, descY, 'mainSmall', def.description, FONT.desc)
+        .setOrigin(0.5, 0.5).setTint(COLORS.uiText).setMaxWidth(PANEL_W - PANEL_PAD * 2 - 24)
       infoContainer.add(descText)
 
       if (def.itemTickMs) {
-        const cycleText = this.add.bitmapText(leftX, descY + lineH, 'mainSmall',
+        const cycleText = this.add.bitmapText(panelX, descY + lineH, 'mainSmall',
           `Cycle Time: ${(getEffectiveTickMs(def.itemTickMs, plot.level) / 1000).toFixed(1)}s`, FONT.desc)
-          .setOrigin(0, 0.5).setTint(COLORS.uiText)
+          .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
         infoContainer.add(cycleText)
         this.moduleUpdates.push(() => {
           const ms = getEffectiveTickMs(def.itemTickMs!, plot.level)
@@ -625,9 +688,9 @@ export class Interior extends Phaser.Scene {
 
       const storageCount = () => plot.output?.count ?? 0
       const storageCap = () => getStorageCap(plot.level)
-      const storageText = this.add.bitmapText(leftX, descY + lineH * 2, 'mainSmall',
+      const storageText = this.add.bitmapText(panelX, descY + lineH * 2, 'mainSmall',
         `Storage: ${storageCount()}/${storageCap()}`, FONT.desc)
-        .setOrigin(0, 0.5).setTint(COLORS.uiText)
+        .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
       infoContainer.add(storageText)
       this.moduleUpdates.push(() => {
         storageText.setText(`Storage: ${storageCount()}/${storageCap()}`)
@@ -643,7 +706,7 @@ export class Interior extends Phaser.Scene {
       }
     }
     for (let i = 0; i < tabNames.length; i++) {
-      tabLabels[i].on('pointerdown', () => setActiveTab(i))
+      tabHitZones[i].on('pointerdown', () => setActiveTab(i))
     }
     setActiveTab(0)
   }
@@ -825,6 +888,9 @@ export class Interior extends Phaser.Scene {
           () => this.craftAllToInventory(),
         )
       }
+      // Panel is on screen now (after the 150ms walk-in beat). Dock the inventory
+      // in sync with it.
+      this.registry.events.emit('interior-panel-ready')
     }
     this.redrawAllCraftSlots()
     for (const fn of this.moduleUpdates) fn()
@@ -833,9 +899,9 @@ export class Interior extends Phaser.Scene {
   private cleanup() {
     const ui = this.scene.get('UI') as UI
     const dc = ui.getDragController()
-    // If the player is holding an item on the cursor when the interior closes,
-    // restore it to the slot it came from so it doesn't vanish into limbo.
-    dc.restoreHeld()
+    // A held item stays in hand when the interior closes — the hand owns it.
+    // unregister() just severs the source reference for any destroyed binding,
+    // so the item keeps floating on the cursor instead of vanishing.
     for (const b of this.bindings) dc.unregister(b)
     this.bindings = []
     this.slotVisuals = []
