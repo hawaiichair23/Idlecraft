@@ -87,6 +87,9 @@ export class UI extends Phaser.Scene {
   // The contents grid the open panel reads/writes. Set on open from whichever
   // crate source (overworld placedCrates or an interior crate), null when closed.
   private openCrateContents: (ItemStack | null)[] | null = null
+  // World position of the open container when it's a bandit body (which has no
+  // placedCrates index). null for crates/chests, which locate via openCrateIndex.
+  private openBodyPos: { x: number; y: number } | null = null
   // All Phaser objects created for the current crate panel — destroyed on close.
   private crateObjects: Phaser.GameObjects.GameObject[] = []
   // Timers/tweens for the in-progress lockbox unlock animation — cancelled on close.
@@ -118,6 +121,11 @@ export class UI extends Phaser.Scene {
     titleMain: Phaser.GameObjects.BitmapText
     expiresAt: number   // state.gameTime ms at which the fade begins
   }[] = []
+
+  // ---- bottom-left control hints (static, shadowed text) ----
+  // "E - Inventory" always; "R - Reload" only while a gun is in the inventory.
+  // The R line's container is toggled each frame from inventory state.
+  private reloadHint: Phaser.GameObjects.Container | null = null
 
   constructor() {
     super('UI')
@@ -163,6 +171,7 @@ export class UI extends Phaser.Scene {
   // Position of the currently open crate, or null if none is open. Lets the
   // Overworld range-check the player against it each frame to auto-close.
   openCratePos(): { x: number; y: number } | null {
+    if (this.openBodyPos) return this.openBodyPos
     const c = state.placedCrates[this.openCrateIndex]
     return c ? { x: c.x, y: c.y } : null
   }
@@ -178,6 +187,9 @@ export class UI extends Phaser.Scene {
   create() {
     const w = this.cameras.main.width
     const h = this.cameras.main.height
+
+    this.buildControlHints()
+
 
     // drag controller — must exist before any slot registers with it
     this.dragController = new DragController(this)
@@ -313,6 +325,14 @@ export class UI extends Phaser.Scene {
       }
       const title = ITEMS[crate.item ?? 'crate']?.name ?? 'Crate'
       this.openCrate(crate.contents, crateIndex, title, crate.item ?? 'crate')
+    })
+    // listen for bandit-body loot opens from Overworld (by body id). The body's
+    // contents render in the same panel; openBodyPos drives walk-away auto-close.
+    this.registry.events.on('open-body', (bodyId: number) => {
+      const body = state.banditBodies.find(b => b.id === bodyId)
+      if (!body) return
+      this.openBodyPos = { x: body.x, y: body.y }
+      this.openCrate(body.contents, -1, 'Bandit', 'crate')
     })
     // listen for interior crate opens — contents passed directly, no world index.
     // Acts as a toggle: if a crate panel is already open, close it instead.
@@ -688,10 +708,48 @@ export class UI extends Phaser.Scene {
     })
   }
 
+  // One shadowed bitmap-text line (main text over a +2/+2 0x303030 MULTIPLY shadow,
+  // matching the toast/count style), wrapped in a container so it positions/toggles
+  // as a unit. Left-anchored.
+  private makeHintLine(text: string): Phaser.GameObjects.Container {
+    const shadow = this.add.bitmapText(2, 2, 'main', text, FONT.name)
+      .setOrigin(0, 0.5)
+      .setTint(0x606060)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY)
+    const main = this.add.bitmapText(0, 0, 'main', text, FONT.name)
+      .setOrigin(0, 0.5)
+      .setTint(COLORS.uiText)
+    return this.add.container(0, 0, [shadow, main])
+  }
+
+  // Bottom-left control hints. "E - Inventory" is always shown; "R - Reload" sits
+  // just above it and is toggled each frame by gun-in-inventory state.
+  private buildControlHints() {
+    const LEFT_PAD = 16
+    const ROW_H = 22
+    const baseY = this.scale.height - UI_INVENTORY_BAR_HEIGHT - 16
+    const DEPTH = 9000
+
+    const invHint = this.makeHintLine('E - Inventory').setDepth(DEPTH)
+    invHint.setPosition(LEFT_PAD, baseY)
+
+    this.reloadHint = this.makeHintLine('R - Reload').setDepth(DEPTH)
+    this.reloadHint.setPosition(LEFT_PAD, baseY - ROW_H).setVisible(false)
+  }
+
+  // True if any inventory slot holds a gun (has gunSpread). Drives the R hint.
+  private hasGunInInventory(): boolean {
+    for (const slot of state.inventory) {
+      if (slot && ITEMS[slot.type]?.gunSpread != null) return true
+    }
+    return false
+  }
+
   update() {
     this.cursorController.refresh()
     this.tickPickupToasts()
     this.tickInspectTooltip()
+    if (this.reloadHint) this.reloadHint.setVisible(this.hasGunInInventory())
   }
 
   // === Pickup toasts ==========================================================
@@ -731,7 +789,7 @@ export class UI extends Phaser.Scene {
     // MULTIPLY blend match makeCountLabel exactly.
     const titleShadow = this.add.bitmapText(2, 2, 'main', def.name, FONT.name)
       .setOrigin(1, 0.5)
-      .setTint(0x303030)
+      .setTint(0x606060)
       .setBlendMode(Phaser.BlendModes.MULTIPLY)
     const titleMain = this.add.bitmapText(0, 0, 'main', def.name, FONT.name)
       .setOrigin(1, 0.5)
@@ -1468,6 +1526,7 @@ export class UI extends Phaser.Scene {
     this.crateShade = null
     this.openCrateIndex = -1
     this.openCrateContents = null
+    this.openBodyPos = null
   }
 
   private redrawCrateSlot(i: number, x: number, y: number) {

@@ -6,6 +6,8 @@ export interface Bandit {
   facingRight: boolean
   facingLockedUntil: number  // gameTime ms; facing won't flip again until past this
   active: boolean            // false until the player crosses the aggro radius (or he's shot); holds at spawn while dormant
+  lastPlayerSide: number     // sign of (player.x - b.x) last frame; a flip while dormant means the player crossed his vertical line → wake (he was lying in wait)
+  wakeDelayUntil: number     // gameTime ms; set only on a line-crossing wake — he does nothing until past this, then engages
   // gameTime ms of the last shot, for fire-rate cooldown
   lastFireAt: number
   fireDelay: number          // randomized interval until the next shot, re-rolled each shot
@@ -21,6 +23,9 @@ export interface Bandit {
   nextDodgeAt: number        // gameTime ms; can't start another dodge until past this
   dodgeX: number             // unit dodge direction, held for the dodge window
   dodgeY: number
+  retreatUntil: number       // gameTime ms; while set he backs away from a melee attacker
+  retreatX: number           // unit retreat direction, held for the retreat window
+  retreatY: number
   dying: boolean
 }
 
@@ -35,9 +40,12 @@ export const BANDIT_RANGE = 520
 // He stays dormant at his spawn until the player first crosses this radius (or he
 // takes a hit). Tighter than BANDIT_RANGE so he lets you approach before engaging.
 export const BANDIT_AGGRO_RANGE = 250
+// After waking by the player crossing his vertical line, he holds for this long
+// (does nothing) before he starts moving/shooting — a beat as he commits to the chase.
+const LINE_WAKE_DELAY_MS = 900
 // Aim error (radians) added to each shot's angle, same cone as the derringer.
 // The lead solver stays exact; this hand-shake is what makes the bandit beatable.
-export const BANDIT_SPREAD = 0.4
+export const BANDIT_SPREAD = 0.43
 // A bandit holds his ground — a hit staggers him a step, it doesn't launch him.
 // Much lighter than the coyote's dart-back knockback.
 export const BANDIT_KNOCKBACK = 130
@@ -82,11 +90,45 @@ const DODGE_COMMIT_MS = 180    // once he commits to a sidestep, he holds it thi
 const DODGE_COOLDOWN_MS = 650  // after a sidestep, he won't dodge again for this long (one decisive step per threat, no stutter)
 const DODGE_CHANCE = 0.85      // fraction of dodgeable threats he actually reacts to
 
+// Melee retreat: a swing at him sends him scrambling away under his own power
+// (he steers, so he rounds obstacles) — distinct from the brief knockback shove.
+const MELEE_RETREAT_MS = 450    // how long he commits to backing off after a swing
+const MELEE_RETREAT_SPEED = 120 // a deliberate backpedal away from the axe
+
+
 
 // Muzzle height above the bandit's center (px). Bullets spawn here AND the lead
 // solver aims from here — one source of truth so the spawn point and the aim
 // origin can never disagree (which biased every shot by this offset before).
 export const BANDIT_MUZZLE_DY = -8
+
+// Where a thrown rope catches the bandit and how the leash constrains him. Mirrors
+// the coyote's rope model: a pull toward the tether once the rope goes taut, capped
+// so it's a tug, not a yank. Velocity only — no teleporting a roped body.
+const BANDIT_CATCH_OFFSET_Y = -6   // rope wraps just above center (chest/neck)
+const ROPE_TAUT_DIST = 60
+const ROPE_PULL_PER_PX = 1.2
+const ROPE_PULL_MAX = 70
+const ROPED_FLEE_SPEED = 150   // how hard a roped bandit bolts from the player
+const ROPED_LEASH_MAX = 160    // never travels past this from the tether
+export function getBanditNeckAnchor(b: Bandit): { x: number; y: number } {
+  return { x: b.x, y: b.y + BANDIT_CATCH_OFFSET_Y }
+}
+export function getBanditRopePull(
+  b: Bandit,
+  tether: { x: number; y: number } | null,
+): { vx: number; vy: number } {
+  if (!tether) return { vx: 0, vy: 0 }
+  const a = getBanditNeckAnchor(b)
+  const dx = tether.x - a.x
+  const dy = tether.y - a.y
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  if (dist <= ROPE_TAUT_DIST || dist <= 0.0001) return { vx: 0, vy: 0 }
+  const pull = Math.min((dist - ROPE_TAUT_DIST) * ROPE_PULL_PER_PX, ROPE_PULL_MAX)
+  return { vx: (dx / dist) * pull, vy: (dy / dist) * pull }
+}
+
+
 
 
 // Body box for melee/bullet hit-testing and shove. Roughly the standing man's
@@ -102,6 +144,8 @@ export function createBandit(x: number, y: number): Bandit {
     x, y, vx: 0, vy: 0,
     facingRight: true, facingLockedUntil: 0,
     active: false,
+    lastPlayerSide: 0,
+    wakeDelayUntil: 0,
     lastFireAt: 0,
     fireDelay: BANDIT_FIRE_COOLDOWN_MS,
     ammo: BANDIT_MAG_SIZE,
@@ -112,8 +156,22 @@ export function createBandit(x: number, y: number): Bandit {
     hurtUntil: 0,
     knockbackUntil: 0,
     dodgeUntil: 0, nextDodgeAt: 0, dodgeX: 0, dodgeY: 0,
+    retreatUntil: 0, retreatX: 0, retreatY: 0,
     dying: false,
   }
+}
+
+// Kick off a melee retreat: he commits to moving directly away from the attacker
+// for MELEE_RETREAT_MS. Wakes him too — getting swung at is provocation. The AI
+// loop honors retreatUntil and steers him along this held direction.
+export function startBanditRetreat(b: Bandit, fromX: number, fromY: number, gameTime: number) {
+  let rx = b.x - fromX
+  let ry = b.y - fromY
+  const len = Math.sqrt(rx * rx + ry * ry) || 1
+  b.retreatX = rx / len
+  b.retreatY = ry / len
+  b.retreatUntil = gameTime + MELEE_RETREAT_MS
+  b.active = true
 }
 
 // Intercept solve: given a shooter at (bx,by), a target at (px,py) moving at
@@ -235,9 +293,10 @@ function findCoverSpot(
   b: Bandit,
   player: { x: number; y: number },
   collidesAt: (px: number, py: number) => boolean,
+  los: (px: number, py: number) => boolean,
 ): { x: number; y: number } | null {
-  // Already shielded? Tuck behind the obstacle that's doing it.
-  const onLine = blockedPointOnLine(b.x, b.y, player.x, player.y, collidesAt)
+  // Already shielded? Tuck behind the obstacle that's doing it. (LOS ignores honses.)
+  const onLine = blockedPointOnLine(b.x, b.y, player.x, player.y, los)
   if (onLine) return behindSpot(onLine.x, onLine.y, b, player, collidesAt)
 
   // Otherwise look around for a spot that would put something on the line.
@@ -245,8 +304,8 @@ function findCoverSpot(
     const a = (i / COVER_SCAN_DIRS) * Math.PI * 2
     const sx = b.x + Math.cos(a) * COVER_SCAN_DIST
     const sy = b.y + Math.sin(a) * COVER_SCAN_DIST
-    if (collidesAt(sx, sy)) continue            // can't stand inside an obstacle
-    if (hasCoverAt(sx, sy, player, collidesAt)) return { x: sx, y: sy }
+    if (collidesAt(sx, sy)) continue            // can't stand inside an obstacle (honse included)
+    if (hasCoverAt(sx, sy, player, los)) return { x: sx, y: sy }
   }
   return null
 }
@@ -350,16 +409,23 @@ export function updateBandits(
   dt: number,
   gameTime: number,
   collidesAt: (px: number, py: number) => boolean,
+  // Like collidesAt but ignores honses — used for shooting line-of-sight and cover
+  // checks so a horse is never treated as cover (he'll fire through/at it). Movement
+  // still uses collidesAt, so he won't walk through a horse.
+  blocksLineOfSight: (px: number, py: number) => boolean,
   player: { x: number; y: number; vx: number; vy: number },
   bulletSpeed: number,
   fire: (banditIndex: number, dirX: number, dirY: number) => void,
   threats: Threat[],
   rng: () => number,
+  getTetherAnchor: (banditIndex: number) => { x: number; y: number } | null,
 ) {
   const step = dt / 1000
   for (let i = 0; i < bandits.length; i++) {
     const b = bandits[i]
     if (b.dying) continue
+
+
 
     // Knockback window: carry the impulse velocity into position, skip AI.
     if (gameTime < b.knockbackUntil) {
@@ -370,21 +436,84 @@ export function updateBandits(
       continue
     }
 
+    // Roped: he fights the leash like the coyote — bolts away from the player with
+    // the rope pull added on top, capped so he can't cross the leash. This replaces
+    // his combat AI (a roped man is struggling, not shooting). Velocity-integrated,
+    // never teleported; knockback above still interrupts.
+    const tether = getTetherAnchor(i)
+    if (tether) {
+      const fdx = b.x - player.x
+      const fdy = b.y - player.y
+      const fdist = Math.sqrt(fdx * fdx + fdy * fdy) || 0.0001
+      let vx = (fdx / fdist) * ROPED_FLEE_SPEED
+      let vy = (fdy / fdist) * ROPED_FLEE_SPEED
+      const pull = getBanditRopePull(b, tether)
+      vx += pull.vx
+      vy += pull.vy
+      if (vx !== 0) {
+        const nx = b.x + vx * step
+        if (!collidesAt(nx, b.y)) b.x = nx
+      }
+      if (vy !== 0) {
+        const ny2 = b.y + vy * step
+        if (!collidesAt(b.x, ny2)) b.y = ny2
+      }
+      // hard leash cap: never past ROPED_LEASH_MAX from the tether
+      const rx = b.x - tether.x
+      const ry = b.y - tether.y
+      const dsq = rx * rx + ry * ry
+      if (dsq > ROPED_LEASH_MAX * ROPED_LEASH_MAX) {
+        const d = Math.sqrt(dsq)
+        b.x = tether.x + (rx / d) * ROPED_LEASH_MAX
+        b.y = tether.y + (ry / d) * ROPED_LEASH_MAX
+      }
+      updateFacing(b, gameTime, player.x)
+      continue
+    }
+
     const dx = player.x - b.x
     const dy = player.y - b.y
     const dist = Math.sqrt(dx * dx + dy * dy)
 
-    // ---- Dormant: hold at spawn until the player gets close enough to provoke ----
-    // Once active he stays active (no going back to sleep mid-fight). Taking a hit
-    // also wakes him — see the damage path, which flips active on.
+    // ---- Dormant: hold at spawn until provoked ----
+    // Wakes when the player comes within BANDIT_AGGRO_RANGE, OR when the player
+    // crosses his vertical line (his X) from either side at any distance — he's
+    // lying in wait and breaks cover the moment someone slips past him. Once active
+    // he stays active. Taking a hit also wakes him (see the damage path).
     if (!b.active) {
-      if (dist <= BANDIT_AGGRO_RANGE) {
+      const side = Math.sign(dx)   // which side of his X the player is on this frame
+      // A crossing: the player was on one side last frame and the opposite side now.
+      const crossedLine = b.lastPlayerSide !== 0 && side !== 0 && side !== b.lastPlayerSide
+      b.lastPlayerSide = side
+      if (dist <= BANDIT_AGGRO_RANGE || crossedLine) {
         b.active = true
+        // Only a line-crossing wake gets the hold; a proximity wake engages at once.
+        if (crossedLine && dist > BANDIT_AGGRO_RANGE) b.wakeDelayUntil = gameTime + LINE_WAKE_DELAY_MS
       } else {
         updateFacing(b, gameTime, player.x)   // watch the player, but don't move or shoot
         b.vx = 0; b.vy = 0
         continue
       }
+    }
+
+    // ---- Line-wake hold: just woken by a crossing → do nothing for the delay ----
+    // Frozen completely (no facing, no move, no fire) until the beat passes, then
+    // normal AI resumes. Knockback (handled above) still interrupts this.
+    if (gameTime < b.wakeDelayUntil) {
+      b.vx = 0; b.vy = 0
+      continue
+    }
+
+    // ---- Melee retreat: swung at → scramble away (overrides other movement) ----
+    // He moves under his own power via steerTo along the held away-direction, so
+    // he rounds obstacles instead of being shoved through them. Outlasts the brief
+    // knockback shove, which is handled above.
+    if (gameTime < b.retreatUntil) {
+      updateFacing(b, gameTime, player.x)
+      const tx = b.x + b.retreatX * 1000
+      const ty = b.y + b.retreatY * 1000
+      steerTo(b, tx, ty, MELEE_RETREAT_SPEED, step, collidesAt)
+      continue
     }
 
     // ---- Dodge incoming player bullets (reflex; overrides other movement) ----
@@ -418,7 +547,7 @@ export function updateBandits(
         b.ammo = BANDIT_MAG_SIZE
       } else {
         updateFacing(b, gameTime, player.x)
-        const spot = findCoverSpot(b, player, collidesAt)
+        const spot = findCoverSpot(b, player, collidesAt, blocksLineOfSight)
         const target = spot ?? { x: b.homeX, y: b.homeY }
         // Keep closing on the cover target until he's actually pressed up against
         // it — not just the moment he first has any line-of-sight block. This is
@@ -426,7 +555,7 @@ export function updateBandits(
         const tdx = target.x - b.x
         const tdy = target.y - b.y
         const atCover = (tdx * tdx + tdy * tdy) <= COVER_HUG_DIST * COVER_HUG_DIST
-        if (!(atCover && hasCoverAt(b.x, b.y, player, collidesAt))) {
+        if (!(atCover && hasCoverAt(b.x, b.y, player, blocksLineOfSight))) {
           const moved = steerTo(b, target.x, target.y, WALK_SPEED, step, collidesAt)
           if (!moved && (b.vx !== 0 || b.vy !== 0)) {
             // wedged; nudge so he doesn't grind a corner forever
@@ -471,8 +600,8 @@ export function updateBandits(
 
     // ---- Fire ----
     if (gameTime - b.lastFireAt < b.fireDelay) continue
-    // only shoot if there's a clear line to the player
-    if (hasCoverAt(b.x, b.y, player, collidesAt)) continue
+    // only shoot if there's a clear line to the player (honses don't count as cover)
+    if (hasCoverAt(b.x, b.y, player, blocksLineOfSight)) continue
     // Aim from the muzzle (where the bullet actually spawns), not his center, so
     // the computed lead matches the real shot origin.
     const dir = computeLeadDir(b.x, b.y + BANDIT_MUZZLE_DY, player.x, player.y, player.vx, player.vy, bulletSpeed)

@@ -45,14 +45,14 @@ const HONSE_COLOR_TOTAL = HONSE_COLORS.reduce((s, c) => s + c[1], 0)
 
 // Speed multiplier roll. Most honses fall in a normal band (0.7..1.3), but rare
 // outliers roll super-slow or super-fast — the prize/dud catches.
-function rollSpeed(): number {
-  const r = Math.random()
-  if (r < 0.10) return 1.40 + Math.random() * 0.30   // super fast: 1.40 .. 1.70
-  return 0.95 + Math.random() * 0.35                 // normal: 0.95 .. 1.30
+function rollSpeed(rng: () => number): number {
+  const r = rng()
+  if (r < 0.10) return 1.40 + rng() * 0.30   // super fast: 1.40 .. 1.70
+  return 0.95 + rng() * 0.35                 // normal: 0.95 .. 1.30
 }
 
-function pickCoat(): number {
-  let r = Math.random() * HONSE_COLOR_TOTAL
+function pickCoat(rng: () => number): number {
+  let r = rng() * HONSE_COLOR_TOTAL
   for (const [color, weight] of HONSE_COLORS) {
     r -= weight
     if (r < 0) return color
@@ -60,13 +60,13 @@ function pickCoat(): number {
   return HONSE_COLORS[0][0]
 }
 
-export function createHonse(x: number, y: number): Honse {
+export function createHonse(x: number, y: number, rng: () => number): Honse {
   // pick a coat: special untinted sprites roll first, otherwise a tinted base coat
   let sprite = 'honse'
   let tinted = true
-  const roll = Math.random()
+  const roll = rng()
   if (roll < 0.12) {
-    sprite = Math.random() < 0.5 ? 'honse_spotted' : 'honse_spotted_brown'
+    sprite = rng() < 0.5 ? 'honse_spotted' : 'honse_spotted_brown'
     tinted = false
   } else if (roll < 0.24) {
     sprite = 'honse_palomino'
@@ -92,11 +92,11 @@ export function createHonse(x: number, y: number): Honse {
     homeX: x, homeY: y,
     mode: 'idle', modeUntil: 0,
     tame: false,
-    speedMul: rollSpeed(),
-    tint: pickCoat(),
+    speedMul: rollSpeed(rng),
+    tint: pickCoat(rng),
     sprite,
     tinted,
-    spacing: 32 + Math.random() * 38,   // personal space: 32..70px
+    spacing: 32 + rng() * 38,   // personal space: 32..70px
     health: HONSE_MAX_HEALTH,
     hurtUntil: 0,
     knockbackUntil: 0,
@@ -181,6 +181,8 @@ const ROPE_TAUT_DIST = 70
 const ROPE_PULL_PER_PX = 1.2   
 const ROPE_PULL_MAX = 60       
 const ROPE_LEASH_MAX = 160
+const FOLLOW_DEADZONE = 90   // standoff distance a follower holds behind its leader
+const FOLLOW_RAMP_BAND = 40  // distance past the deadzone over which follow speed eases up to full
 
 const FACING_LOCK_MS = 400
 
@@ -358,9 +360,11 @@ export function updateHonses(
   dt: number,
   gameTime: number,
   collidesAt: (px: number, py: number, ignoreHonseIndex: number) => boolean,
-  getTether: (honseIndex: number) => { x: number; y: number } | null = () => null,
+  getTethers: (honseIndex: number) => { x: number; y: number }[] = () => [],
   mountedIndex: number | null = null,
   playerPos: { x: number; y: number } | null = null,
+  getLeaderPos: (honseIndex: number) => { x: number; y: number } | null = () => null,
+  caravanSpeed: number = WALK_SPEED,
 ) {
   const now = gameTime
   const step = dt / 1000
@@ -381,15 +385,47 @@ export function updateHonses(
     if (h.dying || now < h.knockbackUntil) continue
 
     // Wild-avoidance: untamed honses keep their distance from the player.
-    const tether = getTether(i)
+    const tethers = getTethers(i)
+    const tether = tethers.length > 0 ? tethers[0] : null
+
+    // --- movement branches: exactly one runs per frame ---
+    let moved = false
+
+    // Tamed + roped honse with a leader: cooperative follower.
+    if (h.tame && tether) {
+      const leaderPos = getLeaderPos(i)
+      if (leaderPos) {
+        const neck = getHonseNeckAnchor(h)
+        const dx = leaderPos.x - neck.x
+        const dy = leaderPos.y - neck.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        let vx = 0, vy = 0
+        if (dist > FOLLOW_DEADZONE) {
+          const ramp = Math.min((dist - FOLLOW_DEADZONE) / FOLLOW_RAMP_BAND, 1)
+          const speed = caravanSpeed * h.speedMul * ramp
+          vx = (dx / dist) * speed
+          vy = (dy / dist) * speed
+        }
+        if (now >= h.facingLockedUntil) {
+          const newFacing = vx > 0.001 ? true : vx < -0.001 ? false : h.facingRight
+          if (newFacing !== h.facingRight) {
+            h.facingRight = newFacing
+            h.facingLockedUntil = now + FACING_LOCK_MS
+          }
+        }
+        h.vx = vx
+        h.vy = vy
+        moved = true
+      }
+    }
+
     let avoiding = false
-    if (!h.tame && playerPos && !(tether && mountedIndex !== null)) {
+    if (!moved && !h.tame && playerPos && !(tether && mountedIndex !== null)) {
       const ax = h.x - playerPos.x
       const ay = h.y - playerPos.y
       const distSq = ax * ax + ay * ay
       if (distSq < AVOID_RADIUS * AVOID_RADIUS && distSq > 0.0001) {
         const dist = Math.sqrt(distSq)
-        // proximity 0 = at edge, 1 = right on her
         const proximity = 1 - dist / AVOID_RADIUS
         const speed = (AVOID_SPEED_MIN + (AVOID_SPEED_MAX - AVOID_SPEED_MIN) * proximity) * h.speedMul
         h.vx = (ax / dist) * speed
@@ -398,7 +434,7 @@ export function updateHonses(
       }
     }
 
-    if (h.mode === 'flee' && now < h.modeUntil) {
+    if (!moved && h.mode === 'flee' && now < h.modeUntil) {
       const remaining = h.modeUntil - now
       const ease = remaining < SPOOK_EASE_MS ? remaining / SPOOK_EASE_MS : 1
       const speed = h.fleeSpeed * h.speedMul * ease
@@ -421,64 +457,47 @@ export function updateHonses(
       }
       h.vx = vx
       h.vy = vy
-      continue
+      moved = true
     }
 
-    // mode tick: if the current sub-behavior has expired, pick a new one.
-    if (!avoiding && now >= h.modeUntil) {
-      pickIdleBehavior(h, now)
-    }
+    if (!moved) {
+      if (!avoiding && now >= h.modeUntil) {
+        pickIdleBehavior(h, now)
+      }
 
-    let vx = h.vx
-    let vy = h.vy
+      let vx = h.vx
+      let vy = h.vy
 
-    // loose herd grouping — wild honses drift toward nearby honses and keep
-    // personal space. Only while idling (a fleeing honse bolts, doesn't group)
-    // and only for the untamed band. Applied to the per-frame velocity ONLY —
-    // not written back into h.vx/h.vy — so it's a fresh nudge each frame and
-    // can't compound into a runaway swarm.
-    if (!avoiding && !h.tame) {
-      const steer = getHerdSteer(honses, i, herdGrid)
-      vx += steer.vx
-      vy += steer.vy
-    }
-    const pull = getHonseRopePull(h, tether)
-    vx += pull.vx
-    vy += pull.vy
+      if (!avoiding && !h.tame) {
+        const steer = getHerdSteer(honses, i, herdGrid)
+        vx += steer.vx
+        vy += steer.vy
+      }
+      const pull = getHonseRopePull(h, tether)
+      vx += pull.vx
+      vy += pull.vy
 
-    // face the direction she's actually moving this frame
-    if (now >= h.facingLockedUntil) {
-      let newFacing = h.facingRight
-      if (vx > 0.001) newFacing = true
-      else if (vx < -0.001) newFacing = false
-      if (newFacing !== h.facingRight) {
-        h.facingRight = newFacing
-        h.facingLockedUntil = now + FACING_LOCK_MS
+      if (now >= h.facingLockedUntil) {
+        let newFacing = h.facingRight
+        if (vx > 0.001) newFacing = true
+        else if (vx < -0.001) newFacing = false
+        if (newFacing !== h.facingRight) {
+          h.facingRight = newFacing
+          h.facingLockedUntil = now + FACING_LOCK_MS
+        }
+      }
+
+      if (vx !== 0) {
+        const nextX = h.x + vx * step
+        if (!collidesAt(nextX, h.y, i)) h.x = nextX
+      }
+      if (vy !== 0) {
+        const nextY = h.y + vy * step
+        if (!collidesAt(h.x, nextY, i)) h.y = nextY
       }
     }
 
-    // integrate velocity. Axis-separated so she can slide along walls.
-    if (vx !== 0) {
-      const nextX = h.x + vx * step
-      if (!collidesAt(nextX, h.y, i)) h.x = nextX
-    }
-    if (vy !== 0) {
-      const nextY = h.y + vy * step
-      if (!collidesAt(h.x, nextY, i)) h.y = nextY
-    }
-
-    // hard leash cap: if she ended the frame past the leash, snap her back
-    // to the boundary along the radial line.
-    if (tether) {
-      const rx = h.x - tether.x
-      const ry = h.y - tether.y
-      const distSq = rx * rx + ry * ry
-      const maxSq = ROPE_LEASH_MAX * ROPE_LEASH_MAX
-      if (distSq > maxSq) {
-        const dist = Math.sqrt(distSq)
-        h.x = tether.x + (rx / dist) * ROPE_LEASH_MAX
-        h.y = tether.y + (ry / dist) * ROPE_LEASH_MAX
-      }
-    }
+    // Leash cap moved to Overworld body sync (runs after the Matter body
+    // overwrites h.x/h.y, so it gets the final word on position).
   }
 }

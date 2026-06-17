@@ -14,7 +14,7 @@ import { registerGrabbable } from '../ui/hover'
 import { RopeController, CAT_HONSE } from '../world/ropeController'
 import { updateHonses, getHonseBodyAABB, createHonse, spookHonse, spookHonsesFromShot } from '../world/honse'
 import { updateCoyotes, createCoyote, getCoyoteBodyAABB, getCoyoteMouthAnchor, COYOTE_BITE_RADIUS, COYOTE_BITE_COOLDOWN_MS, COYOTE_BITE_DAMAGE } from '../world/coyote'
-import { updateBandits, createBandit, BANDIT_SPREAD, BANDIT_KNOCKBACK, BANDIT_KNOCKBACK_MS, BANDIT_MUZZLE_DY } from '../world/bandit'
+import { updateBandits, createBandit, startBanditRetreat, BANDIT_SPREAD, BANDIT_KNOCKBACK, BANDIT_KNOCKBACK_MS, BANDIT_MUZZLE_DY } from '../world/bandit'
 import type { Bandit } from '../world/bandit'
 import { listEnemies } from '../world/enemy'
 import type { EnemyRef } from '../world/enemy'
@@ -26,7 +26,7 @@ const PLAYER_SPEED = PLAYER_BASE_SPEED   // single source of truth lives in stat
 const MOUNTED_SPEED_MIN = 140  
 const MOUNTED_SPEED_MAX = 250   
 const MOUNTED_RAMP_MS = 2200   
-const HORSE_GEAR_SPEEDS = [130, 200, 280]            
+const HORSE_GEAR_SPEEDS = [130, 200, 320]                        
 // Permanent westward expansion applied once at world start — the frontier leg
 // toward Fort Worth. Snapped to whole tiles by growWorld. Tune here.
 const PERMANENT_WEST_PX = 50000
@@ -94,6 +94,7 @@ const TREE_CULL_DESTROY_MARGIN = 600
 const MOUNT_RANGE = 40
 const TOOL_RANGE = 150
 const CRATE_RANGE = 80
+const BODY_LOOT_RANGE = 80   // reach for picking up a dead bandit (E), like a crate
 // Per-frame push force (× body mass) applied when the player shoves a container.
 // Tuned with the body's frictionAir below: enough to move it at a heavy walk,
 // not so much it rockets. Lower = heavier/harder to move.
@@ -217,6 +218,7 @@ export class Overworld extends Phaser.Scene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key }
   private arrows!: Phaser.Types.Input.Keyboard.CursorKeys
   private eKey!: Phaser.Input.Keyboard.Key
+  private rKey!: Phaser.Input.Keyboard.Key
   private mountedRampTime = 0
   private mountedLastDx = 0
   private mountedLastDy = 0
@@ -303,12 +305,22 @@ export class Overworld extends Phaser.Scene {
   // Separate seeded stream for bandit dodge decisions, so consuming randomness for
   // dodges doesn't desync the bullet-spread stream (determinism stays intact).
   private banditRng: () => number = makeRng(0)
+  // Separate seeded stream for bandit loot rolls, kept off the dodge/spread streams
+  // so drawing loot never shifts combat randomness.
+  private lootRng: () => number = makeRng(0)
+  private honseRng: () => number = makeRng(0)
   private lastFireAt = 0
   private gunAmmo = 5
   private gunFullReloadUntil = 0
+  // Rounds the in-progress reload will add and charge when it completes. Set by
+  // both reload triggers: a full mag on auto-reload (emptied clip), or just the
+  // missing rounds on a manual R reload. Read once by refillGunIfReloaded.
+  private pendingReloadAmount = 0
   private lastGunSlot = -1
   // Carcass sprites, parallel to state.carcasses by index.
   private carcassSprites: Phaser.GameObjects.Sprite[] = []
+  // Bandit body sprites, parallel to state.banditBodies by index.
+  private banditBodySprites: Phaser.GameObjects.Sprite[] = []
   // gameTime ms until which the player is invulnerable (i-frames after a hit)
   private invulnerableUntil = 0
   private honseLastPrint: Map<number, { x: number; y: number }> = new Map()
@@ -483,7 +495,7 @@ export class Overworld extends Phaser.Scene {
       }
 
       // click on a tied rope to untie and destroy it
-      if (this.rope.untieAtClick(p.worldX, p.worldY)) return
+      if (this.rope.untieAtClick(p.worldX, p.worldY, this.player.x, this.player.y, TOOL_RANGE)) return
       // Pipe held: a click near a built plot (including the gap between plots)
       // places/connects; only a click away from any plot cancels a pending one.
       if (state.inventory[state.selectedInventorySlot]?.type === 'pipe' && p.leftButtonDown()) {
@@ -568,6 +580,7 @@ export class Overworld extends Phaser.Scene {
             // happen when that cooldown expires (handled above), so the gun is
             // genuinely empty during the window.
             this.gunFullReloadUntil = state.gameTime + (selDef.gunFullReloadMs ?? 0)
+            this.pendingReloadAmount = selDef.gunAmmo
           }
         }
         return
@@ -676,6 +689,8 @@ export class Overworld extends Phaser.Scene {
     })
     this.bulletRng = makeRng(state.worldSeed + 7777)
     this.banditRng = makeRng(state.worldSeed + 9001)
+    this.lootRng = makeRng(state.worldSeed + 4242)
+    this.honseRng = makeRng(state.worldSeed + 3737)
     this.decorData.push(...layout.decor)
     for (const r of layout.rocks) {
       this.spawnRockFormation(r.x, r.y)
@@ -858,8 +873,6 @@ export class Overworld extends Phaser.Scene {
     this.coyoteSprites = state.coyotes.map(c =>
       this.add.sprite(c.x, c.y, 'coyote').setScale(2).setDepth(c.y - 8)
     )
-    // TEMP: test bandit spawned behind the rock at 2072,2612 to watch his cover use.
-    this.spawnBandit(2072, 2612)
     this.carcassSprites = state.carcasses.map(k =>
       this.add.sprite(k.x, k.y, 'coyote_dead').setScale(2).setDepth(k.y - 8)
     )
@@ -1091,7 +1104,7 @@ export class Overworld extends Phaser.Scene {
     const herdSpread = 250
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2
-      const r = herdSpread * (0.4 + Math.random() * 0.6)
+      const r = herdSpread * (0.4 + this.honseRng() * 0.6)
       this.spawnHonse(herdCx + Math.cos(a) * r, herdCy + Math.sin(a) * r)
     }
 
@@ -1106,6 +1119,34 @@ export class Overworld extends Phaser.Scene {
       let rk = (state.worldSeed + 6464) >>> 0
       const rand = () => { rk = (rk * 1664525 + 1013904223) >>> 0; return rk / 4294967296 }
       const rockBlockers = this.getBlockers(40)
+      // Story bandit anchor: as rocks are placed, find the first (easternmost) rock
+      // within 100px of the trail in its eastern half. Prefer one NORTH of the trail
+      // (best visibility — he hides on its far/north face); fall back to a SOUTH rock
+      // (hides on its far/south face). Deterministic rule, seed-varied position.
+      const trailStartX = TRAIL_WAYPOINTS[0].x
+      const trailEndX = TRAIL_WAYPOINTS[TRAIL_WAYPOINTS.length - 1].x
+      const trailMidX = (trailStartX + trailEndX) / 2   // eastern half is X >= this
+      const BANDIT_ROCK_TRAIL_DIST = 100
+      const BANDIT_HIDE_OFFSET = 20   // px from rock center to the bandit, far side from trail
+      // Guarantee rock clusters hug the trail so it's never barren and the bandit
+      // always has an anchor: 2 in the eastern half, 1 in the western. These are
+      // prepended to the natural scatter and flow through the same heap/formation
+      // code, so they look identical — any extra natural clusters still spawn too.
+      const FORCED_OFFSET = 70   // px the forced center sits off the trail centerline
+      const forcedAtX = (fx: number, north: boolean) => {
+        const ty = trailYAtX(TRAIL_WAYPOINTS, fx)
+        return { x: Math.floor(fx), y: Math.floor(ty + (north ? -FORCED_OFFSET : FORCED_OFFSET)) }
+      }
+      const eastSpan = trailStartX - trailMidX
+      const westSpan = trailMidX - trailEndX
+      const forcedCenters = [
+        forcedAtX(trailMidX + eastSpan * 0.66, true),                 // eastern, NORTH → bandit anchor
+        forcedAtX(trailMidX + eastSpan * 0.33, rand() < 0.5),         // eastern, either side
+        forcedAtX(trailEndX + westSpan * 0.5, rand() < 0.5),          // western, either side
+      ]
+      centers.unshift(...forcedCenters)
+      let northRock: { x: number; y: number } | null = null
+      let southRock: { x: number; y: number } | null = null
       for (const c of centers) {
         const heaps = 2 + Math.floor(rand() * 6)
         const placed: { x: number; y: number }[] = []
@@ -1140,7 +1181,27 @@ export class Overworld extends Phaser.Scene {
           if (pointToPolylineDist(hx, hy, roadCenterline) < 45) continue
           placed.push({ x: hx, y: hy })
           this.spawnRockFormation(hx, hy)
+          // Story-bandit candidacy: eastern half, within 100px of the trail. Keep the
+          // easternmost (highest X) on each side of the trail.
+          if (hx >= trailMidX && pointToPolylineDist(hx, hy, roadCenterline) <= BANDIT_ROCK_TRAIL_DIST) {
+            const trailY = trailYAtX(TRAIL_WAYPOINTS, hx)
+            if (hy < trailY) {
+              if (!northRock || hx > northRock.x) northRock = { x: hx, y: hy }
+            } else {
+              if (!southRock || hx > southRock.x) southRock = { x: hx, y: hy }
+            }
+          }
         }
+      }
+      // Place the story bandit behind his rock: prefer the north-of-trail rock
+      // (hide on its north face), else the south rock (hide on its south face).
+      // Same encounter every world; only the position varies with the seed.
+      const bRock = northRock ?? southRock
+      if (bRock) {
+        const trailY = trailYAtX(TRAIL_WAYPOINTS, bRock.x)
+        const by = bRock.y < trailY ? bRock.y - BANDIT_HIDE_OFFSET : bRock.y + BANDIT_HIDE_OFFSET
+        // nudge right 15px — the rock's visual center sits left of its anchor x
+        this.spawnBandit(bRock.x + 15, by)
       }
     }
 
@@ -1245,6 +1306,7 @@ export class Overworld extends Phaser.Scene {
     this.wasd = kb.addKeys('W,A,S,D') as any
     this.arrows = kb.createCursorKeys()
     this.eKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E)
+    this.rKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R)
 
     // listen for buy events coming back from the UI build menu
     this.registry.events.on('buy-building', (plotIndex: number, type: BuiltType) => {
@@ -1594,7 +1656,7 @@ export class Overworld extends Phaser.Scene {
       if (clickY < b.y - M || clickY > b.y + b.h + M) continue
       // An enemy still in its i-frame flash can't be hit — skip it so a click can
       // still land on another valid enemy under the cursor instead of whiffing.
-      if (!this.damageEnemy(ref, damage, this.player.x, this.player.y)) continue
+      if (!this.damageEnemy(ref, damage, this.player.x, this.player.y, false, true)) continue
       this.lastChopAt = now   // start cooldown only on a landed hit
       return true
     }
@@ -1961,7 +2023,7 @@ export class Overworld extends Phaser.Scene {
 
     // 1. Untie rope (interior segments only — ends excluded elsewhere).
     // Works mounted or on foot.
-    if (this.rope.isNearTiedRope(worldX, worldY)) {
+    if (this.rope.isNearTiedRope(worldX, worldY, this.player.x, this.player.y, TOOL_RANGE)) {
       return { kind: 'untie-rope' }
     }
 
@@ -2518,10 +2580,12 @@ export class Overworld extends Phaser.Scene {
         }
       }
 
-      // Honses block/absorb friendly bullets only (player's own mount excepted).
-      if (!hit && !b.fromBandit) {
+      // A bullet that hits a horse hurts it — it's a living thing, no matter who
+      // fired. Only exception: your own bullets pass through the mount you're riding
+      // (so you can't shoot your own horse); a bandit's bullet still hits that mount.
+      if (!hit) {
         for (let hi = 0; hi < state.honses.length; hi++) {
-          if (hi === state.mounted) continue   // your own mount doesn't block your shots
+          if (hi === state.mounted && !b.fromBandit) continue   // your shots don't hit your own mount
           if (state.honses[hi].dying) continue
           const hb = getHonseBodyAABB(state.honses[hi])
           if (b.x >= hb.x && b.x <= hb.x + hb.w && b.y >= hb.y && b.y <= hb.y + hb.h) {
@@ -2551,7 +2615,7 @@ export class Overworld extends Phaser.Scene {
   // invulnerable to MELEE (the flash IS the i-frame, stopping spam-clicks) — but
   // bullets bypass it via ignoreInvuln, since they're already rate-limited by the
   // gun's fire rate and travel time.
-  private damageEnemy(ref: EnemyRef, amount: number, fromX: number, fromY: number, ignoreInvuln = false): boolean {
+  private damageEnemy(ref: EnemyRef, amount: number, fromX: number, fromY: number, ignoreInvuln = false, melee = false): boolean {
     const e = ref.enemy
     if (e.dying) return false
     if (!ignoreInvuln && state.gameTime < e.hurtUntil) return false   // still flashing → melee can't hit
@@ -2571,6 +2635,9 @@ export class Overworld extends Phaser.Scene {
     if (e.health <= 0) {
       e.dying = true
       e.hurtUntil = state.gameTime + Overworld.ENEMY_DEATH_MS
+    } else if (melee && ref.kind === 'bandit') {
+      // Swung at and survived → he scrambles away from the attacker.
+      startBanditRetreat(e as Bandit, fromX, fromY, state.gameTime)
     }
     return true
   }
@@ -2636,16 +2703,18 @@ export class Overworld extends Phaser.Scene {
     return false
   }
 
-  private collidesAt(px: number, py: number, ignoreHonseIndex?: number, checkBuildings = ignoreHonseIndex !== undefined): boolean {
+  private collidesAt(px: number, py: number, ignoreHonseIndex?: number, checkBuildings = ignoreHonseIndex !== undefined, ignoreAllHonses = false): boolean {
     const half = Overworld.PLAYER_HALF
     for (const o of this.obstacles) {
       if (!checkBuildings && o.kind === 'building') continue
       if (aabbOverlap(px, py, half, o.x, o.y, o.w, o.h)) return true
     }
-    for (let i = 0; i < state.honses.length; i++) {
-      if (i === ignoreHonseIndex) continue
-      const b = getHonseBodyAABB(state.honses[i])
-      if (aabbOverlap(px, py, half, b.x, b.y, b.w, b.h)) return true
+    if (!ignoreAllHonses) {
+      for (let i = 0; i < state.honses.length; i++) {
+        if (i === ignoreHonseIndex) continue
+        const b = getHonseBodyAABB(state.honses[i])
+        if (aabbOverlap(px, py, half, b.x, b.y, b.w, b.h)) return true
+      }
     }
     return false
   }
@@ -3330,6 +3399,24 @@ export class Overworld extends Phaser.Scene {
     })
   }
 
+  // Open the loot panel for the nearest un-carried bandit body within range. The
+  // UI renders the body's contents in the same slot grid the crate uses.
+  private tryLootBody(x: number, y: number, hitRadius = BODY_LOOT_RANGE): boolean {
+    const rSq = hitRadius * hitRadius
+    let bestSq = rSq
+    let bestId = -1
+    for (const b of state.banditBodies) {
+      if (b.carried) continue
+      const dx = b.x - x
+      const dy = b.y - y
+      const d = dx * dx + dy * dy
+      if (d <= bestSq) { bestSq = d; bestId = b.id }
+    }
+    if (bestId === -1) return false
+    this.registry.events.emit('open-body', bestId)
+    return true
+  }
+
   private tryOpenCrate(x: number, y: number, hitRadius = 16): boolean {
     const ui = this.scene.get('UI') as UI
     if (ui.isCrateOpen()) return false
@@ -3808,7 +3895,7 @@ export class Overworld extends Phaser.Scene {
   spawnHonse(x: number, y: number) {
     const spot = this.findFreeHonseSpot(x, y)
     x = spot.x; y = spot.y
-    const honse = createHonse(x, y)
+    const honse = createHonse(x, y, this.honseRng)
     state.honses.push(honse)
     const spr = this.add.sprite(x, y, honse.sprite).setScale(2).setDepth(y - 8)
     if (honse.tinted) spr.setTint(honse.tint)
@@ -4629,17 +4716,36 @@ export class Overworld extends Phaser.Scene {
   // Mag refill happens the instant the reload cooldown elapses — not on the next
   // click — and that's when the ammo is deducted from inventory. gunFullReloadUntil
   // is nonzero only while a reload is pending, so clearing it self-gates this.
+  // Begin a manual reload if it makes sense: a gun with a clip that isn't full,
+  // not already reloading, and at least one round owned. Charges only the missing
+  // rounds (capped to what's owned) when the timer completes — shares the refill
+  // path with the auto-reload via pendingReloadAmount.
+  private tryStartReload() {
+    if (this.gunFullReloadUntil !== 0) return   // already reloading
+    const sel = state.inventory[state.selectedInventorySlot]
+    const selDef = sel ? ITEMS[sel.type] : null
+    if (!selDef || selDef.gunSpread == null || selDef.gunAmmo == null) return
+    const missing = selDef.gunAmmo - this.gunAmmo
+    if (missing <= 0) return                     // clip already full
+    const owned = state.countItem('colt_ammo')
+    if (owned <= 0) return                       // nothing to load
+    this.pendingReloadAmount = Math.min(missing, owned)
+    this.gunFullReloadUntil = state.gameTime + (selDef.gunFullReloadMs ?? 0)
+  }
+
   private refillGunIfReloaded() {
     if (this.gunFullReloadUntil === 0) return
     if (state.gameTime < this.gunFullReloadUntil) return
     const sel = state.inventory[state.selectedInventorySlot]
     const selDef = sel ? ITEMS[sel.type] : null
     if (selDef && selDef.gunAmmo != null) {
-      this.gunAmmo = selDef.gunAmmo
-      state.consumeItem('colt_ammo', selDef.gunAmmo)
+      // Charge only what this reload adds (full mag for auto, missing rounds for R).
+      this.gunAmmo = Math.min(selDef.gunAmmo, this.gunAmmo + this.pendingReloadAmount)
+      state.consumeItem('colt_ammo', this.pendingReloadAmount)
       this.registry.events.emit('inventory-changed')
     }
     this.gunFullReloadUntil = 0
+    this.pendingReloadAmount = 0
   }
 
   update(_t: number, dt: number) {
@@ -4690,14 +4796,22 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
+    const leaderMap = state.mounted !== null
+      ? this.rope.getHonseLeaderMap(state.mounted)
+      : null
     updateHonses(
       state.honses,
       dt,
       state.gameTime,
       (px, py, ignoreIdx) => this.collidesAt(px, py, ignoreIdx),
-      (honseIdx) => this.rope.getHonseTetherAnchor(honseIdx),
+      (honseIdx) => this.rope.getAllHonseTetherAnchors(honseIdx),
       state.mounted,
       { x: this.player.x, y: this.player.y },
+      (honseIdx) => {
+        const leaderIdx = leaderMap?.get(honseIdx)
+        return leaderIdx === undefined ? null : state.honses[leaderIdx]
+      },
+      HORSE_GEAR_SPEEDS[1],
     )
     // Enemies freeze while the player is inside an interior — no AI, no damage —
     // so they can't act against the player who isn't in the world. Future enemy
@@ -4709,6 +4823,8 @@ export class Overworld extends Phaser.Scene {
         dt,
         state.gameTime,
         (px, py) => this.collidesAt(px, py, undefined, true),
+        // line-of-sight: same obstacles but honses ignored, so a horse is never cover
+        (px, py) => this.collidesAt(px, py, undefined, true, true),
         { x: this.player.x, y: this.player.y, vx: this.playerVX, vy: this.playerVY },
         Overworld.BULLET_SPEED,
         (bi, dx, dy) => {
@@ -4718,6 +4834,7 @@ export class Overworld extends Phaser.Scene {
         // Threats he can dodge: the player's own bullets in flight.
         this.bullets.filter(bl => !bl.fromBandit).map(bl => ({ x: bl.x, y: bl.y, vx: bl.vx, vy: bl.vy })),
         this.banditRng,
+        (i) => this.rope.getBanditTetherAnchor(i),
       )
       this.updateBullets(dt)
       // Coyote bite: player within bite radius of a coyote's mouth takes damage,
@@ -4819,13 +4936,37 @@ export class Overworld extends Phaser.Scene {
       const mb = this.honseBodies[i]
       if (mb) {
         const knocked = h.dying || state.gameTime < h.knockbackUntil
-        if (i !== state.mounted && !knocked) {
+        const isFollower = leaderMap?.has(i) ?? false
+        if (isFollower && !knocked) {
+          // Driven by velocity like the mounted honse: h.vx/h.vy are px/s, the
+          // body integrates them (same /60 conversion as the mount's setVelocity).
           if (mb.isSleeping) { mb.isSleeping = false; (mb as any).sleepCounter = 0 }
-          this.matter.body.setVelocity(mb, { x: h.x - mb.position.x, y: (h.y + 3) - mb.position.y })
+          this.matter.body.setVelocity(mb, { x: h.vx / 60, y: h.vy / 60 })
+          h.x = mb.position.x
+          h.y = mb.position.y - 3
+        } else {
+          if (i !== state.mounted && !knocked) {
+            if (mb.isSleeping) { mb.isSleeping = false; (mb as any).sleepCounter = 0 }
+            this.matter.body.setVelocity(mb, { x: h.x - mb.position.x, y: (h.y + 3) - mb.position.y })
+          }
+          // While knocked back, the body carries the impulse freely; state follows it.
+          h.x = mb.position.x
+          h.y = mb.position.y - 3
         }
-        // While knocked back, the body carries the impulse freely; state follows it.
-        h.x = mb.position.x
-        h.y = mb.position.y - 3
+      }
+      // Leash cap: after the body sync so it gets the final word on position.
+      const tethers = this.rope.getAllHonseTetherAnchors(i)
+      for (const t of tethers) {
+        const rx = h.x - t.x
+        const ry = h.y - t.y
+        const distSq = rx * rx + ry * ry
+        const maxSq = ROPE_LEASH_LENGTH * ROPE_LEASH_LENGTH
+        if (distSq > maxSq) {
+          const dist = Math.sqrt(distSq)
+          h.x = t.x + (rx / dist) * ROPE_LEASH_LENGTH
+          h.y = t.y + (ry / dist) * ROPE_LEASH_LENGTH
+          if (mb) this.matter.body.setPosition(mb, { x: h.x, y: h.y + 3 }, false)
+        }
       }
       s.x = h.x
       s.y = h.y
@@ -4928,6 +5069,18 @@ export class Overworld extends Phaser.Scene {
         s.destroy()
         this.banditSprites.splice(i, 1)
         state.bandits.splice(i, 1)
+        const id = state.nextBanditBodyId++
+        // Loot: a derringer always, plus 0–25 rounds. 6 slots, rest empty.
+        const rounds = Math.floor(this.lootRng() * 26)
+        const contents: (ItemStack | null)[] = [
+          { type: 'derringer', count: 1 },
+          rounds > 0 ? { type: 'colt_ammo', count: rounds } : null,
+          null, null, null, null,
+        ]
+        state.banditBodies.push({ id, x: ba.x, y: ba.y, carried: false, contents })
+        this.banditBodySprites.push(
+          this.add.sprite(ba.x, ba.y, 'bandit_dead').setScale(2).setDepth(ba.y - 8)
+        )
         i--
         continue
       }
@@ -4983,6 +5136,12 @@ export class Overworld extends Phaser.Scene {
     // ---- tumbleweeds ----
     updateTumbleweeds(this, this.player.x, this.player.y, Overworld.PLAYER_HALF)
 
+    // Manual reload (R): top the clip back to full over the gun's reload time,
+    // charging only the rounds actually added.
+    if (overworldVisible && Phaser.Input.Keyboard.JustDown(this.rKey)) {
+      this.tryStartReload()
+    }
+
     // Mount/dismount the nearest honse
     if (overworldVisible && Phaser.Input.Keyboard.JustDown(this.eKey)) {
       const ui = this.scene.get('UI') as UI
@@ -4999,8 +5158,11 @@ export class Overworld extends Phaser.Scene {
         // no honse in range — open the nearest crate within reach (E has no
         // cursor, so search a radius around the player, not a tight on-sprite hit)
         if (!this.tryOpenCrate(this.player.x, this.player.y, CRATE_RANGE)) {
-          // nothing interactable in range — toggle inventory
-          this.registry.events.emit('toggle-inventory')
+          // no crate either — loot a dead bandit if one's in reach
+          if (!this.tryLootBody(this.player.x, this.player.y)) {
+            // nothing interactable in range — toggle inventory
+            this.registry.events.emit('toggle-inventory')
+          }
         }
       }
     }
@@ -5027,6 +5189,14 @@ export class Overworld extends Phaser.Scene {
           const dy = c.y - this.player.y
           const d = dx * dx + dy * dy
           if (d <= crateSq && d < bestSq) { bestSq = d; target = { x: c.x, y: c.y - 16 } }
+        }
+        const bodySq = BODY_LOOT_RANGE * BODY_LOOT_RANGE
+        for (const b of state.banditBodies) {
+          if (b.carried) continue
+          const dx = b.x - this.player.x
+          const dy = b.y - this.player.y
+          const d = dx * dx + dy * dy
+          if (d <= bodySq && d < bestSq) { bestSq = d; target = { x: b.x, y: b.y - 12 } }
         }
       }
       if (target) {
@@ -5064,12 +5234,22 @@ export class Overworld extends Phaser.Scene {
       this.mountedLastDy = dy
 
       const rampFrac = this.mountedRampTime / MOUNTED_RAMP_MS
-      const speed = state.inventory[state.selectedInventorySlot]?.type === 'quirt'
+      // Leading a string of roped honses pins travel to a steady pace so the
+      // caravan can't be outrun. Otherwise normal quirt/ramp speed applies.
+      const leadingString = this.rope.getHonseLeaderMap(mountedIdx).size > 0
+      const speed = leadingString
+        ? HORSE_GEAR_SPEEDS[1] * h.speedMul
+        : state.inventory[state.selectedInventorySlot]?.type === 'quirt'
         ? HORSE_GEAR_SPEEDS[this.horseGear] * h.speedMul
         : (MOUNTED_SPEED_MIN + (MOUNTED_SPEED_MAX - MOUNTED_SPEED_MIN) * rampFrac) * h.speedMul
 
-      const tether = this.rope.getHonseTetherAnchor(mountedIdx) ?? (this.rope.isAttached() ? this.rope.getLeashAnchor() : null)
-      if (tether && (dx !== 0 || dy !== 0)) {
+      const tethers = this.rope.getAllHonseTetherAnchors(mountedIdx)
+      if (this.rope.isAttached()) {
+        const leash = this.rope.getLeashAnchor()
+        if (leash) tethers.push(leash)
+      }
+      for (const tether of tethers) {
+        if (dx === 0 && dy === 0) break
         const rx = h.x - tether.x
         const ry = h.y - tether.y
         const dist = Math.sqrt(rx * rx + ry * ry)
@@ -5130,7 +5310,8 @@ export class Overworld extends Phaser.Scene {
         this.matter.body.setVelocity(mb, { x: vx, y: vy })
       }
 
-      if (tether && mb) {
+      for (const tether of tethers) {
+        if (!mb) break
         const rx = mb.position.x - tether.x
         const ry = (mb.position.y - 3) - tether.y
         const distSq = rx * rx + ry * ry

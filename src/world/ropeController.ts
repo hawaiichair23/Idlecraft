@@ -23,6 +23,7 @@ import { state } from '../game/state'
 import { ITEMS } from '../items/types'
 import { getHonseNeckAnchor } from './honse'
 import { getCoyoteNeckAnchor } from './coyote'
+import { getBanditNeckAnchor } from './bandit'
 
 // ---- tuning ----
 const ROPE_SEGMENTS = 20
@@ -46,6 +47,7 @@ const ROPE_THICKNESS = 3
 const ROPE_CATCH_RADIUS = 16
 const ROPE_CATCH_RADIUS_HONSE = 28
 const ROPE_ATTACHED_FRICTION_AIR = 0.1
+const ROPE_MAX_LENGTH = 140
 // Untie: click within this many px of a rope segment to sever it.
 const ROPE_CLICK_TOLERANCE = 12
 
@@ -56,6 +58,7 @@ export type RopeEnd =
     | { kind: 'post'; x: number; y: number }
     | { kind: 'honse'; index: number }
     | { kind: 'coyote'; index: number }
+    | { kind: 'bandit'; index: number }
     | { kind: 'crate'; index: number; offX: number; offY: number }
 
 // ---- internal rope record ----
@@ -98,11 +101,31 @@ export class RopeController {
         this.player = player
     }
 
+    // The rope end the player holds: a player end on foot, or the mounted
+    // honse's end while riding (a mounted throw originates from the honse).
+    private isPlayerEnd(end: RopeEnd): boolean {
+        return end.kind === 'player'
+    }
+
+    // Find a rope where the mounted honse is tied to a fixed anchor (post/crate).
+    // Returns null when not mounted or no such rope exists. Tow ropes (honse↔honse)
+    // are excluded — they're caravan links, not leash anchors.
+    private findMountedAnchorRope(): Rope | null {
+        if (state.mounted === null) return null
+        const isFixed = (e: RopeEnd) => e.kind === 'post' || e.kind === 'crate'
+        for (const r of this.ropes) {
+            if (!r.endB) continue
+            if (r.endA.kind === 'honse' && r.endA.index === state.mounted && isFixed(r.endB)) return r
+            if (r.endB.kind === 'honse' && r.endB.index === state.mounted && isFixed(r.endA)) return r
+        }
+        return null
+    }
+
     // Find the rope (if any) where the player is one of the endpoints.
     // The player can only be on ONE rope at a time by construction.
     private findPlayerRope(): Rope | null {
         for (const r of this.ropes) {
-            if (r.endA.kind === 'player' || (r.endB && r.endB.kind === 'player')) return r
+            if (this.isPlayerEnd(r.endA) || (r.endB && this.isPlayerEnd(r.endB))) return r
         }
         return null
     }
@@ -123,6 +146,10 @@ export class RopeController {
             const cy = state.coyotes[end.index]
             return cy ? getCoyoteNeckAnchor(cy) : null
         }
+        if (end.kind === 'bandit') {
+            const ba = state.bandits[end.index]
+            return ba ? getBanditNeckAnchor(ba) : null
+        }
         const h = state.honses[end.index]
         if (!h) return null
         return getHonseNeckAnchor(h)
@@ -132,18 +159,18 @@ export class RopeController {
     // end anchored to something non-player. Drives the player leash.
     isAttached(): boolean {
         const r = this.findPlayerRope()
-        if (!r || !r.endB) return false
-        if (r.endA.kind === 'player') return r.endB.kind !== 'player'
-        // endA is non-player, so the player is endB — the rope is attached
-        // iff endA is anchored (which it is, since we narrowed it above).
-        return true
+        if (r && r.endB) {
+            if (this.isPlayerEnd(r.endA)) return !this.isPlayerEnd(r.endB)
+            return true
+        }
+        return this.findMountedAnchorRope() !== null
     }
 
     // If the player's rope's OTHER end is on a honse, return her index.
     getAttachedHonseIndex(): number | null {
         const r = this.findPlayerRope()
         if (!r || !r.endB) return null
-        const other = r.endA.kind === 'player' ? r.endB : r.endA
+        const other = this.isPlayerEnd(r.endA) ? r.endB : r.endA
         return other.kind === 'honse' ? other.index : null
     }
 
@@ -152,16 +179,46 @@ export class RopeController {
     // she isn't on any fully-attached rope. If multiple ropes are tied to her,
     // returns the first one's other end.
     getHonseTetherAnchor(honseIndex: number): { x: number; y: number } | null {
+        const all = this.getAllHonseTetherAnchors(honseIndex)
+        return all.length > 0 ? all[0] : null
+    }
+
+    // Every tether anchor on this honse — one per attached rope.
+    getAllHonseTetherAnchors(honseIndex: number): { x: number; y: number }[] {
+        const anchors: { x: number; y: number }[] = []
         for (const r of this.ropes) {
-            if (!r.endB) continue   // in-flight ropes don't tether yet
+            if (!r.endB) continue
             let other: RopeEnd | null = null
             if (r.endA.kind === 'honse' && r.endA.index === honseIndex) other = r.endB
             else if (r.endB.kind === 'honse' && r.endB.index === honseIndex) other = r.endA
             if (!other) continue
             const pos = this.endPos(other)
-            if (pos) return pos
+            if (pos) anchors.push(pos)
         }
-        return null
+        return anchors
+    }
+
+    // Walks the honse↔honse rope graph outward from the mounted honse and returns,
+    // for each reachable honse, the neighbor one step closer to the mount (its leader).
+    // Honses not roped back to the mount are absent → no leader.
+    getHonseLeaderMap(mountedIndex: number): Map<number, number> {
+        const leader = new Map<number, number>()
+        const queue: number[] = [mountedIndex]
+        const seen = new Set<number>([mountedIndex])
+        while (queue.length > 0) {
+            const cur = queue.shift()!
+            for (const r of this.ropes) {
+                if (!r.endB) continue
+                let other: number | null = null
+                if (r.endA.kind === 'honse' && r.endA.index === cur && r.endB.kind === 'honse') other = r.endB.index
+                else if (r.endB.kind === 'honse' && r.endB.index === cur && r.endA.kind === 'honse') other = r.endA.index
+                if (other === null || seen.has(other)) continue
+                seen.add(other)
+                leader.set(other, cur)
+                queue.push(other)
+            }
+        }
+        return leader
     }
 
     getCoyoteTetherAnchor(coyoteIndex: number): { x: number; y: number } | null {
@@ -177,14 +234,33 @@ export class RopeController {
         return null
     }
 
+    // Other end of any rope tied to this bandit, for the bandit's leash physics.
+    getBanditTetherAnchor(banditIndex: number): { x: number; y: number } | null {
+        for (const r of this.ropes) {
+            if (!r.endB) continue
+            let other: RopeEnd | null = null
+            if (r.endA.kind === 'bandit' && r.endA.index === banditIndex) other = r.endB
+            else if (r.endB.kind === 'bandit' && r.endB.index === banditIndex) other = r.endA
+            if (!other) continue
+            const pos = this.endPos(other)
+            if (pos) return pos
+        }
+        return null
+    }
+
 
     // World point the player leash pulls toward — the player-rope's OTHER end.
     getLeashAnchor(): { x: number; y: number } | null {
         const r = this.findPlayerRope()
-        if (!r || !r.endB) return null
-        const other = r.endA.kind === 'player' ? r.endB : r.endA
-        if (other.kind === 'player') return null
-        return this.endPos(other)
+        if (r && r.endB) {
+            const other = this.isPlayerEnd(r.endA) ? r.endB : r.endA
+            if (this.isPlayerEnd(other)) return null
+            return this.endPos(other)
+        }
+        const mr = this.findMountedAnchorRope()
+        if (!mr) return null
+        const anchor = (mr.endA.kind === 'honse' && mr.endA.index === state.mounted) ? mr.endB! : mr.endA
+        return this.endPos(anchor)
     }
 
     // Throw rope toward (toX, toY).
@@ -212,7 +288,10 @@ export class RopeController {
     // Non-destructive: is there a tied rope within untie range of this point?
     // Mirrors untieAtClick's search exactly so the cursor (which calls this)
     // can never disagree with whether a click would actually untie.
-    isNearTiedRope(x: number, y: number): boolean {
+    isNearTiedRope(x: number, y: number, playerX: number, playerY: number, maxRange: number): boolean {
+        const pdx = x - playerX
+        const pdy = y - playerY
+        if (pdx * pdx + pdy * pdy > maxRange * maxRange) return false
         const tolSq = ROPE_CLICK_TOLERANCE * ROPE_CLICK_TOLERANCE
         for (const rope of this.ropes) {
             if (rope.endB === null) continue   // can't untie an in-flight rope
@@ -229,7 +308,10 @@ export class RopeController {
         return false
     }
 
-    untieAtClick(clickX: number, clickY: number): boolean {
+    untieAtClick(clickX: number, clickY: number, playerX: number, playerY: number, maxRange: number): boolean {
+        const pdx = clickX - playerX
+        const pdy = clickY - playerY
+        if (pdx * pdx + pdy * pdy > maxRange * maxRange) return false
         const tolSq = ROPE_CLICK_TOLERANCE * ROPE_CLICK_TOLERANCE
         let best: { rope: Rope; distSq: number } | null = null
         for (const rope of this.ropes) {
@@ -336,7 +418,7 @@ export class RopeController {
         const matter = (this.scene as any).matter as Phaser.Physics.Matter.MatterPhysics
         // figure out which end is the player. The OTHER end is what the rope
         // is staying anchored to.
-        const playerIsEndA = rope.endA.kind === 'player'
+        const playerIsEndA = this.isPlayerEnd(rope.endA)
         const anchorEnd = playerIsEndA ? rope.endB! : rope.endA
         const anchorPos = this.endPos(anchorEnd)
         if (!anchorPos) return false
@@ -595,6 +677,14 @@ export class RopeController {
             const dx = x - a.x
             const dy = y - a.y
             if (dx * dx + dy * dy <= honseR2) return { kind: 'coyote', index: i }
+        }
+        for (let i = 0; i < state.bandits.length; i++) {
+            if (fromEnd.kind === 'bandit' && fromEnd.index === i) continue
+            if (state.bandits[i].dying) continue
+            const a = getBanditNeckAnchor(state.bandits[i])
+            const dx = x - a.x
+            const dy = y - a.y
+            if (dx * dx + dy * dy <= honseR2) return { kind: 'bandit', index: i }
         }
         return null
     }

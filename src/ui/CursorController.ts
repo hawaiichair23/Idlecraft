@@ -94,8 +94,11 @@ export class CursorController {
     // clear any tint left from a previous frame (e.g. the mount cursor's coat
     // color); re-applied below only when hovering a honse.
     if (this.cursor.tintTopLeft !== 0xffffff) this.cursor.clearTint()
-    const wantRot = this.axeSwinging ? -Math.PI / 2 : 0
-    if (this.cursor.rotation !== wantRot) this.cursor.setRotation(wantRot)
+    // Default the cursor upright every frame; the tool-sprite branch below
+    // re-applies the swing rotation only when an actual tool cursor is shown.
+    if (this.cursor.rotation !== 0) this.cursor.setRotation(0)
+
+
 
     // ---- Overworld action resolver ----
     // One call to resolveOverworldAction decides both "what cursor to show"
@@ -118,6 +121,10 @@ export class CursorController {
             const a = action as { sprite: string; scale: number }
             const zoomedScale = a.scale * (cam?.zoom ?? 1)
             this.setTexture(a.sprite, zoomedScale)
+            // The swing rotation only applies to the actual tool sprite, never the
+            // plain pointer — so an out-of-range click can't tilt the arrow.
+            const wantRot = this.axeSwinging ? -Math.PI / 2 : 0
+            if (this.cursor.rotation !== wantRot) this.cursor.setRotation(wantRot)
             // posts get ghost-alpha + grid snap
             if (action.kind === 'place-post') {
               if (overworld.isPostDragging()) return

@@ -88,7 +88,7 @@ const ITEMS_RAW = {
   crafting_cart:      { name: 'Cart',                sprite: 'item_crafting_cart',      maxStack: 1,  scale: 2, sellPrice: 80 },
   fence_gate:         { name: 'Fence Gate',          sprite: 'item_fence_gate',         maxStack: 64, scale: 2, sellPrice: 20, activeTool: true, cursorContexts: ['overworld'], desc: 'To open and close a fence line.' },
   derringer:          { name: 'Derringer',           sprite: 'item_derringer',          maxStack: 1,  scale: 2, sellPrice: 300, activeTool: true, cursorContexts: ['overworld'], desc: `A small gambler's pistol.`, gunSpread: 0.3, gunReloadMs: 1300 },
-  colt:               { name: 'Colt',                sprite: 'item_colt',               maxStack: 1,  scale: 2, sellPrice: 500, activeTool: true, cursorContexts: ['overworld'], desc: 'A reliable six-shooter.', gunSpread: 0, gunReloadMs: 600, gunAmmo: 5, gunFullReloadMs: 3000 },
+  colt:               { name: 'Colt',                sprite: 'item_colt',               maxStack: 1,  scale: 2, sellPrice: 500, activeTool: true, cursorContexts: ['overworld'], desc: 'A reliable six-shooter.', gunSpread: 0, gunReloadMs: 600, gunAmmo: 5, gunFullReloadMs: 2000 },
   ammo:               { name: 'Ammo',                sprite: 'item_ammo',               maxStack: 100, scale: 2, sellPrice: 1, desc: 'Cartridges for pistols. Sold by the box.' },
   colt_ammo:          { name: '.36 Colt',            sprite: 'item_ammo',               maxStack: 100, scale: 2, sellPrice: 1, desc: '.36 caliber cartridges for the Colt.' },
   silver_key:         { name: 'Silver Key',          sprite: 'item_silver_key',         maxStack: 1,  scale: 2, sellPrice: 50, desc: 'Unlocks a silver lockbox.' },

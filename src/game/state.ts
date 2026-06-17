@@ -255,6 +255,11 @@ class GameState {
   // Dead coyotes left lying in the world as carcasses. Inert (no AI, no damage,
   // not targetable). Later: vultures clean these up, then they're removed.
   carcasses: { x: number; y: number }[] = []
+  // Dead bandits left in the world. Distinct from coyote carcasses because these
+  // are meant to be looted/carried for bounty later — each needs a stable id and a
+  // carried flag so a specific body can be picked up, hauled, and turned in.
+  banditBodies: { id: number; x: number; y: number; carried: boolean; contents: (ItemStack | null)[] }[] = []
+  nextBanditBodyId = 1
   // Index into `honses` of the honse the player is currently riding, or null.
   // While set, the honse's AI is suppressed and player input moves the honse;
   // the player sprite is locked to the honse position each frame.
@@ -467,8 +472,8 @@ class GameState {
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
     //this.inventory[0] = { type: 'gold_lockbox', count: 1 }
     this.inventory[2] = { type: 'colt', count: 1 }
-    //this.inventory[3] = { type: 'shovel', count: 1 }
-    this.inventory[1] = { type: 'axe', count: 1 }
+    this.inventory[3] = { type: 'rope', count: 64 }
+    this.inventory[1] = { type: 'quirt', count: 1 }
     this.inventory[4] = { type: 'colt_ammo', count: 100 }
   }
 

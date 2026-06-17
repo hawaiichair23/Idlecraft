@@ -2211,6 +2211,23 @@ export const TUMBLEWEED: Sprite = [
   [_,_,_,twdS,twdM,twdM,twdS,_,_,_],
 ]
 
+// Downed bandit — PLACEHOLDER. Just a red puddle to hang the loot-body system on.
+// Replace with a real corpse sprite later; the bandit_dead key is what matters.
+const bdD = '#6e1212'  // puddle deep / shadow edge
+const bdM = '#9e1b1b'  // puddle mid
+const bdL = '#c62828'  // puddle highlight (wet sheen)
+export const BANDIT_DEAD: Sprite = [
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  [bdD,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdD],
+  [bdD,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdD],
+  [bdD,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdM,bdD],
+]
+
+
 // Hotbar selection frame: hollow rounded-square outline that highlights the
 // selected slot. White border (tinted at use), transparent center, corners
 // notched to match the slot's rounded corners. 24x24 — scale to fit the slot.
@@ -2699,6 +2716,7 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   coyote: COYOTE,
   coyote_hurt: COYOTE_HURT,
   coyote_dead: COYOTE_DEAD,
+  bandit_dead: BANDIT_DEAD,
   tumbleweed: TUMBLEWEED,
 }
 
