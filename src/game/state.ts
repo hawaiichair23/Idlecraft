@@ -9,7 +9,7 @@ import type { Honse } from '../world/honse'
 import type { Coyote } from '../world/coyote'
 import type { Bandit } from '../world/bandit'
 
-export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage'
+export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage' | 'smithy'
 export type BuiltType = Exclude<BuildingType, 'empty'>
 
 export const MAX_GOLD = 999_999
@@ -28,7 +28,7 @@ export const WOOD_TILE = 24
 // resizes them at runtime.
 const INITIAL_WORLD_PX = 576 * 8
 
-export const PLAYER_BASE_SPEED = 1135
+export const PLAYER_BASE_SPEED = 12235
 
 export interface WorldBounds {
   minX: number
@@ -37,8 +37,8 @@ export interface WorldBounds {
   height: number
 }
 
-// General store sell-grid: 6 columns × 4 rows.
-export const GENERAL_STORE_SLOTS = 24
+// General store sell-grid: 6 columns × 3 rows.
+export const GENERAL_STORE_SLOTS = 18
 
 // World-placed crate storage: 6 columns × 2 rows.
 export const CRATE_SLOTS = 12
@@ -106,6 +106,12 @@ export interface PlotState {
   // storage-only: item grid contents. undefined for non-storage plots;
   // initialized when a storage building is built. Size grows with level.
   storageContents?: (ItemStack | null)[]
+  smithyFuel?: ItemStack | null
+  smithyOre?: ItemStack | null
+  smithyOutput?: ItemStack | null
+  smithyBurnEndAt?: number
+  smithyBurnDuration?: number
+  smithySmeltEndAt?: number
 }
 
 export interface BuildingDef {
@@ -124,9 +130,10 @@ export const BUILDINGS: Record<BuiltType, BuildingDef> = {
   workshop: { name: 'Workshop', description: 'Crafts materials into products.', cost: 50, tickMs: 6000, goldPerTick: 0 },
   field:   { name: 'Field',   description: 'Plant and harvest crops.', cost: 100, tickMs: 0, goldPerTick: 0 },
   storage: { name: 'Storage', description: 'Stores items.', cost: 100, tickMs: 0, goldPerTick: 0 },
+  smithy:  { name: 'Smithy',  description: 'Smelts ores into bars.', cost: 100, tickMs: 0, goldPerTick: 0 },
 }
 
-export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field', 'storage']
+export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field', 'storage', 'smithy']
 
 // Upgrade cost: 25, 50, 100, 200, …
 export function getUpgradeCost(level: number): number {
@@ -190,7 +197,6 @@ class GameState {
   plots: PlotState[] = []
   // Fixed world buildings (shop, church, etc.) — not owned, not bought, no ticks.
   worldStructures: WorldStructure[] = []
-  // Discovered towns. ID matches an entry in TOWNS from world/structures.ts.
   discoveredTowns: Set<string> = new Set()
   // Plot building types the player can build. Defaults to the starter set;
   // others (field, etc.) are unlocked by purchasing at the Land Office.
@@ -204,6 +210,21 @@ class GameState {
   // Invisible buried gems, placed by world gen. Seeded fresh each load from the
   // layout (deterministic from seed), like buriedItems. Consumed on dig.
   buriedGems: { x: number; y: number; type: string }[] = []
+  // Invisible buried lockboxes, placed by world gen. The contents inside are
+  // pre-rolled at gen time (seeded) so the same world always yields the same
+  // prizes from the same box. Slots 0-2 are tools (up to 3, no repeats, null
+  // for empty); slots 3+ are side loot (bars/gems/ammo/etc, null for empty).
+  // Consumed on dig.
+  buriedLockboxes: {
+    x: number
+    y: number
+    lockboxType: 'silver_lockbox' | 'gold_lockbox'
+    tools: (string | null)[]
+    side: ({ type: string; count: number } | null)[]
+  }[] = []
+  // Invisible buried keys, placed by world gen at the same density and tier
+  // split as lockboxes. Dug up, drops as the corresponding key item.
+  buriedKeys: { x: number; y: number; keyType: 'silver_key' | 'gold_key' }[] = []
   // Item stacks buried by the player. Stored when a dropped item is buried
   // by a shovel-click on a dirt patch. Revealed when the spot is dug again.
   buriedStacks: { x: number; y: number; stack: ItemStack }[] = []
@@ -231,13 +252,15 @@ class GameState {
   // and an obstacle in collision. `species` chooses which sprite to render —
   // 'post' (weathered cottonwood gray) or 'cedar_post' (warm cedar brown).
   // Mechanically identical otherwise.
-  placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' | 'iron_post' }[] = []
+  placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall' }[] = []
+  // Water troughs placed by the player. Position-only; grid-snapped, no collision.
+  placedWaters: { x: number; y: number }[] = []
   placedGates: { x: number; y: number; vertical: boolean; open: boolean; swingX: number; swingY: number }[] = []
   // Containers placed by the player (crates and chests). Each is a sprite +
   // obstacle in the world (like a post) plus its own storage grid in `contents`.
   // `item` is the container's item type ('crate' or 'chest'), driving its sprite,
   // footprint, and slot count. Contents persist for the play session.
-  placedCrates: { x: number; y: number; item: ItemType; contents: (ItemStack | null)[]; unlocked?: boolean }[] = []
+  placedCrates: { x: number; y: number; item: ItemType; contents: (ItemStack | null)[]; unlocked?: boolean; interior?: string }[] = []
   // Standalone world wells (e.g. the one in the north town). Each produces
   // water up to WORLD_WELL_CAP, then idles until the player takes some. Unlike
   // plot wells these have no level/upgrades — a fixed-rate water bucket you
@@ -268,6 +291,15 @@ class GameState {
   // currently-selected inventory slot, set by scroll wheel
   selectedInventorySlot = 0
 
+  // Gun magazine state — shared across every scene so the same clip persists
+  // whether you're in the overworld or an interior. The GunController operates
+  // on these fields rather than holding its own copy.
+  gunAmmo = 0
+  lastFireAt = 0
+  gunFullReloadUntil = 0
+  lastGunSlot = -1
+  pendingReloadAmount = 0
+
   // Seed for this world's procedural generation. Rolled once in init() and
   // read by generateWorld — the whole world layout is a pure function of it.
   // Stored here (rather than inline at the gen call) so it's recoverable: a
@@ -297,11 +329,6 @@ class GameState {
   // Persists across closing the menu so the player can leave/return mid-trade.
   generalStoreSlots: (ItemStack | null)[] = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
 
-  // ms timestamp when the speed buff ends. 0 = no buff active.
-  // NOTE: this is a GAME-TIME stamp (state.gameTime), not Date.now(). See below.
-  speedBuffEndsAt = 0
-  // Bonus amount granted by the currently-active buff.
-  speedBuffAmount = 0
 
   // ---- pausable game clock ----
   // Accumulated unpaused gameplay time in ms. Advanced once per frame at the
@@ -415,7 +442,10 @@ class GameState {
     this.wood[r * this.woodCols + c] = v
   }
 
-  init(plotCount: number) {
+  // Plots start empty and are created by the scene via createPlotAt — the
+  // starter farm grid plus any town/site plots — so the count isn't fixed here
+  // and grows as the map expands.
+  init() {
     this.gold = 2000
     this.health = MAX_HEALTH
     // Roll this world's seed. generateWorld reads state.worldSeed, so the
@@ -426,28 +456,23 @@ class GameState {
     this.gameTime = 0
     this.paused = false
     this.playerInWorld = true
-    this.plots = Array.from({ length: plotCount }, () => ({
-      built: 'empty' as BuildingType,
-      level: 1,
-      lastTickAt: 0,
-      lastItemTickAt: 0,
-      output: null
-    }))
-    // seed the fixed world buildings — these are hardcoded, not procedurally placed
+    this.plots = []
     this.worldStructures = [
-      { type: 'shop', x: 2400, y: 504, townId: 'northern_town' },
-      { type: 'church', x: 2330, y: 504, townId: 'northern_town' },
-      { type: 'general_store', x: 2700, y: 2304, townId: null },
-      { type: 'land_office', x: 3030, y: 204, townId: 'northern_town' },
-      { type: 'nursery', x: 3100, y: 204, townId: 'northern_town' },
-      { type: 'tanner', x: 3235, y: 355, townId: 'northern_town' },
-      { type: 'gunsmith', x: 3170, y: 204, townId: 'northern_town' },
+      { type: 'shop', x: 2400, y: 504 },
+      { type: 'church', x: 2330, y: 504 },
+      { type: 'general_store', x: 2700, y: 2304 },
+      { type: 'land_office', x: 3030, y: 204 },
+      { type: 'nursery', x: 3100, y: 204 },
+      { type: 'tanner', x: 3235, y: 355 },
+      { type: 'gunsmith', x: 3170, y: 204 },
     ]
     this.discoveredTowns = new Set()
     this.unlockedBuildings = new Set(['mill', 'well', 'workshop'])
     this.dugSpots = []
     this.buriedItems = []
     this.buriedGems = []
+    this.buriedLockboxes = []
+    this.buriedKeys = []
     this.buriedStacks = []
     this.walkableInteriors = {}
     this.walkableInteriorCrates = {}
@@ -462,6 +487,7 @@ class GameState {
     this.woodRows = Math.ceil(INITIAL_WORLD_PX / WOOD_TILE)
     this.wood = new Uint8Array(this.woodCols * this.woodRows)
     this.placedPosts = []
+    this.placedWaters = []
     this.placedGates = []
     this.placedCrates = []
     this.worldWells = []
@@ -470,11 +496,10 @@ class GameState {
     this.honses = []
     this.mounted = null
     this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    //this.inventory[0] = { type: 'gold_lockbox', count: 1 }
-    this.inventory[2] = { type: 'colt', count: 1 }
-    this.inventory[3] = { type: 'rope', count: 64 }
-    this.inventory[1] = { type: 'quirt', count: 1 }
-    this.inventory[4] = { type: 'colt_ammo', count: 100 }
+    this.inventory[0] = { type: 'copper_bar', count: 1 }
+    this.inventory[1] = { type: 'pickaxe', count: 1 }
+    this.inventory[2] = { type: 'wood_wall', count: 64 }
+    this.inventory[3] = { type: 'post', count: 64 }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -654,6 +679,27 @@ class GameState {
     this.health = MAX_HEALTH
     registry.set('playerHealth', this.health)
     return this.health
+  }
+
+  // Apply the gameplay effects of eating a food item: speed buff and healing.
+  // Purely state — visuals (crumbs) are the caller's responsibility.
+  applyFoodEffects(def: ItemDef, registry: Phaser.Data.DataManager) {
+    if (def.healFull) this.healToFull(registry)
+    else if (def.healHearts) this.changeHealth(def.healHearts, registry)
+  }
+
+  // Consume one edible from a hotbar slot and apply its effects. Returns the
+  // eaten item's def (so the caller can play visuals), or null if not edible.
+  eatFromSlot(slot: number, registry: Phaser.Data.DataManager): ItemDef | null {
+    const stack = this.inventory[slot]
+    if (!stack) return null
+    const def = ITEMS[stack.type]
+    if (!def.edible) return null
+    stack.count -= 1
+    if (stack.count <= 0) this.inventory[slot] = null
+    this.applyFoodEffects(def, registry)
+    registry.events.emit('inventory-changed')
+    return def
   }
 
   // Total count of an item type across the hotbar inventory.

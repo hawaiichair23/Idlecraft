@@ -20,7 +20,7 @@
 
 import Phaser from 'phaser'
 import { state } from '../game/state'
-import { ITEMS } from '../items/types'
+import { ITEMS, CONTAINER_PHYSICS, DEFAULT_CONTAINER_PHYSICS } from '../items/types'
 import { getHonseNeckAnchor } from './honse'
 import { getCoyoteNeckAnchor } from './coyote'
 import { getBanditNeckAnchor } from './bandit'
@@ -38,7 +38,11 @@ const ROPE_SEGMENT_SPACING = 6
 // buildings while a held/in-flight rope passes the honse cleanly.
 export const CAT_WORLD = 0x0001
 export const CAT_HONSE = 0x0002
+export const CAT_CRATE = 0x0004
+export const CAT_WATER = 0x0008
 const ROPE_THROW_SPEED = 60
+export const ROPE_LEASH_LENGTH = 140
+export const ROPE_LEASH_SOFT_START = 0.9
 const ROPE_TRANSITION_THROW_SPEED = 40
 const ROPE_THROW_MOUNTED_MULT = 2.3   // mounted throws fire harder so the rope leads a galloping mount
 const ROPE_LIFETIME_MS = 2000          // unattached rope auto-cleanup
@@ -96,9 +100,12 @@ export class RopeController {
     // or despawned in flight (missed). Fires exactly once per rope.
     onRopeConsumed: (() => void) | null = null
 
-    constructor(scene: Phaser.Scene, player: Phaser.GameObjects.Sprite) {
+    private ropeColor: number
+
+    constructor(scene: Phaser.Scene, player: Phaser.GameObjects.Sprite, ropeColor: number = ROPE_COLOR) {
         this.scene = scene
         this.player = player
+        this.ropeColor = ropeColor
     }
 
     // The rope end the player holds: a player end on foot, or the mounted
@@ -263,6 +270,27 @@ export class RopeController {
         return this.endPos(anchor)
     }
 
+    dampenLeash(px: number, py: number, dx: number, dy: number): { dx: number; dy: number } {
+        if (!this.isAttached() || (dx === 0 && dy === 0)) return { dx, dy }
+        const anchor = this.getLeashAnchor()
+        if (!anchor) return { dx, dy }
+        const rx = px - anchor.x
+        const ry = py - anchor.y
+        const dist = Math.sqrt(rx * rx + ry * ry)
+        if (dist < 0.0001) return { dx, dy }
+        const rNormX = rx / dist
+        const rNormY = ry / dist
+        const radial = dx * rNormX + dy * rNormY
+        if (radial <= 0) return { dx, dy }
+        const softStart = ROPE_LEASH_LENGTH * ROPE_LEASH_SOFT_START
+        const t = Math.max(0, Math.min(1, (dist - softStart) / (ROPE_LEASH_LENGTH - softStart)))
+        const scale = 1 - t
+        return {
+            dx: dx - radial * rNormX + radial * scale * rNormX,
+            dy: dy - radial * rNormY + radial * scale * rNormY,
+        }
+    }
+
     // Throw rope toward (toX, toY).
     // Cases:
     //   1. No player-rope exists → spawn a fresh rope from the player.
@@ -346,7 +374,7 @@ export class RopeController {
     // One particle = a small brown rectangle that drifts outward and fades.
     private spawnParticle(x: number, y: number) {
         const size = 2
-        const rect = this.scene.add.rectangle(x, y, size, size, ROPE_COLOR).setDepth(10000)
+        const rect = this.scene.add.rectangle(x, y, size, size, this.ropeColor).setDepth(10000)
         const angle = Math.random() * Math.PI * 2
         const speed = 10 + Math.random() * 15
         const dx = Math.cos(angle) * speed
@@ -571,13 +599,10 @@ export class RopeController {
                     if (newEnd.kind === 'crate') {
                         const crateBody = (this.scene as any).getCrateBody?.(newEnd.index)
                         if (crateBody) {
-                            // Soft, slightly-springy link: low stiffness so the
-                            // tug-of-war between the rope chain and the crate
-                            // body is absorbed instead of snapping (no jitter).
-                            // pointB anchors at the local catch offset so the
-                            // solver tows from the exact spot the rope grabbed.
+                            const crateItem = state.placedCrates[newEnd.index]?.item ?? 'crate'
+                            const phys = CONTAINER_PHYSICS[crateItem] ?? DEFAULT_CONTAINER_PHYSICS
                             rope.crateConstraint = matter.add.constraint(
-                                tip as any, crateBody as any, 0, 0.2,
+                                tip as any, crateBody as any, 0, phys.ropeStiffness,
                                 { pointB: { x: newEnd.offX, y: newEnd.offY } } as any
                             ) as any
                         }
@@ -599,7 +624,7 @@ export class RopeController {
             // redraw the line
             const g = rope.graphics
             g.clear()
-            g.lineStyle(ROPE_THICKNESS, ROPE_COLOR, 1)
+            g.lineStyle(ROPE_THICKNESS, this.ropeColor, 1)
             g.beginPath()
             const first = rope.bodies[0]
             g.moveTo(first.position.x, first.position.y)

@@ -51,7 +51,7 @@ const LUNGE_TRIGGER = 205  // within this of the player, it lunges to attack
 const LUNGE_SPEED = WALK_SPEED + 90
 const LUNGE_REACH = 14      // this close counts as the lunge landing; peel off
 const RETREAT_DIST = 270    // back off to here before returning to roam
-const RAGE_BUILD_MS = 12000 // time roaming to build full rage (closes the ring)
+const RAGE_BUILD_MS = 14000 // time roaming to build full rage (closes the ring)
 const CATCHUP_DIST = 160    // farther than this from its spot = chasing, rage resets
 const RAGE_SHRINK = 0.62    // at full rage the standoff ring shrinks by this much
 

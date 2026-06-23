@@ -94,3 +94,30 @@ export function rollAbandonedHouseChest(
   }
   return out
 }
+
+// ---- LOCKBOX TOOL POOLS ----
+// One tool per lockbox — opening it is the prize. Silver has the basic divergent
+// tools; gold has the rarer ones AND can fall through to silver, so a gold box
+// is never strictly worse than a silver one, only has the upside of the better
+// pool. Weights are equal within each pool to start.
+
+const SILVER_LOCKBOX_POOL: ItemType[] = ['double_jack', 'paul_bunyan']
+const GOLD_LOCKBOX_POOL: ItemType[] = ['toledo_pick', 'wild_bill', 'damascus_pick', 'greedy']
+
+// Probability a gold lockbox rolls from the gold pool (vs falling through to
+// the silver pool). 0.7 = most gold pulls are gold-tier, but a silver-tier
+// consolation can land.
+const GOLD_PRIMARY_CHANCE = 0.7
+
+export function rollLockboxContents(
+  itemType: 'silver_lockbox' | 'gold_lockbox',
+  seed: number,
+): ItemType {
+  const rng = makeRng(seed)
+  if (itemType === 'silver_lockbox') {
+    return SILVER_LOCKBOX_POOL[Math.floor(rng() * SILVER_LOCKBOX_POOL.length)]
+  }
+  // gold: chance to roll the gold pool, else the silver pool
+  const pool = rng() < GOLD_PRIMARY_CHANCE ? GOLD_LOCKBOX_POOL : SILVER_LOCKBOX_POOL
+  return pool[Math.floor(rng() * pool.length)]
+}

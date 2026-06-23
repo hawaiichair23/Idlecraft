@@ -6,6 +6,8 @@ export interface Bandit {
   facingRight: boolean
   facingLockedUntil: number  // gameTime ms; facing won't flip again until past this
   active: boolean            // false until the player crosses the aggro radius (or he's shot); holds at spawn while dormant
+  lastInRangeAt: number      // gameTime ms of the last frame the player was within BANDIT_RANGE; drives the give-up timer
+  returningHome: boolean     // true while walking back to spawn after giving up; clears (and goes dormant) on arrival
   lastPlayerSide: number     // sign of (player.x - b.x) last frame; a flip while dormant means the player crossed his vertical line → wake (he was lying in wait)
   wakeDelayUntil: number     // gameTime ms; set only on a line-crossing wake — he does nothing until past this, then engages
   // gameTime ms of the last shot, for fire-rate cooldown
@@ -34,7 +36,7 @@ export const BANDIT_MAX_HEALTH = 20
 // adds up to BANDIT_FIRE_JITTER_MS of random extra delay so his cadence isn't a
 // metronome.
 export const BANDIT_FIRE_COOLDOWN_MS = 900
-export const BANDIT_FIRE_JITTER_MS = 500
+export const BANDIT_FIRE_JITTER_MS = 700
 // Bandit only shoots when the player is within this distance.
 export const BANDIT_RANGE = 520
 // He stays dormant at his spawn until the player first crosses this radius (or he
@@ -43,9 +45,18 @@ export const BANDIT_AGGRO_RANGE = 250
 // After waking by the player crossing his vertical line, he holds for this long
 // (does nothing) before he starts moving/shooting — a beat as he commits to the chase.
 const LINE_WAKE_DELAY_MS = 900
-// Aim error (radians) added to each shot's angle, same cone as the derringer.
+// Max distance at which slipping past his vertical line (crossing his X) still
+// wakes him. Beyond this the ambush doesn't trigger — you can cross far out.
+const LINE_WAKE_MAX_DIST = 420
+// Once active, if the player stays beyond BANDIT_RANGE (out of contact) for
+// this long, he gives up the chase and walks back to his spawn, going dormant
+// on arrival. Keeps him a territorial guard instead of an endless pursuer.
+const GIVE_UP_MS = 4000
+// How close to home counts as "arrived" when returning, so he re-dormants
+// instead of jittering on the exact spawn pixel.
+const HOME_ARRIVE_DIST = 24
 // The lead solver stays exact; this hand-shake is what makes the bandit beatable.
-export const BANDIT_SPREAD = 0.43
+export const BANDIT_SPREAD = 0.4
 // A bandit holds his ground — a hit staggers him a step, it doesn't launch him.
 // Much lighter than the coyote's dart-back knockback.
 export const BANDIT_KNOCKBACK = 130
@@ -144,6 +155,8 @@ export function createBandit(x: number, y: number): Bandit {
     x, y, vx: 0, vy: 0,
     facingRight: true, facingLockedUntil: 0,
     active: false,
+    lastInRangeAt: 0,
+    returningHome: false,
     lastPlayerSide: 0,
     wakeDelayUntil: 0,
     lastFireAt: 0,
@@ -172,6 +185,7 @@ export function startBanditRetreat(b: Bandit, fromX: number, fromY: number, game
   b.retreatY = ry / len
   b.retreatUntil = gameTime + MELEE_RETREAT_MS
   b.active = true
+  b.returningHome = false   // re-provoked mid-return → abort walk-back, re-engage
 }
 
 // Intercept solve: given a shooter at (bx,by), a target at (px,py) moving at
@@ -483,7 +497,7 @@ export function updateBandits(
     if (!b.active) {
       const side = Math.sign(dx)   // which side of his X the player is on this frame
       // A crossing: the player was on one side last frame and the opposite side now.
-      const crossedLine = b.lastPlayerSide !== 0 && side !== 0 && side !== b.lastPlayerSide
+      const crossedLine = b.lastPlayerSide !== 0 && side !== 0 && side !== b.lastPlayerSide && dist <= LINE_WAKE_MAX_DIST
       b.lastPlayerSide = side
       if (dist <= BANDIT_AGGRO_RANGE || crossedLine) {
         b.active = true
@@ -495,6 +509,36 @@ export function updateBandits(
         continue
       }
     }
+
+    // ---- De-aggro: give up the chase if the player stays out of contact ----
+    // While active, every frame the player is within BANDIT_RANGE refreshes the
+    // contact timer. Out of range past GIVE_UP_MS → he stops chasing and walks
+    // back to spawn. If the player re-enters range during the walk back, he
+    // aborts the return and re-engages. On reaching home he goes fully dormant.
+    if (dist <= BANDIT_RANGE) {
+      b.lastInRangeAt = gameTime
+      b.returningHome = false
+    } else if (!b.returningHome && gameTime - b.lastInRangeAt > GIVE_UP_MS) {
+      b.returningHome = true
+    }
+
+    if (b.returningHome) {
+      const hdx = b.homeX - b.x
+      const hdy = b.homeY - b.y
+      if (hdx * hdx + hdy * hdy <= HOME_ARRIVE_DIST * HOME_ARRIVE_DIST) {
+        // arrived — reset to dormant, watching for the next provocation
+        b.active = false
+        b.returningHome = false
+        b.lastPlayerSide = 0   // don't let a stale side instantly re-trigger the crossing wake
+        b.vx = 0; b.vy = 0
+        updateFacing(b, gameTime, player.x)
+        continue
+      }
+      updateFacing(b, gameTime, b.homeX)
+      steerTo(b, b.homeX, b.homeY, WALK_SPEED, step, collidesAt)
+      continue
+    }
+
 
     // ---- Line-wake hold: just woken by a crossing → do nothing for the delay ----
     // Frozen completely (no facing, no move, no fire) until the beat passes, then

@@ -39,7 +39,7 @@ const HONSE_COLORS: [number, number][] = [
   [0x7A4A2E, 8],    // bay (warm mid-brown)
   [0x1A1A1E, 5],    // black
   [0x4F5359, 5],    // dark steel grey (cool)
-  [0xC8CDD2, 1],    // grey / white (rare)
+  [0xDCE1E6, 1],    // grey / white (rare)
 ]
 const HONSE_COLOR_TOTAL = HONSE_COLORS.reduce((s, c) => s + c[1], 0)
 

@@ -38,6 +38,7 @@ const UNLOCK_ENTRIES: UnlockEntry[] = [
   },
   { type: 'field', buyPrice: 300 },
   { type: 'storage', buyPrice: 400 },
+  { type: 'smithy', buyPrice: 500 },
 ]
 
 // Interior palette is now defined in InteriorBackdrop.ts INTERIOR_PALETTES.

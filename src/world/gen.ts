@@ -21,6 +21,30 @@ export interface BuriedGem {
   type: string
 }
 
+// Buried lockbox: a silver or gold lockbox in the ground. The contents are
+// rolled at world-gen time (seeded), so the same world always yields the same
+// prizes from the same box. Slots 0-2 are tool slots (up to 3 tools, no
+// repeats within a box); slots 3+ are side-loot (bars, gems, ammo, materials),
+// each rolled independently from the matching tier table. Any slot may be
+// null/empty. Dug up via the shovel; the resulting placed lockbox carries
+// this contents preloaded into a locked box.
+export interface BuriedLockbox {
+  x: number
+  y: number
+  lockboxType: 'silver_lockbox' | 'gold_lockbox'
+  tools: (string | null)[]                                 // length 3
+  side: ({ type: string; count: number } | null)[]         // length 9 (slots 3..11)
+}
+
+// Buried key: a silver or gold key in the ground. Same density as lockboxes,
+// same gold/silver split — so finding a matched pair (key + box of same tier)
+// is the proper jackpot. Dug up via the shovel.
+export interface BuriedKey {
+  x: number
+  y: number
+  keyType: 'silver_key' | 'gold_key'
+}
+
 export interface RockFormation {
   x: number
   y: number
@@ -30,6 +54,8 @@ export interface WorldLayout {
   decor: DecorItem[]
   buried: BuriedItem[]
   buriedGems: BuriedGem[]
+  buriedLockboxes: BuriedLockbox[]
+  buriedKeys: BuriedKey[]
   rocks: RockFormation[]
 }
 
@@ -98,6 +124,174 @@ function pickReward(rng: () => number): number {
 
 // Buried gem frequency, independent of coins. Weighted common→rare.
 const BURIED_GEM_DENSITY = 0.00002375
+// Buried lockbox frequency. Rarer than gems — these are the prize containers.
+const BURIED_LOCKBOX_DENSITY = 0.0000045
+// Chance a buried lockbox is GOLD vs silver. Gold is the rarer, bigger prize.
+const LOCKBOX_GOLD_CHANCE = 0.25
+// Tool pools inlined here (not imported from lootTables) to avoid a circular
+// import — gen.ts is upstream of lootTables.ts. Kept in sync with that file.
+const SILVER_LOCKBOX_POOL: string[] = ['double_jack', 'paul_bunyan']
+const GOLD_LOCKBOX_POOL: string[] = ['toledo_pick', 'wild_bill', 'damascus_pick', 'greedy']
+// Same fall-through rule as lootTables.rollLockboxContents.
+const GOLD_PRIMARY_CHANCE = 0.7
+// Per-slot chance a tool slot in a lockbox rolls empty. Slots 0 and 1 use
+// LOCKBOX_SLOT_EMPTY_CHANCE (generous — most boxes give two tools). Slot 2 uses
+// LOCKBOX_THIRD_SLOT_EMPTY_CHANCE, which is higher, so a third tool is the
+// rarer jackpot rather than scaling with the other two.
+const LOCKBOX_SLOT_EMPTY_CHANCE = 0.35
+const LOCKBOX_THIRD_SLOT_EMPTY_CHANCE = 0.6
+const LOCKBOX_TOOL_SLOTS = 3
+// Tool kind classification — used by the roll to bias subsequent slots toward
+// the kind not already in the box, so "two of the same kind" is rarer than
+// "one of each kind" when a lockbox gives multiple tools.
+const TOOL_KIND: Record<string, 'pick' | 'axe'> = {
+  double_jack: 'pick',
+  toledo_pick: 'pick',
+  damascus_pick: 'pick',
+  greedy: 'pick',
+  paul_bunyan: 'axe',
+  wild_bill: 'axe',
+}
+// Weight applied to candidates whose kind is OPPOSITE to a kind already in the
+// box. Same-kind candidates keep weight 1. So with one pick already in the
+// box, an axe candidate is 3x as likely to be picked as another pick of equal
+// pool standing. Doesn't forbid two-of-a-kind, just makes it less common.
+const OPPOSITE_KIND_BIAS = 3
+
+// Side-loot tables for the slots AFTER the 3 tool slots. Each remaining slot
+// rolls independently with a per-slot empty chance; non-empty slots draw a
+// weighted item from the matching tier table. Gold gets the richer table.
+const LOCKBOX_SIDE_EMPTY_CHANCE = 0.05
+
+interface LockboxLootEntry {
+  type: string   // ItemType key
+  min: number
+  max: number
+  weight: number
+}
+
+const SILVER_SIDE_TABLE: LockboxLootEntry[] = [
+  // bars dominate — every box should show multiple types
+  { type: 'iron_bar',   min: 3, max: 8, weight: 30 },
+  { type: 'copper_bar', min: 2, max: 6, weight: 25 },
+  // building materials — the cozy-builder staples, a real reason to crack a box
+  { type: 'wood',       min: 4, max: 10, weight: 10 },
+  { type: 'clay',       min: 3, max: 8, weight: 6 },
+  { type: 'flagstone',  min: 2, max: 6, weight: 2 },
+  { type: 'sandstone',  min: 2, max: 6, weight: 2 },
+  // utility / consumables
+  { type: 'colt_ammo',  min: 5, max: 15, weight: 7 },
+  { type: 'rope',       min: 1, max: 3, weight: 6 },
+  { type: 'leather',    min: 3, max: 8, weight: 6 },
+  { type: 'canvas',     min: 1, max: 3, weight: 4 },
+  { type: 'wheel',      min: 1, max: 2, weight: 3 },
+  { type: 'quirt',      min: 1, max: 1, weight: 2 },
+  { type: 'tart',       min: 1, max: 2, weight: 3 },
+  { type: 'kolache',    min: 1, max: 2, weight: 3 },
+  { type: 'snake_oil',  min: 1, max: 1, weight: 10 },
+  // common gems
+  { type: 'gem_agate',      min: 1, max: 1, weight: 6 },
+  { type: 'gem_chalcedony', min: 1, max: 1, weight: 4 },
+  { type: 'gem_turquoise',  min: 1, max: 1, weight: 4 },
+]
+
+const GOLD_SIDE_TABLE: LockboxLootEntry[] = [
+  // bars dominate — every box should show multiple types
+  { type: 'silver_bar', min: 3, max: 6, weight: 28 },
+  { type: 'gold_bar',   min: 2, max: 4, weight: 22 },
+  { type: 'iron_bar',   min: 4, max: 8, weight: 20 },
+  { type: 'copper_bar', min: 3, max: 6, weight: 18 },
+  // building materials in bigger stacks — cozy-builder payday
+  { type: 'wood',       min: 6, max: 14, weight: 8 },
+  { type: 'flagstone',  min: 4, max: 10, weight: 2 },
+  { type: 'sandstone',  min: 4, max: 10, weight: 2 },
+  { type: 'clay',       min: 5, max: 12, weight: 5 },
+  // storage upgrades — the headline-grade utility drops
+  { type: 'medium_bag', min: 1, max: 1, weight: 3 },
+  { type: 'sack',       min: 1, max: 1, weight: 2 },
+  // utility / consumables
+  { type: 'colt_ammo',  min: 10, max: 25, weight: 5 },
+  { type: 'rope',       min: 2, max: 4, weight: 4 },
+  { type: 'leather',    min: 5, max: 12, weight: 4 },
+  { type: 'canvas',     min: 2, max: 5, weight: 3 },
+  { type: 'wheel',      min: 2, max: 3, weight: 2 },
+  { type: 'quirt',      min: 1, max: 1, weight: 2 },
+  { type: 'tart',       min: 1, max: 3, weight: 2 },
+  { type: 'snake_oil',  min: 1, max: 2, weight: 12 },
+  { type: 'kolache',    min: 1, max: 2, weight: 2 },
+  // gems
+  { type: 'gem_topaz',     min: 1, max: 1, weight: 8 },
+  { type: 'gem_amethyst',  min: 1, max: 1, weight: 6 },
+  { type: 'gem_diamond',   min: 1, max: 1, weight: 3 },
+  { type: 'gem_ruby',      min: 1, max: 1, weight: 3 },
+]
+
+function rollLockboxSide(rng: () => number, table: LockboxLootEntry[]): { type: string; count: number } {
+  const total = table.reduce((s, e) => s + e.weight, 0)
+  let t = rng() * total
+  for (const e of table) {
+    t -= e.weight
+    if (t <= 0) {
+      const span = e.max - e.min
+      const count = e.min + Math.floor(rng() * (span + 1))
+      return { type: e.type, count }
+    }
+  }
+  const last = table[table.length - 1]
+  return { type: last.type, count: last.min }
+}
+
+// Roll the side-loot array for a lockbox. 9 slots, each rolls independently:
+// chance empty, otherwise a weighted draw from the tier table.
+export function rollLockboxSideSlots(rng: () => number, lockboxType: 'silver_lockbox' | 'gold_lockbox'): ({ type: string; count: number } | null)[] {
+  const table = lockboxType === 'gold_lockbox' ? GOLD_SIDE_TABLE : SILVER_SIDE_TABLE
+  const out: ({ type: string; count: number } | null)[] = []
+  for (let i = 0; i < 9; i++) {
+    if (rng() < LOCKBOX_SIDE_EMPTY_CHANCE) { out.push(null); continue }
+    out.push(rollLockboxSide(rng, table))
+  }
+  return out
+}
+
+// Roll the tool array for a lockbox. 3 slots, each independent: chance empty,
+// otherwise a tool from the appropriate pool — but no tool already in this box
+// can be rolled again (no repeats within a box).
+export function rollLockboxTools(rng: () => number, lockboxType: 'silver_lockbox' | 'gold_lockbox'): (string | null)[] {
+  const tools: (string | null)[] = []
+  for (let i = 0; i < LOCKBOX_TOOL_SLOTS; i++) {
+    const emptyChance = i === 2 ? LOCKBOX_THIRD_SLOT_EMPTY_CHANCE : LOCKBOX_SLOT_EMPTY_CHANCE
+    if (rng() < emptyChance) { tools.push(null); continue }
+    // pick pool
+    let pool: string[]
+    if (lockboxType === 'gold_lockbox') {
+      pool = rng() < GOLD_PRIMARY_CHANCE ? GOLD_LOCKBOX_POOL : SILVER_LOCKBOX_POOL
+    } else {
+      pool = SILVER_LOCKBOX_POOL
+    }
+    // remove tools already in this box from the candidate list
+    const candidates = pool.filter(t => !tools.includes(t))
+    if (candidates.length === 0) { tools.push(null); continue }
+    // Kind bias: weight candidates whose kind is opposite to any kind already
+    // in the box. So if a pick is already in, axe candidates get higher weight
+    // (but picks are still possible — just less likely).
+    const presentKinds = new Set(tools.filter((t): t is string => !!t).map(t => TOOL_KIND[t]))
+    const weights = candidates.map(c => {
+      const kind = TOOL_KIND[c]
+      // opposite kind = the box has the other kind already → boost this one
+      const opposite = kind === 'pick' ? presentKinds.has('axe') : presentKinds.has('pick')
+      return opposite ? OPPOSITE_KIND_BIAS : 1
+    })
+    const total = weights.reduce((s, w) => s + w, 0)
+    let r = rng() * total
+    let chosen = candidates[candidates.length - 1]
+    for (let k = 0; k < candidates.length; k++) {
+      r -= weights[k]
+      if (r <= 0) { chosen = candidates[k]; break }
+    }
+    tools.push(chosen)
+  }
+  return tools
+}
 const GEM_RARITY_TABLE: { type: string; weight: number }[] = [
   { type: 'gem_agate',      weight: 30 },
   { type: 'gem_chalcedony', weight: 24 },
@@ -191,6 +385,121 @@ function scatterBuriedGems(
     }
     if (blocked) continue
     out.push({ x: Math.floor(x), y: Math.floor(y), type: pickGem(rng) })
+    placed++
+  }
+}
+
+// Scatter buried lockboxes — same shape as scatterBuriedGems, but each carries
+// a pre-rolled tool reward sealed into the world by the seed. Silver vs gold
+// is rolled per box; the tool inside is rolled from the matching pool.
+function scatterBuriedLockboxes(
+  out: BuriedLockbox[],
+  rng: () => number,
+  opts: GenOpts,
+  count: number,
+  exclusions: { x: number; y: number; radius: number }[],
+  avoid: BuriedItem[],
+  avoidGems: BuriedGem[],
+) {
+  const maxAttempts = count * 30
+  const minSq = BURIED_MIN_SPACING * BURIED_MIN_SPACING
+  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
+  let attempts = 0
+  let placed = 0
+  while (placed < count && attempts < maxAttempts) {
+    attempts++
+    const x = margin + rng() * (opts.worldSize - margin * 2)
+    const y = margin + rng() * (opts.worldSize - margin * 2)
+    let blocked = false
+    for (const ex of exclusions) {
+      const dx = x - ex.x
+      const dy = y - ex.y
+      if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const b of avoid) {
+      const dx = x - b.x
+      const dy = y - b.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const g of avoidGems) {
+      const dx = x - g.x
+      const dy = y - g.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const lb of out) {
+      const dx = x - lb.x
+      const dy = y - lb.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    const isGold = rng() < LOCKBOX_GOLD_CHANCE
+    const lockboxType: 'silver_lockbox' | 'gold_lockbox' = isGold ? 'gold_lockbox' : 'silver_lockbox'
+    const tools = rollLockboxTools(rng, lockboxType)
+    const side = rollLockboxSideSlots(rng, lockboxType)
+    out.push({ x: Math.floor(x), y: Math.floor(y), lockboxType, tools, side })
+    placed++
+  }
+}
+
+// Scatter buried keys — same shape as the lockbox scatter, same density and
+// gold/silver split rate. A buried key is just a key item in the ground; dug
+// up, it drops as the corresponding key ItemType.
+function scatterBuriedKeys(
+  out: BuriedKey[],
+  rng: () => number,
+  opts: GenOpts,
+  count: number,
+  exclusions: { x: number; y: number; radius: number }[],
+  avoid: BuriedItem[],
+  avoidGems: BuriedGem[],
+  avoidLockboxes: BuriedLockbox[],
+) {
+  const maxAttempts = count * 30
+  const minSq = BURIED_MIN_SPACING * BURIED_MIN_SPACING
+  const margin = opts.worldSize * DECOR_EDGE_MARGIN_FRACTION
+  let attempts = 0
+  let placed = 0
+  while (placed < count && attempts < maxAttempts) {
+    attempts++
+    const x = margin + rng() * (opts.worldSize - margin * 2)
+    const y = margin + rng() * (opts.worldSize - margin * 2)
+    let blocked = false
+    for (const ex of exclusions) {
+      const dx = x - ex.x
+      const dy = y - ex.y
+      if (dx * dx + dy * dy < ex.radius * ex.radius) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const b of avoid) {
+      const dx = x - b.x
+      const dy = y - b.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const g of avoidGems) {
+      const dx = x - g.x
+      const dy = y - g.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const lb of avoidLockboxes) {
+      const dx = x - lb.x
+      const dy = y - lb.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    for (const k of out) {
+      const dx = x - k.x
+      const dy = y - k.y
+      if (dx * dx + dy * dy < minSq) { blocked = true; break }
+    }
+    if (blocked) continue
+    const isGold = rng() < LOCKBOX_GOLD_CHANCE
+    const keyType: 'silver_key' | 'gold_key' = isGold ? 'gold_key' : 'silver_key'
+    out.push({ x: Math.floor(x), y: Math.floor(y), keyType })
     placed++
   }
 }
@@ -368,9 +677,17 @@ export function generateWorld(opts: GenOpts): WorldLayout {
   buildPath(decor, rng, PATH_WILDERNESS_TO_TOWN.sx, PATH_WILDERNESS_TO_TOWN.sy, PATH_WILDERNESS_TO_TOWN.ex, PATH_WILDERNESS_TO_TOWN.ey, PATH_SNAKE_AMPLITUDE)
   scatterBuried(buried, rng, opts, coinCount, opts.exclusions)
   scatterBuriedGems(buriedGems, rng, opts, gemCount, opts.exclusions, buried)
+  const buriedLockboxes: BuriedLockbox[] = []
+  const lockboxCount = Math.floor(BURIED_LOCKBOX_DENSITY * worldArea)
+  scatterBuriedLockboxes(buriedLockboxes, rng, opts, lockboxCount, opts.exclusions, buried, buriedGems)
+  const buriedKeys: BuriedKey[] = []
+  // Keys use the same density as lockboxes so they scale together — a world
+  // with N lockboxes has roughly N keys, with the same gold/silver split.
+  const keyCount = Math.floor(BURIED_LOCKBOX_DENSITY * worldArea)
+  scatterBuriedKeys(buriedKeys, rng, opts, keyCount, opts.exclusions, buried, buriedGems, buriedLockboxes)
   scatterRockCluster(rocks, rng, opts, opts.exclusions)
 
-  return { decor, buried, buriedGems, rocks }
+  return { decor, buried, buriedGems, buriedLockboxes, buriedKeys, rocks }
 }
 
 // Scatter decor into a sub-rectangle of the world at the SAME per-area densities
@@ -401,13 +718,17 @@ export function generateRegionBuried(
   region: GenRect,
   seed: number,
   exclusions: { x: number; y: number; radius: number }[] = [],
-): { buried: BuriedItem[]; buriedGems: BuriedGem[] } {
+): { buried: BuriedItem[]; buriedGems: BuriedGem[]; buriedLockboxes: BuriedLockbox[]; buriedKeys: BuriedKey[] } {
   const rng = makeRng(seed)
   const buried: BuriedItem[] = []
   const buriedGems: BuriedGem[] = []
+  const buriedLockboxes: BuriedLockbox[] = []
+  const buriedKeys: BuriedKey[] = []
   const area = region.w * region.h
   const coinCount = Math.floor(BURIED_COIN_DENSITY * area)
   const gemCount = Math.floor(BURIED_GEM_DENSITY * area)
+  const lockboxCount = Math.floor(BURIED_LOCKBOX_DENSITY * area)
+  const keyCount = Math.floor(BURIED_LOCKBOX_DENSITY * area)
   const minSq = BURIED_MIN_SPACING * BURIED_MIN_SPACING
 
   // Spatial hash so spacing checks stay O(1) per placement instead of O(n).
@@ -442,7 +763,7 @@ export function generateRegionBuried(
     bucket.push({ x, y })
   }
 
-  const place = (maxItems: number, isGem: boolean) => {
+  const place = (maxItems: number, kind: 'coin' | 'gem' | 'lockbox' | 'key') => {
     let attempts = 0
     let placed = 0
     const maxAttempts = maxItems * 30
@@ -458,16 +779,30 @@ export function generateRegionBuried(
       if (blocked) continue
       if (conflicts(x, y)) continue
       const fx = Math.floor(x), fy = Math.floor(y)
-      if (isGem) buriedGems.push({ x: fx, y: fy, type: pickGem(rng) })
+      if (kind === 'gem') buriedGems.push({ x: fx, y: fy, type: pickGem(rng) })
+      else if (kind === 'lockbox') {
+        const isGold = rng() < LOCKBOX_GOLD_CHANCE
+        const lockboxType: 'silver_lockbox' | 'gold_lockbox' = isGold ? 'gold_lockbox' : 'silver_lockbox'
+        const tools = rollLockboxTools(rng, lockboxType)
+        const side = rollLockboxSideSlots(rng, lockboxType)
+        buriedLockboxes.push({ x: fx, y: fy, lockboxType, tools, side })
+      }
+      else if (kind === 'key') {
+        const isGold = rng() < LOCKBOX_GOLD_CHANCE
+        const keyType: 'silver_key' | 'gold_key' = isGold ? 'gold_key' : 'silver_key'
+        buriedKeys.push({ x: fx, y: fy, keyType })
+      }
       else buried.push({ x: fx, y: fy, reward: pickReward(rng) })
       addToGrid(x, y)
       placed++
     }
   }
 
-  place(coinCount, false)
-  place(gemCount, true)
-  return { buried, buriedGems }
+  place(coinCount, 'coin')
+  place(gemCount, 'gem')
+  place(lockboxCount, 'lockbox')
+  place(keyCount, 'key')
+  return { buried, buriedGems, buriedLockboxes, buriedKeys }
 }
 
 // Build a pebble trail through a sequence of waypoints. Runs the existing

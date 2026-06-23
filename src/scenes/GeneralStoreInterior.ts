@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { COLORS } from '../colors'
+import { COLORS, FONT } from '../colors'
 import { state, isBag } from '../game/state'
 import { ITEMS, type ItemStack } from '../items/types'
 import { type SlotBinding } from '../ui/SlotBinding'
@@ -23,14 +23,14 @@ export interface GeneralStoreInteriorHandle {
 }
 
 const COLS = 6
-const ROWS = 4
+const ROWS = 3
 const SLOT = 48
 const SLOT_GAP = 4
-const PANEL_PAD = 36
-const TITLE_H = 50
-const TOTAL_H = 36
+const PANEL_PAD = 20
+const TITLE_H = 36
+const TOTAL_H = 28
 const SELL_BTN_H = 44
-const SECTION_GAP = 20
+const SECTION_GAP = 12
 
 export function buildGeneralStoreInterior(
     scene: Phaser.Scene,
@@ -54,7 +54,7 @@ export function buildGeneralStoreInterior(
     const panelH = PANEL_PAD + TITLE_H + SECTION_GAP + TOTAL_H + SECTION_GAP + gridH + SECTION_GAP + SELL_BTN_H + PANEL_PAD
 
     const panelX = w / 2
-    const panelY = playAreaTop + playAreaH / 2
+    const panelY = playAreaTop + playAreaH / 2 - 30
 
     // ---- outer panel ----
     scene.add.nineslice(panelX, panelY, 'menu-bg', undefined, panelW, panelH, 16, 16, 16, 16)
@@ -62,7 +62,7 @@ export function buildGeneralStoreInterior(
 
     // ---- title ----
     const titleY = panelY - panelH / 2 + PANEL_PAD + 16
-    scene.add.bitmapText(panelX, titleY, 'main', 'General Store', 32)
+    scene.add.bitmapText(panelX, titleY, 'main', 'General Store', FONT.title)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
 
     // ---- running total ----
@@ -139,7 +139,7 @@ export function buildGeneralStoreInterior(
     const btnY = gridTop + gridH + SECTION_GAP + SELL_BTN_H / 2
     const btn = scene.add.rectangle(panelX, btnY, 200, SELL_BTN_H, COLORS.uiBarBg).setInteractive()
     registerGrabbable(btn)
-    scene.add.bitmapText(panelX, btnY, 'mainSmall', 'SELL ALL', 24)
+    scene.add.bitmapText(panelX, btnY, 'mainSmall', 'SELL ALL', FONT.title)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiGold)
 
     btn.on('pointerdown', () => {

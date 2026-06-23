@@ -14,9 +14,6 @@ export interface ItemDef {
   edible?: boolean
   // Particle color for eating crumbs. Required when edible.
   crumbColor?: number
-  // Speed bonus granted for FOOD_BUFF_MS when this food is eaten. Required when edible.
-  speedBuff?: number
-  // Hearts restored when consumed (0.5 = half a heart). Snake oil heals a full 1.
   healHearts?: number
   // When true, consuming restores the player to full health regardless of max.
   healFull?: boolean
@@ -37,29 +34,41 @@ export interface ItemDef {
   gunReloadMs?: number
   gunAmmo?: number
   gunFullReloadMs?: number
+  // Mining power for tools. Shown in the inspect tooltip. Higher = fewer hits to
+  // break a rock (base 12 hits, reduced by this value).
+  mining?: number
+  // Melee combat power for tools used as weapons. Shown in the inspect tooltip.
+  combat?: number
+  // Chopping power for axes. Shown in the inspect tooltip. Higher = fewer swings
+  // to fell a tree.
+  chopping?: number
+  // Trait label shown to the right of the item name in the inspect tooltip, in a
+  // dimmer color. A reusable keyword flagging a special property (e.g. 'Lucky').
+  attribute?: string
 }
 
 // Visual budget for slot icons: ~36px on screen leaves room for the slot frame.
 // scale = TARGET_PX / native source size in px.
 const ITEMS_RAW = {
   flour:   { name: 'Flour',   sprite: 'item_flour',   maxStack: 64, scale: 36 / 67, sellPrice: 1 },
-  water:   { name: 'Water',   sprite: 'item_water',   maxStack: 64, scale: 36 / 88, sellPrice: 2 },
-  bread:   { name: 'Bread',   sprite: 'item_bread',   maxStack: 64, scale: 2, edible: true, crumbColor: 0xD4A574, speedBuff: 25, healHearts: 0.5, sellPrice: 7, desc: 'Restores half a heart.' },
-  snake_oil: { name: 'Snake Oil', sprite: 'item_snake_oil', maxStack: 64, scale: 2, edible: true, crumbColor: 0xCAA24A, speedBuff: 25, healFull: true, sellPrice: 15, desc: 'Cures what ails you. Restores full health.' },
+  water:   { name: 'Water',   sprite: 'item_water',   maxStack: 64, scale: 2, sellPrice: 2, activeTool: true, cursorContexts: ['overworld'] },
+  bread:   { name: 'Bread',   sprite: 'item_bread',   maxStack: 64, scale: 2, edible: true, crumbColor: 0xD4A574, healHearts: 0.5, sellPrice: 7, desc: 'A baked food product.' },
+  snake_oil: { name: 'Snake Oil', sprite: 'item_snake_oil', maxStack: 64, scale: 2, edible: true, crumbColor: 0xCAA24A, healFull: true, sellPrice: 15, desc: 'Patent medicine.' },
   shovel:  { name: 'Shovel',  sprite: 'item_shovel',  maxStack: 1,  scale: 3, sellPrice: 40, activeTool: true, cursorContexts: ['overworld', 'field'], desc: 'For digging and burying.' },
-  axe:     { name: 'Axe',     sprite: 'item_axe',     maxStack: 1,  scale: 3, sellPrice: 200, activeTool: true, cursorContexts: ['overworld'], desc: 'For felling trees into wood.' },
+  axe:     { name: 'Axe',     sprite: 'item_axe',     maxStack: 1,  scale: 3, sellPrice: 200, activeTool: true, cursorContexts: ['overworld'], chopping: 1, desc: 'For felling trees into wood.' },
   bag:     { name: 'Bag',     sprite: 'item_bag',     maxStack: 1,  scale: 2, bagCols: 2, bagRows: 2, sellPrice: 100, desc: 'Extra storage.' },
-  medium_bag: { name: 'War Bag', sprite: 'item_medium_bag', maxStack: 1,  scale: 2, bagCols: 3, bagRows: 2, sellPrice: 100, desc: 'Extra storage. Wider than a bag.' },
-  sack:    { name: 'Sack',    sprite: 'item_sack',    maxStack: 1,  scale: 2, bagCols: 4, bagRows: 2, sellPrice: 120, desc: 'Extra storage. Wider still.' },
-  sausage: { name: 'Sausage', sprite: 'item_sausage', maxStack: 64, scale: 2, edible: true, crumbColor: 0xA03828, speedBuff: 25, healHearts: 0.75, sellPrice: 3, desc: 'Restores three-quarters of a heart.' },
-  kolache: { name: 'Kolache', sprite: 'item_kolache', maxStack: 64, scale: 2, edible: true, crumbColor: 0xC49043, speedBuff: 35, healHearts: 1, sellPrice: 8, desc: 'Restores a full heart. A Czech pastry.' },
+  medium_bag: { name: 'War Bag', sprite: 'item_medium_bag', maxStack: 1,  scale: 2, bagCols: 3, bagRows: 2, sellPrice: 100, desc: 'Extra storage.' },
+  sack:    { name: 'Sack',    sprite: 'item_sack',    maxStack: 1,  scale: 2, bagCols: 4, bagRows: 2, sellPrice: 120, desc: 'A lot of storage.' },
+  sausage: { name: 'Sausage', sprite: 'item_sausage', maxStack: 64, scale: 2, edible: true, crumbColor: 0xA03828, healHearts: 0.75, sellPrice: 3, desc: 'A meat product made from pork.' },
+  kolache: { name: 'Kolache', sprite: 'item_kolache', maxStack: 64, scale: 2, edible: true, crumbColor: 0xC49043, healHearts: 1, sellPrice: 8, desc: 'Pig in a blanket.' },
   leather:    { name: 'Leather',    sprite: 'item_leather',    maxStack: 64, scale: 2, sellPrice: 6, desc: 'Tanned animal hide.' },
   twine:      { name: 'Twine',      sprite: 'item_twine',      maxStack: 64, scale: 2, sellPrice: 15 },
   canvas:     { name: 'Canvas',     sprite: 'item_canvas',     maxStack: 64, scale: 2, sellPrice: 40, desc: 'Woven from twine.' },
-  quirt:      { name: 'Quirt',      sprite: 'item_quirt',      maxStack: 1,  scale: 2, sellPrice: 25, activeTool: true, cursorContexts: ['overworld'] },
+  quirt: {
+    name: 'Quirt', sprite: 'item_quirt', maxStack: 1, scale: 2, sellPrice: 25, desc: `A horseman's whip for controlling speed.`, activeTool: true, cursorContexts: ['overworld'] },
   sugar_cane: { name: 'Sugar Cane', sprite: 'item_sugar_cane', maxStack: 64, scale: 2, sellPrice: 2 },
   sugar:      { name: 'Sugar',      sprite: 'item_sugar',      maxStack: 64, scale: 2, sellPrice: 4 },
-  tart:               { name: 'Tart',                sprite: 'item_tart',               maxStack: 64, scale: 2, edible: true, crumbColor: 0xD8A848, speedBuff: 25, healHearts: 0.25, sellPrice: 10, desc: 'Restores a quarter heart. Sweet.' },
+  tart:               { name: 'Tart',                sprite: 'item_tart',               maxStack: 64, scale: 2, edible: true, crumbColor: 0xD8A848, healHearts: 0.25, sellPrice: 10, desc: 'Shortcrust pastry.' },
   cottonwood_sapling: { name: 'Cottonwood Sapling',  sprite: 'item_cottonwood_sapling', maxStack: 64, scale: 2, sellPrice: 20, activeTool: true, cursorContexts: ['overworld'], desc: 'Plant in arable ground. Grows a cottonwood.' },
   hemp:               { name: 'Hemp',                sprite: 'item_hemp',               maxStack: 64, scale: 2, sellPrice: 10, desc: 'Harvested fiber. Used in crafting.' },
   hemp_seed:          { name: 'Hemp Seed',           sprite: 'item_hemp_seed',          maxStack: 64, scale: 2, sellPrice: 5, activeTool: true, cursorContexts: ['field'], desc: 'Plant in a field. Grows hemp.' },
@@ -69,26 +78,38 @@ const ITEMS_RAW = {
   iron_post:          { name: 'Iron Post',           sprite: 'item_iron_post',          maxStack: 64, scale: 2, sellPrice: 20, activeTool: true, cursorContexts: ['overworld'] },
   wood:               { name: 'Wood',                sprite: 'item_wood',               maxStack: 64, scale: 2, sellPrice: 6 },
   plank:              { name: 'Plank',               sprite: 'item_plank',              maxStack: 64, scale: 2, sellPrice: 4, activeTool: true, cursorContexts: ['overworld'] },
-  flagstone:          { name: 'Flagstone',          sprite: 'item_flagstone',          maxStack: 64, scale: 2, sellPrice: 4, activeTool: true, cursorContexts: ['overworld'] },
-  sandstone:          { name: 'Sandstone',          sprite: 'item_sandstone',          maxStack: 64, scale: 2, sellPrice: 4, activeTool: true, cursorContexts: ['overworld'] },
+  flagstone:          { name: 'Flagstone',           sprite: 'item_flagstone',          maxStack: 64, scale: 2, sellPrice: 4, activeTool: true, cursorContexts: ['overworld'] },
+  sandstone:          { name: 'Sandstone',           sprite: 'item_sandstone',          maxStack: 64, scale: 2, sellPrice: 4, activeTool: true, cursorContexts: ['overworld'] },
+  wood_wall:          { name: 'Wood Wall',           sprite: 'wood_wall',               maxStack: 64, scale: 2, sellPrice: 8, activeTool: true, cursorContexts: ['overworld'], desc: 'Wooden wall section.' },
   stone:              { name: 'Stone',               sprite: 'item_stone',              maxStack: 64, scale: 2, sellPrice: 2 },
   clay:               { name: 'Clay',                sprite: 'item_clay',               maxStack: 64, scale: 2, sellPrice: 2, desc: 'Found near riverbanks.' },
   crate:              { name: 'Crate',               sprite: 'item_crate',              maxStack: 64, scale: 2, sellPrice: 30, activeTool: true, cursorContexts: ['overworld'] },
   silver_lockbox:     { name: 'Silver Lockbox',      sprite: 'item_silver_lockbox',     maxStack: 64, scale: 2, sellPrice: 80, activeTool: true, cursorContexts: ['overworld'] },
   gold_lockbox:       { name: 'Gold Lockbox',        sprite: 'item_gold_lockbox',       maxStack: 64, scale: 2, sellPrice: 150, activeTool: true, cursorContexts: ['overworld'] },
   chest:              { name: 'Chest',               sprite: 'item_chest',              maxStack: 64, scale: 2, sellPrice: 60, activeTool: true, cursorContexts: ['overworld'] },
-  pickaxe:            { name: 'Pickaxe',             sprite: 'item_pickaxe',            maxStack: 1,  scale: 3, sellPrice: 400, activeTool: true, cursorContexts: ['overworld'], desc: 'For breaking, prying, and digging.' },
+  pickaxe:            { name: 'Pickaxe',             sprite: 'item_pickaxe',            maxStack: 1,  scale: 3, sellPrice: 400, activeTool: true, cursorContexts: ['overworld'], mining: 1, combat: 1, desc: 'For breaking, prying, and digging.' },
+  damascus_pick:      { name: 'Damascus Steel Pick', sprite: 'item_damascus_pick',      maxStack: 1,  scale: 3, sellPrice: 800, activeTool: true, cursorContexts: ['overworld'], mining: 2, combat: 1, desc: 'Layered steel that shreds stone.' },
+  greedy:             { name: 'Greedy',              sprite: 'item_greedy',             maxStack: 1,  scale: 3, sellPrice: 800, activeTool: true, cursorContexts: ['overworld'], mining: 1, combat: 1, attribute: 'Lucky', desc: 'Takes more than its share from every rock.' },
+  double_jack:        { name: 'Double Jack',         sprite: 'item_double_jack',        maxStack: 1,  scale: 3, sellPrice: 800, activeTool: true, cursorContexts: ['overworld'], mining: 1, combat: 1, attribute: 'Lucky', desc: 'Strikes twice every so often.' },
+  toledo_pick:        { name: 'Toledo Pick',         sprite: 'item_toledo',             maxStack: 1,  scale: 3, sellPrice: 800, activeTool: true, cursorContexts: ['overworld'], mining: 1, combat: 1, attribute: 'Odd', desc: 'Fine steel that mines several deposits at once.' },
+  paul_bunyan:        { name: 'Paul Bunyan',         sprite: 'item_paul_bunyan',        maxStack: 1,  scale: 3, sellPrice: 800, activeTool: true, cursorContexts: ['overworld'], chopping: 2, combat: 1, attribute: 'Odd', desc: 'Chops nearby trees in one swing.' },
+  wild_bill:          { name: 'Wild Bill',           sprite: 'item_wild_bill',          maxStack: 1,  scale: 3, sellPrice: 800, activeTool: true, cursorContexts: ['overworld'], chopping: 1, combat: 2, desc: 'An axe that has seen more men than trees.' },
   coal:               { name: 'Coal',                sprite: 'item_coal',               maxStack: 64, scale: 2 },
   iron:               { name: 'Iron Ore',            sprite: 'item_iron',               maxStack: 64, scale: 2 },
   copper:             { name: 'Copper Ore',          sprite: 'item_copper',             maxStack: 64, scale: 2 },
   silver:             { name: 'Silver Ore',          sprite: 'item_silver',             maxStack: 64, scale: 2 },
   gold:               { name: 'Gold Ore',            sprite: 'item_gold',               maxStack: 64, scale: 2 },
+  iron_bar:           { name: 'Iron Bar',            sprite: 'item_iron_bar',           maxStack: 64, scale: 2, sellPrice: 12 },
+  copper_bar:         { name: 'Copper Bar',          sprite: 'item_copper_bar',         maxStack: 64, scale: 2, sellPrice: 18 },
+  silver_bar:         { name: 'Silver Bar',          sprite: 'item_silver_bar',         maxStack: 64, scale: 2, sellPrice: 30 },
+  gold_bar:           { name: 'Gold Bar',            sprite: 'item_gold_bar',           maxStack: 64, scale: 2, sellPrice: 50 },
+  brand:              { name: 'Brand',               sprite: 'item_brand',              maxStack: 1,  scale: 2, sellPrice: 25, activeTool: true, cursorContexts: ['overworld'], desc: 'A branding iron.' },
   pipe:               { name: 'Pipe',                sprite: 'item_pipe',               maxStack: 64, scale: 2, sellPrice: 20, activeTool: true, cursorContexts: ['overworld'], desc: 'Connects two plots for manufacturing.' },
-  wheel:              { name: 'Wheel',               sprite: 'item_wheel',              maxStack: 64, scale: 2, sellPrice: 12 },
+  wheel:              { name: 'Wheel',               sprite: 'item_wheel',              maxStack: 64, scale: 2, sellPrice: 12, desc: `Accoutrements to a cart.` },
   crafting_cart:      { name: 'Cart',                sprite: 'item_crafting_cart',      maxStack: 1,  scale: 2, sellPrice: 80 },
   fence_gate:         { name: 'Fence Gate',          sprite: 'item_fence_gate',         maxStack: 64, scale: 2, sellPrice: 20, activeTool: true, cursorContexts: ['overworld'], desc: 'To open and close a fence line.' },
-  derringer:          { name: 'Derringer',           sprite: 'item_derringer',          maxStack: 1,  scale: 2, sellPrice: 300, activeTool: true, cursorContexts: ['overworld'], desc: `A small gambler's pistol.`, gunSpread: 0.3, gunReloadMs: 1300 },
-  colt:               { name: 'Colt',                sprite: 'item_colt',               maxStack: 1,  scale: 2, sellPrice: 500, activeTool: true, cursorContexts: ['overworld'], desc: 'A reliable six-shooter.', gunSpread: 0, gunReloadMs: 600, gunAmmo: 5, gunFullReloadMs: 2000 },
+  derringer:          { name: 'Derringer',           sprite: 'item_derringer',          maxStack: 1,  scale: 2, sellPrice: 300, activeTool: true, cursorContexts: ['overworld'], desc: `A small gambler's pistol.`, gunSpread: 0.3, gunReloadMs: 1300, combat: 3 },
+  colt:               { name: 'Colt',                sprite: 'item_colt',               maxStack: 1,  scale: 2, sellPrice: 500, activeTool: true, cursorContexts: ['overworld'], desc: 'A reliable six-shooter.', gunSpread: 0, gunReloadMs: 600, gunAmmo: 5, gunFullReloadMs: 2000, combat: 5 },
   ammo:               { name: 'Ammo',                sprite: 'item_ammo',               maxStack: 100, scale: 2, sellPrice: 1, desc: 'Cartridges for pistols. Sold by the box.' },
   colt_ammo:          { name: '.36 Colt',            sprite: 'item_ammo',               maxStack: 100, scale: 2, sellPrice: 1, desc: '.36 caliber cartridges for the Colt.' },
   silver_key:         { name: 'Silver Key',          sprite: 'item_silver_key',         maxStack: 1,  scale: 2, sellPrice: 50, desc: 'Unlocks a silver lockbox.' },
@@ -110,6 +131,34 @@ export type ItemType = keyof typeof ITEMS_RAW
 // are accessible on any ITEMS[type] lookup. ITEMS_RAW keeps the literal keys
 // that drive ItemType; this is the same object, just typed for consumers.
 export const ITEMS: Record<ItemType, ItemDef> = ITEMS_RAW
+
+export interface ContainerPhysics {
+  mass: number
+  frictionAir: number
+  pushForce: number
+  ropeStiffness: number
+}
+
+export const CONTAINER_PHYSICS: Record<string, ContainerPhysics> = {
+  crate:          { mass: 0.8, frictionAir: 0.06, pushForce: 0.00014, ropeStiffness: 0.5 },
+  chest:          { mass: 1.2, frictionAir: 0.1,  pushForce: 0.0001,  ropeStiffness: 0.15 },
+  silver_lockbox: { mass: 1.2, frictionAir: 0.1,  pushForce: 0.0001,  ropeStiffness: 0.15 },
+  gold_lockbox:   { mass: 1.2, frictionAir: 0.1,  pushForce: 0.0001,  ropeStiffness: 0.15 },
+}
+
+export const DEFAULT_CONTAINER_PHYSICS: ContainerPhysics = CONTAINER_PHYSICS.crate
+
+export const SMELT_RECIPES: Record<string, ItemType> = {
+  iron: 'iron_bar',
+  copper: 'copper_bar',
+  silver: 'silver_bar',
+  gold: 'gold_bar',
+}
+
+export const FUEL_BURN_MS: Record<string, number> = {
+  coal: 30000,
+  wood: 15000,
+}
 
 // A stack of a single item type. Slots hold one of these (or null).
 // `contents` is bag-only — each bag instance carries its own storage.

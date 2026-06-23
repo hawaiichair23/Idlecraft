@@ -1,21 +1,22 @@
 import Phaser from 'phaser'
 import { loadSprites, spriteToTexture } from '../sprites/loader'
-import { spriteColors, recolorHouseRoof } from '../sprites/data'
+import { spriteColors, recolorHouseRoof, WA, lol, iwW } from '../sprites/data'
 import { COLORS, FONT } from '../colors'
 import { UI_BAR_HEIGHT, UI } from './UI'
 import { state, BUILDINGS, getEffectiveTickMs, getStorageCap, createContainerContents, Terrain, TERRAIN_TILE, WOOD_TILE, PLAYER_BASE_SPEED, WORLD_WELL_CAP, type BuiltType } from '../game/state'
 import { previewCraft, consumeCraft } from '../items/recipes'
-import { ITEMS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
-import { generateWorld, generateRegionDecor, generateRegionBuried, buildTrail, scatterTrailTrees, scatterTrailRockClusters, pickHerdSite, makeRng, type GenRect, type DecorItem } from '../world/gen'
+import { ITEMS, CONTAINER_PHYSICS, DEFAULT_CONTAINER_PHYSICS, SMELT_RECIPES, FUEL_BURN_MS, type ItemStack, type ItemDef, type ItemType } from '../items/types'
+import { generateWorld, generateRegionDecor, generateRegionBuried, buildTrail, scatterTrailTrees, scatterTrailRockClusters, pickHerdSite, makeRng, rollLockboxTools, rollLockboxSideSlots, type GenRect, type DecorItem } from '../world/gen'
 import { ChunkTerrain } from '../world/chunkTerrain'
 import { WORLD_STRUCTURES, TOWNS, type WorldStructureType } from '../world/structures'
 import { scatterSites, SITE_TEMPLATES, trailYAtX, type PlacedSite } from '../world/sites'
 import { registerGrabbable } from '../ui/hover'
-import { RopeController, CAT_HONSE } from '../world/ropeController'
+import { RopeController, CAT_HONSE, CAT_WATER, CAT_CRATE, CAT_WORLD, ROPE_LEASH_LENGTH, ROPE_LEASH_SOFT_START } from '../world/ropeController'
 import { updateHonses, getHonseBodyAABB, createHonse, spookHonse, spookHonsesFromShot } from '../world/honse'
 import { updateCoyotes, createCoyote, getCoyoteBodyAABB, getCoyoteMouthAnchor, COYOTE_BITE_RADIUS, COYOTE_BITE_COOLDOWN_MS, COYOTE_BITE_DAMAGE } from '../world/coyote'
 import { updateBandits, createBandit, startBanditRetreat, BANDIT_SPREAD, BANDIT_KNOCKBACK, BANDIT_KNOCKBACK_MS, BANDIT_MUZZLE_DY } from '../world/bandit'
 import type { Bandit } from '../world/bandit'
+import { GunController, spawnCrumbs, spawnCrumbWave, spawnParticles, BULLET_SPEED, damageEnemy, type Bullet } from '../game/combat'
 import { listEnemies } from '../world/enemy'
 import type { EnemyRef } from '../world/enemy'
 import { updateTumbleweeds, clearTumbleweeds } from '../world/tumbleweed'
@@ -29,10 +30,24 @@ const MOUNTED_RAMP_MS = 2200
 const HORSE_GEAR_SPEEDS = [130, 200, 320]                        
 // Permanent westward expansion applied once at world start — the frontier leg
 // toward Fort Worth. Snapped to whole tiles by growWorld. Tune here.
-const PERMANENT_WEST_PX = 50000
+const PERMANENT_WEST_PX = 56000
 // Vertical expansion applied once at world start, north and south of the
 // original band. Same scatter fill as the rest. Snapped to tiles by growWorld.
 const PERMANENT_VERTICAL_PX = 10000
+// Fort Worth footprint. FORT_RECT is the dirt-filled interior; FORT_MARGIN is
+// the buffer added around it (for walls + breathing room) that trees and rocks
+// must stay clear of.
+const FORT_RECT = { minX: -52196, minY: 1444, maxX: -51284, maxY: 2060 }
+const FORT_MARGIN = 100
+const FORT_NO_BUILD = {
+  minX: FORT_RECT.minX - FORT_MARGIN, minY: FORT_RECT.minY - FORT_MARGIN,
+  maxX: FORT_RECT.maxX + FORT_MARGIN, maxY: FORT_RECT.maxY + FORT_MARGIN,
+}
+// Western grass band: the strip of grassland along the far-west (Fort Worth)
+// edge of the world. Width and east-edge fade length are shared by the grass
+// painter and the tree placer so they always cover the same region.
+const GRASS_BAND_W = 8000
+const GRASS_BAND_FADE = 600
 // Trail waypoints: the westward route from the settled area to Fort Worth.
 // Each entry is a bend in the trail — the path snakes between them with the
 // same pebble wobble as the existing wilderness path. Authored positions.
@@ -58,6 +73,7 @@ const TRAIL_WAYPOINTS: { x: number; y: number }[] = [
   ...curveBetween({ x: -41200, y: 2300 }, { x: -43300, y: 2300 }, 50, 14),
 
   { x: -49500, y: 2300 },
+  { x: -51938, y: 2300 },
 ]
 
 // Preston Road: a north-south route branching off the westward trail at ~25%
@@ -91,17 +107,14 @@ const DECOR_CULL_INTERVAL_MS = 200   // cull runs 5x/second, not every frame
 // always instantiated well before it can scroll into actual view — no pop-in.
 const TREE_CULL_MARGIN = 400
 const TREE_CULL_DESTROY_MARGIN = 600   
-const MOUNT_RANGE = 40
-const TOOL_RANGE = 150
-const CRATE_RANGE = 80
-const BODY_LOOT_RANGE = 80   // reach for picking up a dead bandit (E), like a crate
-// Per-frame push force (× body mass) applied when the player shoves a container.
-// Tuned with the body's frictionAir below: enough to move it at a heavy walk,
-// not so much it rockets. Lower = heavier/harder to move.
-const PUSH_FORCE = 0.0012
+const MOUNT_RANGE = 80
+import { TOOL_RANGE, CRATE_RANGE, ACTION_CURSOR, resolveAction, type ItemAction, type WorldContext } from '../game/ItemActionController'
+export { ACTION_CURSOR }
+export type OverworldAction = ItemAction
+const BODY_LOOT_RANGE = 80
 
 const ORE_ROLL_TABLE: { type: ItemType; weight: number }[] = [
-  { type: 'stone',  weight: 69 },
+  { type: 'stone',  weight: 72 },
   { type: 'coal',   weight: 10 },
   { type: 'iron',   weight: 6 },
   { type: 'copper', weight: 3 },
@@ -122,21 +135,16 @@ function rollOre(): ItemType {
 
 // Player sprite offset above honse center while mounted (saddle position).
 const MOUNT_SADDLE_Y = -10
-const FOOD_BUFF_MS = 60000
 
 const PLOT_COLS = 4
 const PLOT_ROWS = 4
 const PLOT_SIZE = 56
 const PLOT_SPACING = 112
-const PLOT_COUNT = PLOT_COLS * PLOT_ROWS
 
-const SPRITE_SCALE = 3   
+const SPRITE_SCALE = 3      
 const PLAYER_SCALE = 2   
 
-const ROPE_LEASH_LENGTH = 140
-const ROPE_LEASH_SOFT_START = 0.9
-
-type ObstacleKind = 'tree' | 'rock' | 'post' | 'building' | 'solid' | 'crate' | 'gate'
+type ObstacleKind = 'tree' | 'rock' | 'post' | 'building' | 'solid' | 'crate' | 'gate' | 'water'
 
 // True if two axis-aligned rectangles overlap. First rect is center+half-extent
 // (px, py, half), second is origin+size (x, y, w, h).
@@ -149,59 +157,6 @@ function boxOverlap(ax: number, ay: number, aw: number, ah: number, bx: number, 
   return ax + aw > bx && ax < bx + bw && ay + ah > by && ay < by + bh
 }
 
-// resolveOverworldAction returns one of these, or null (= no action / default cursor).
-// The `kind` drives both the click handler's dispatch and the cursor texture.
-export type OverworldAction =
-  | { kind: 'untie-rope' }
-  | { kind: 'destroy-post' }
-  | { kind: 'destroy-crate' }
-  | { kind: 'destroy-plot' }
-  | { kind: 'destroy-pipe' }
-  | { kind: 'destroy-wood' }
-  | { kind: 'destroy-gate' }
-  | { kind: 'chop-tree'; sprite: string; scale: number }
-  | { kind: 'mine-rock'; sprite: string; scale: number }
-  | { kind: 'dig'; sprite: string; scale: number }
-  | { kind: 'plant-sapling'; sprite: string; scale: number }
-  | { kind: 'place-post'; sprite: string; scale: number }
-  | { kind: 'place-crate'; sprite: string; scale: number }
-  | { kind: 'place-plank'; sprite: string; scale: number }
-  | { kind: 'place-gate'; sprite: string; scale: number }
-  | { kind: 'throw-rope'; sprite: string; scale: number }
-  | { kind: 'tool-generic'; sprite: string; scale: number }
-  | { kind: 'quirt'; sprite: string; scale: number; gear: number }
-  | { kind: 'aim'; sprite: string; scale: number; bullets?: string }
-  | { kind: 'eat-food'; sprite: string; scale: number }
-  | { kind: 'mount'; sprite: string; scale: number; tint: number | null }
-  | { kind: 'open-crate' }
-  | { kind: 'toggle-gate' }
-
-export const ACTION_CURSOR: Record<OverworldAction['kind'], { texture: string; scale: number } | 'tool'> = {
-  'untie-rope':    { texture: 'cursor_x', scale: 2 },
-  'destroy-post':  { texture: 'cursor_x', scale: 2 },
-  'destroy-crate': { texture: 'cursor_x', scale: 2 },
-  'destroy-plot':  { texture: 'cursor_x', scale: 2 },
-  'destroy-pipe':  { texture: 'cursor_x', scale: 2 },
-  'destroy-wood':  { texture: 'cursor_x', scale: 2 },
-  'destroy-gate':  { texture: 'cursor_x', scale: 2 },
-  'chop-tree':     'tool',
-  'mine-rock':     'tool',
-  'dig':           'tool',
-  'plant-sapling': 'tool',
-  'place-post':    'tool',
-  'place-crate':   'tool',
-  'place-plank':   'tool',
-  'place-gate':    'tool',
-  'throw-rope':    'tool',
-  'tool-generic':  'tool',
-  'quirt':         'tool',
-  'aim':           'tool',
-  'eat-food':      'tool',
-  'mount':         'tool',
-  'open-crate':    { texture: 'cursor_grab', scale: 2 },
-  'toggle-gate':   { texture: 'item_fence_gate', scale: 2 },
-}
-
 interface PlotView {
   x: number
   y: number
@@ -212,6 +167,8 @@ interface PlotView {
 
 export class Overworld extends Phaser.Scene {
   private player!: Phaser.GameObjects.Sprite
+  private troopers: Phaser.GameObjects.Sprite[] = []
+  private trooperShadows: Phaser.GameObjects.Sprite[] = []
   private playerShadow!: Phaser.GameObjects.Sprite
   private ePrompt!: Phaser.GameObjects.Container
   private inPopup = false
@@ -281,6 +238,8 @@ export class Overworld extends Phaser.Scene {
   // same way). Empty plots have no entry.
   private plotBlockerBodies: Map<number, MatterJS.BodyType> = new Map()
   private crateSprites: Phaser.GameObjects.Sprite[] = []
+  private placedWaterContainers: Map<string, Phaser.GameObjects.Container> = new Map()
+  private placedWaterCollision: Map<string, { obs: { x: number; y: number; w: number; h: number; kind: ObstacleKind }; body: MatterJS.BodyType }> = new Map()
   // Dynamic Matter bodies for placed crates
   private crateBodies: MatterJS.BodyType[] = []
   // Public accessor so the rope controller can link a constraint to a crate body.
@@ -290,6 +249,7 @@ export class Overworld extends Phaser.Scene {
   // Honse sprites — parallel to state.honses by index. Position + depth are
   // synced from state each frame in update().
   private honseSprites: Phaser.GameObjects.Sprite[] = []
+  private honseShadows: Phaser.GameObjects.Sprite[] = []
   private coyoteSprites: Phaser.GameObjects.Sprite[] = []
   private banditSprites: Phaser.GameObjects.Sprite[] = []
   // Player velocity (px/sec), derived each frame from position delta. Bandits
@@ -298,10 +258,8 @@ export class Overworld extends Phaser.Scene {
   private playerVY = 0
   private playerLastX = 0
   private playerLastY = 0
-  // Active bullets fired from the derringer. Transient; move in a straight line
-  // each frame, hit coyotes, and despawn off-screen. Not persisted to state.
-  private bullets: { x: number; y: number; vx: number; vy: number; sprite: Phaser.GameObjects.Rectangle; fromBandit: boolean }[] = []
-  private bulletRng: () => number = makeRng(0)
+  // Gun + bullets live in a shared GunController so any scene fires identically.
+  private gun = new GunController(0)
   // Separate seeded stream for bandit dodge decisions, so consuming randomness for
   // dodges doesn't desync the bullet-spread stream (determinism stays intact).
   private banditRng: () => number = makeRng(0)
@@ -309,14 +267,7 @@ export class Overworld extends Phaser.Scene {
   // so drawing loot never shifts combat randomness.
   private lootRng: () => number = makeRng(0)
   private honseRng: () => number = makeRng(0)
-  private lastFireAt = 0
-  private gunAmmo = 5
-  private gunFullReloadUntil = 0
-  // Rounds the in-progress reload will add and charge when it completes. Set by
-  // both reload triggers: a full mag on auto-reload (emptied clip), or just the
-  // missing rounds on a manual R reload. Read once by refillGunIfReloaded.
-  private pendingReloadAmount = 0
-  private lastGunSlot = -1
+  private worldCtx!: WorldContext
   // Carcass sprites, parallel to state.carcasses by index.
   private carcassSprites: Phaser.GameObjects.Sprite[] = []
   // Bandit body sprites, parallel to state.banditBodies by index.
@@ -346,11 +297,15 @@ export class Overworld extends Phaser.Scene {
   private pendingPipeSide: 'top' | 'bottom' | 'left' | 'right' | null = null
 
   private postDragAnchor: { x: number; y: number } | null = null
-  private postDragSpecies: 'post' | 'cedar_post' | 'iron_post' | null = null
+  private waterDragAnchor: { x: number; y: number } | null = null
+  private waterDragGhosts: Phaser.GameObjects.Sprite[] = []
+  private postDragSpecies: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall' | null = null
   // Drag preview composites into a single RenderTexture so overlapping post
   // sprites don't double up their alpha where they meet. Drawn at full opacity,
   // shown at 0.65 as one layer.
   private postDragRT: Phaser.GameObjects.RenderTexture | null = null
+  private waterDragRT: Phaser.GameObjects.RenderTexture | null = null
+  private waterDragStamps: Map<string, Phaser.GameObjects.Sprite> = new Map()
   // One off-display stamp sprite per texture key. draw() in Phaser 4 buffers the
   // command and renders at render() time using the object's CURRENT texture, so a
   // single shared stamp can't have its texture swapped mid-batch — each variant
@@ -380,7 +335,6 @@ export class Overworld extends Phaser.Scene {
     // real art assets — these take priority over the generated pixel sprites
     // (loadSprites in create() skips keys that already exist)
     this.load.image('item_flour', 'flour.png')
-    this.load.image('item_water', 'water.png')
     this.load.image('field_bg', 'field.png')
     this.load.image('field_bg_patched', 'field_patched.png')
     this.load.image('field_sprouts', 'field_sprouts.png')
@@ -391,7 +345,7 @@ export class Overworld extends Phaser.Scene {
 
   create() {
     loadSprites(this)
-    state.init(PLOT_COUNT)
+    state.init()
     this.registry.set('gold', state.gold)
 
     // world background — cream, clickable for +1 gold
@@ -411,6 +365,16 @@ export class Overworld extends Phaser.Scene {
           for (const cell of path) this.tryPlacePost(cell.x, cell.y)
         }
         this.clearPostDragGhosts()
+      }
+      if (this.waterDragAnchor) {
+        const path = this.computeWaterDragPath()
+        if (path.length <= 1) {
+          this.tryPlaceWater(this.waterDragAnchor.x, this.waterDragAnchor.y)
+        } else {
+          for (const cell of path) this.tryPlaceWater(cell.x, cell.y)
+        }
+        this.waterDragAnchor = null
+        this.clearWaterDragGhosts()
       }
     })
     this.worldBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -447,14 +411,15 @@ export class Overworld extends Phaser.Scene {
       }
 
 
-      // While mounted: clicks normally dismount, but destructive actions
-      // (untie rope, destroy post/crate/plot, chop, mine) take precedence —
-      // they're targeted, intentional clicks that should work from horseback.
+      // While mounted: a left-click dismounts ONLY when it lands near the
+      // ridden honse (resolver returns 'dismount'). Destructive actions (untie
+      // rope, destroy post/crate/plot, chop, mine) take precedence — they're
+      // targeted clicks that should work from horseback. Right-click still
+      // dismounts unconditionally (unless it's an eat).
       if (state.mounted !== null) {
         const heldEdible = isRight && drag.isHolding() ? drag.peekEdibleDef() : undefined
         const selectedEdible = isRight ? this.peekSelectedEdibleDef() : undefined
         const rightClickEats = isRight && (heldEdible || selectedEdible)
-        const leftClickDismounts = !isRight && !state.getSelectedTool() && !drag.isHolding()
 
         if (!isRight) {
           const action = this.resolveOverworldAction(p.worldX, p.worldY)
@@ -463,7 +428,7 @@ export class Overworld extends Phaser.Scene {
             || action.kind === 'destroy-pipe'
             || action.kind === 'chop-tree' || action.kind === 'mine-rock')) {
             // skip dismount — fall through to normal action dispatch
-          } else if (leftClickDismounts) {
+          } else if (action?.kind === 'dismount') {
             this.dismount()
             return
           }
@@ -483,11 +448,8 @@ export class Overworld extends Phaser.Scene {
       if (isRight) {
         const heldDef = drag.isHolding() ? drag.peekEdibleDef() : undefined
         if (heldDef && drag.tryEatHeld()) {
+          state.applyFoodEffects(heldDef, this.registry)
           this.spawnCrumbs(this.player.x, this.player.y, heldDef.crumbColor!)
-          state.speedBuffEndsAt = state.gameTime + FOOD_BUFF_MS
-          state.speedBuffAmount = heldDef.speedBuff!
-          if (heldDef.healFull) state.healToFull(this.registry)
-          else if (heldDef.healHearts) state.changeHealth(heldDef.healHearts, this.registry)
           return
         }
         if (this.eatSelectedFood()) return
@@ -509,10 +471,14 @@ export class Overworld extends Phaser.Scene {
       }
       // sapling selected? try to plant on a nearby dirt patch
       if (this.trySaplingPlant(p.worldX, p.worldY)) return
-      // axe selected? try to chop a nearby mature tree, else destroy a post or crate
-      if (state.inventory[state.selectedInventorySlot]?.type === 'axe') {
+      // axe-class tool selected? trigger the full axe action set. Anything
+      // with a `chopping` stat counts (base axe + Paul Bunyan + Wild Bill etc.)
+      // so new axes drop into the same behavior without a hardcoded type list.
+      const heldType = state.inventory[state.selectedInventorySlot]?.type
+      const heldDef = heldType ? ITEMS[heldType] : undefined
+      if (heldDef && heldDef.chopping != null) {
         ui.getCursorController().setAxeSwung(true)
-        if (this.tryAxeEnemy(p.worldX, p.worldY, Overworld.WEAPON_DAMAGE.axe)) return
+        if (this.tryMeleeEnemy(p.worldX, p.worldY, Overworld.WEAPON_DAMAGE.axe)) return
         if (this.tryChop(p.worldX, p.worldY)) return
         if (this.tryAxePost(p.worldX, p.worldY)) return
         if (this.tryAxeCrate(p.worldX, p.worldY)) return
@@ -520,11 +486,13 @@ export class Overworld extends Phaser.Scene {
         if (this.tryDestroyPlot(p.worldX, p.worldY)) return
         if (this.tryDestroyPipe(p.worldX, p.worldY)) return
         if (this.tryPickupWood(p.worldX, p.worldY)) return
+        if (this.tryDestroyWater(p.worldX, p.worldY)) return
       }
       // pickaxe selected? try to mine a nearby rock formation, then fall back
       // to the same destroy targets the axe handles (tree / post / crate).
       if (state.inventory[state.selectedInventorySlot]?.type === 'pickaxe') {
         ui.getCursorController().setAxeSwung(true)
+        if (this.tryMeleeEnemy(p.worldX, p.worldY, Overworld.WEAPON_DAMAGE.pickaxe)) return
         if (this.tryMine(p.worldX, p.worldY)) return
         if (this.tryAxePost(p.worldX, p.worldY)) return
         if (this.tryAxeCrate(p.worldX, p.worldY)) return
@@ -532,6 +500,7 @@ export class Overworld extends Phaser.Scene {
         if (this.tryDestroyPlot(p.worldX, p.worldY)) return
         if (this.tryDestroyPipe(p.worldX, p.worldY)) return
         if (this.tryPickupWood(p.worldX, p.worldY)) return
+        if (this.tryDestroyWater(p.worldX, p.worldY)) return
       }
       if (state.inventory[state.selectedInventorySlot]?.type === 'quirt' && state.mounted !== null) {
         this.horseGear = (this.horseGear + 1) % 3
@@ -539,21 +508,35 @@ export class Overworld extends Phaser.Scene {
       }
       // post selected? start a drag to place a line of posts on release
       const postStack = state.inventory[state.selectedInventorySlot]
-      if (postStack && (postStack.type === 'post' || postStack.type === 'cedar_post' || postStack.type === 'iron_post')) {
-        const POST_GRID = Overworld.POST_GRID
+      if (postStack && (postStack.type === 'post' || postStack.type === 'cedar_post' || postStack.type === 'iron_post' || postStack.type === 'wood_wall')) {
+        const POST_GRID = this.postGridFor(postStack.type)
         const sx = Math.round(p.worldX / POST_GRID) * POST_GRID
         const sy = Math.round(p.worldY / POST_GRID) * POST_GRID
         const dx = sx - this.player.x
         const dy = sy - this.player.y
         if (dx * dx + dy * dy <= TOOL_RANGE * TOOL_RANGE) {
           this.postDragAnchor = { x: sx, y: sy }
-          this.postDragSpecies = postStack.type as 'post' | 'cedar_post' | 'iron_post'
+          this.postDragSpecies = postStack.type as 'post' | 'cedar_post' | 'iron_post' | 'wood_wall'
           return
         }
       }
       // crate selected? try to place it in the world
       if (this.tryPlaceCrate(p.worldX, p.worldY)) return
       if (this.tryPlacePlank(p.worldX, p.worldY)) return
+      // water selected? start a drag to place a line of troughs on release
+      const waterStack = state.inventory[state.selectedInventorySlot]
+      if (waterStack && waterStack.type === 'water') {
+        const T = WOOD_TILE
+        const wb = state.worldBounds
+        const sx = Math.floor((p.worldX - wb.minX) / T) * T + wb.minX + T / 2
+        const sy = Math.floor((p.worldY - wb.minY) / T) * T + wb.minY + T / 2
+        const dx = sx - this.player.x
+        const dy = sy - this.player.y
+        if (dx * dx + dy * dy <= TOOL_RANGE * TOOL_RANGE) {
+          this.waterDragAnchor = { x: sx, y: sy }
+          return
+        }
+      }
       if (this.tryPlaceGate(p.worldX, p.worldY)) return
       // rope selected? Throw goes through the rope controller, which consumes
       // one rope when the throw resolves (caught-and-thrown, or missed).
@@ -561,34 +544,17 @@ export class Overworld extends Phaser.Scene {
       if (sel && sel.type === 'rope' && this.rope.throw(p.worldX, p.worldY)) return
       const selDef = sel ? ITEMS[sel.type] : null
       if (selDef && selDef.gunSpread != null) {
-        if (state.selectedInventorySlot !== this.lastGunSlot) {
-          this.lastFireAt = 0
-          this.gunFullReloadUntil = 0
-          this.gunAmmo = selDef.gunAmmo ?? 1
-          this.lastGunSlot = state.selectedInventorySlot
-        }
-        if (state.gameTime < this.gunFullReloadUntil) return
-        const reloadMs = selDef.gunReloadMs ?? 0
-        if (state.gameTime - this.lastFireAt < reloadMs) return
-        if (selDef.gunAmmo != null && this.gunAmmo <= 0) return
-        this.lastFireAt = state.gameTime
-        this.fireBullet(p.worldX, p.worldY, selDef.gunSpread)
-        if (selDef.gunAmmo != null) {
-          this.gunAmmo--
-          if (this.gunAmmo <= 0) {
-            // Mag emptied — start the reload cooldown. The refill + ammo charge
-            // happen when that cooldown expires (handled above), so the gun is
-            // genuinely empty during the window.
-            this.gunFullReloadUntil = state.gameTime + (selDef.gunFullReloadMs ?? 0)
-            this.pendingReloadAmount = selDef.gunAmmo
-          }
+        if (this.gun.fire(this, this.player.x, this.player.y, p.worldX, p.worldY)) {
+          spookHonsesFromShot(state.honses, this.player.x, this.player.y, state.gameTime, state.mounted)
         }
         return
       }
       if (!state.getSelectedTool() && this.toggleGate(p.worldX, p.worldY)) return
     })
 
-    // 16 plots, evenly spaced, centered on the world
+    // Starter farm: PLOT_COLS×PLOT_ROWS plots, evenly spaced, centered on the
+    // world. Each goes through createPlotAt — the same path site/town plots use,
+    // so there's one plot-creation routine and plots can live anywhere.
     const cx = state.worldBounds.minX + state.worldBounds.width / 2
     const cy = state.worldBounds.minY + state.worldBounds.height / 2
     const totalW = (PLOT_COLS - 1) * PLOT_SPACING
@@ -596,48 +562,9 @@ export class Overworld extends Phaser.Scene {
     const startX = cx - totalW / 2
     const startY = cy - totalH / 2
 
-    let idx = 0
     for (let r = 0; r < PLOT_ROWS; r++) {
       for (let c = 0; c < PLOT_COLS; c++) {
-        const x = startX + c * PLOT_SPACING
-        const y = startY + r * PLOT_SPACING
-        const plotIndex = idx++
-
-        const rect = this.add.rectangle(x, y, PLOT_SIZE, PLOT_SIZE, COLORS.plotFill)
-          .setStrokeStyle(2, COLORS.plotBorder)
-          .setInteractive()
-        registerGrabbable(rect)
-
-        const priceTag = this.add.bitmapText(x, y, 'main', '$', FONT.cost)
-          .setOrigin(0.5, 0.5)
-          .setTint(COLORS.plotPriceTag)
-
-        const view: PlotView = { x, y, priceTag, building: null, nameLabel: null }
-        this.plotViews.push(view)
-
-        rect.on('pointerdown', (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
-          const tool = state.getSelectedTool()
-          const heldType = state.inventory[state.selectedInventorySlot]?.type
-
-          // Pipe placement: two-click flow, resolved by cursor proximity.
-          if (heldType === 'pipe' && p.leftButtonDown()) {
-            ev.stopPropagation()
-            this.handlePipeClick(p.worldX, p.worldY)
-            return
-          }
-
-          if (tool && (tool.cursorContexts ?? ['overworld']).includes('overworld')) {
-            if (heldType === 'axe' || heldType === 'pickaxe') {
-              this.tryDestroyPlot(p.worldX, p.worldY)
-            }
-            return
-          }
-          if (!p.leftButtonDown()) return
-          ev.stopPropagation()
-          if (state.plots[plotIndex].built === 'empty') {
-            this.registry.events.emit('open-build-menu', plotIndex)
-          }
-        })
+        this.createPlotAt(startX + c * PLOT_SPACING, startY + r * PLOT_SPACING)
       }
     }
 
@@ -687,7 +614,7 @@ export class Overworld extends Phaser.Scene {
       exclusions,
       tightExclusions,
     })
-    this.bulletRng = makeRng(state.worldSeed + 7777)
+    this.gun = new GunController(state.worldSeed + 7777)
     this.banditRng = makeRng(state.worldSeed + 9001)
     this.lootRng = makeRng(state.worldSeed + 4242)
     this.honseRng = makeRng(state.worldSeed + 3737)
@@ -703,6 +630,8 @@ export class Overworld extends Phaser.Scene {
     // seed buried items from the layout
     state.buriedItems = layout.buried.map(b => ({ x: b.x, y: b.y, reward: b.reward }))
     state.buriedGems = layout.buriedGems.map(g => ({ x: g.x, y: g.y, type: g.type }))
+    state.buriedLockboxes = layout.buriedLockboxes.map(lb => ({ x: lb.x, y: lb.y, lockboxType: lb.lockboxType, tools: lb.tools.slice(), side: lb.side.slice() }))
+    state.buriedKeys = layout.buriedKeys.map(k => ({ x: k.x, y: k.y, keyType: k.keyType }))
     // restore any dirt patches already in state
     for (const d of state.dugSpots) {
       const sprite = this.add.sprite(d.x, d.y, 'dirt_patch').setScale(2).setDepth(1)
@@ -734,6 +663,10 @@ export class Overworld extends Phaser.Scene {
       this.obstacles.push(obs)
       this.placedGateBodies.set(`${g.x},${g.y}`, this.addBlocker(obs))
     }
+    for (const w of state.placedWaters) {
+      this.addWaterCollision(w.x, w.y)
+    }
+    this.rebuildWaters()
     // restore any placed containers already in state (contents persist on the entry)
     for (const c of state.placedCrates) {
       this.spawnContainer(c.x, c.y, c.item ?? 'crate')
@@ -779,22 +712,9 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // ---- DECOR NEAR LAND OFFICE / NURSERY ---- yuccas grouped next to the Nursery
-    // like potted stock for sale. Cottonwood to the side.
+    // ---- DECOR NEAR LAND OFFICE / NURSERY ---- cottonwood to the side.
     // Land Office at (2930, 104), Nursery at (3000, 104).
     {
-      const yuccaPositions: [number, number][] = [
-        [3120, 210],
-        [3136, 208],
-        [3128, 224],
-        [3144, 222],
-      ]
-      for (const [yx, yy] of yuccaPositions) {
-        this.add.sprite(yx, yy, 'yucca').setScale(2).setDepth(yy)
-        // small footprint so yuccas count as physical for placement systems
-        // (they have no walk-collision by design, but should block gen scatter)
-        this.obstacles.push({ x: yx - 8, y: yy - 8, w: 16, h: 16, kind: 'solid' as ObstacleKind })
-      }
       this.placeTree(3220, 160)
     }
 
@@ -821,14 +741,61 @@ export class Overworld extends Phaser.Scene {
           state.setTerrainAt(gx + tx * TILE, gy + ty * TILE, Terrain.Grass)
         }
       }
-      // Trees on top of the brush.
-      const grovePositions: [number, number][] = [
-        [3780, 2240], [3880, 2200], [3980, 2260], [4060, 2320],
-        [3820, 2340], [3940, 2360], [4040, 2400], [3800, 2440],
-        [3920, 2460], [4000, 2500],
-      ]
-      for (const [tx, ty] of grovePositions) {
-        this.placeTree(tx, ty)
+      // Trees scattered by seeded value noise so they clump like a real grove
+      // (varies per world) instead of fixed hand-placed spots. placeTree decides
+      // alive/dead from the terrain underneath: grass core → living cottonwoods,
+      // salt margin → dead trees. Target 8-12, min-spaced.
+      const TREE_SEED = (state.worldSeed + 9998) >>> 0
+      const noiseRng = makeRng(TREE_SEED)
+      // value-noise field: per integer cell a random value, bilinearly blended
+      const cell = 64
+      const cellVal = (cx2: number, cy2: number) => {
+        let h = (Math.imul(cx2 | 0, 374761393) ^ Math.imul(cy2 | 0, 668265263) ^ TREE_SEED) >>> 0
+        h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
+        return (h >>> 0) / 4294967296
+      }
+      const noiseAt = (x: number, y: number) => {
+        const fx = x / cell, fy = y / cell
+        const x0 = Math.floor(fx), y0 = Math.floor(fy)
+        const sx = fx - x0, sy = fy - y0
+        const n00 = cellVal(x0, y0), n10 = cellVal(x0 + 1, y0)
+        const n01 = cellVal(x0, y0 + 1), n11 = cellVal(x0 + 1, y0 + 1)
+        const ix0 = n00 + (n10 - n00) * sx
+        const ix1 = n01 + (n11 - n01) * sx
+        return ix0 + (ix1 - ix0) * sy
+      }
+      const placedTrees: [number, number][] = []
+      const TREE_SPACING = 70
+      const spacingSq2 = TREE_SPACING * TREE_SPACING
+      const spanX = halfW * TILE, spanY = halfH * TILE
+      const tryPlaceGroveTree = (x: number, y: number) => {
+        const ndx = (x - gx) / spanX, ndy = (y - gy) / spanY
+        if (ndx * ndx + ndy * ndy > 1) return false           // outside grove ellipse
+        for (const [px, py] of placedTrees) {
+          const dx = x - px, dy = y - py
+          if (dx * dx + dy * dy < spacingSq2) return false     // too close to another tree
+        }
+        placedTrees.push([x, y])
+        this.placeTree(x, y)
+        return true
+      }
+      // Candidate sweep over the grove box; the noise threshold makes clumps. Two
+      // passes lowering the threshold so the count lands in 8-12 regardless of seed.
+      const candidates: [number, number, number][] = []   // x, y, noise
+      const STEP = 28
+      for (let y = gy - spanY; y <= gy + spanY; y += STEP) {
+        for (let x = gx - spanX; x <= gx + spanX; x += STEP) {
+          const jx = x + (noiseRng() - 0.5) * STEP
+          const jy = y + (noiseRng() - 0.5) * STEP
+          candidates.push([jx, jy, noiseAt(jx, jy)])
+        }
+      }
+      candidates.sort((a, b) => b[2] - a[2])   // densest-noise first → forms groves
+      // Per-world target count (8-12) so the grove's size varies, not just layout.
+      const targetCount = 8 + Math.floor(noiseRng() * 5)   // 8..12
+      for (const [x, y] of candidates) {
+        if (placedTrees.length >= targetCount) break
+        tryPlaceGroveTree(x, y)
       }
     }
 
@@ -849,6 +816,28 @@ export class Overworld extends Phaser.Scene {
       // ---- CORRAL HOUSE ---- decorative, non-enterable.
       this.placeRoofedHouse(3790, 1480, 3)
     }
+
+    // ---- FORT WORTH PEN ---- a closed post fence out west.
+    this.postBox(-51230, 1444, -49800, 2080, 10, 'post')
+
+    // ---- FORT WOOD WALL ---- bottom wall run.
+    this.postLine(-52176, 2064, -51792, 2064, 48, 'wood_wall')
+    this.postLine(-51696, 2064, -51312, 2064, 48, 'wood_wall')
+    // top wall run.
+    this.postLine(-52200, 1440, -51288, 1440, 48, 'wood_wall')
+    // left and right side runs (vertical).
+    this.postLine(-52200, 1440, -52200, 2064, 24, 'wood_wall')
+    this.postLine(-51288, 1440, -51288, 2064, 24, 'wood_wall')
+    // single wall pieces at the top corners.
+    this.placePost(-52176, 1440, 'wood_wall')
+    this.placePost(-51312, 1440, 'wood_wall')
+    // interior rail fence (L-shape).
+    this.postLine(-51860, 2060, -51860, 1910, 10, 'post')
+    this.postLine(-51860, 1910, -52090, 1910, 10, 'post')
+    // frontier houses in the corner (shared color seed so they match).
+    this.placeRoofedHouse(-52168, 1900, WORLD_STRUCTURES.house_roof.scale, state.worldSeed + 4001)
+    this.placeRoofedHouse(-52132, 1900, WORLD_STRUCTURES.house_roof.scale, state.worldSeed + 4001)
+
 
     // ---- DECOR POSTS ---- surveyed in-game, permanent map furniture.
     {
@@ -888,6 +877,17 @@ export class Overworld extends Phaser.Scene {
     // player at world center. Depth = y, so sprites south of the player render
     // in front and sprites north render behind (standard overhead y-sort).
     this.player = this.add.sprite(cx, cy, 'player').setScale(PLAYER_SCALE).setDepth(cy)
+    {
+      const baseX = -51134, baseY = 2039, spacing = 30, topY = 1480
+      for (let ty = baseY; ty >= topY; ty -= spacing) {
+        const t = this.add.sprite(baseX, ty, 'cavalry_trooper').setScale(PLAYER_SCALE).setDepth(ty)
+        t.setData('dir', 1)
+        this.troopers.push(t)
+        this.trooperShadows.push(
+          this.add.sprite(baseX, ty + 18, 'trooper_shadow').setOrigin(0.5, 0).setScale(PLAYER_SCALE).setDepth(ty - 1).setAlpha(0.22)
+        )
+      }
+    }
     this.playerShadow = this.add.sprite(cx + 4, cy + 10, 'tree_shadow').setScale(1.5).setDepth(cy - 1).setAlpha(0.25)
     // Floating "E" interact prompt — shadow + main letter, matching the hotbar
     // stack-count style. Reused: repositioned above the nearest E-target each
@@ -1000,13 +1000,14 @@ export class Overworld extends Phaser.Scene {
     {
       const T = TERRAIN_TILE
       const wb = state.worldBounds
-      const WIDTH = 2000
+      const WIDTH = GRASS_BAND_W
+      const FADE = GRASS_BAND_FADE
       const eastX = wb.minX + WIDTH
       const grassRng = makeRng(state.worldSeed + 5555)
       for (let y = wb.minY + T / 2; y < wb.minY + wb.height; y += T) {
         for (let x = wb.minX + T / 2; x < eastX; x += T) {
-          const d = (x - wb.minX) / WIDTH
-          const keepProb = d < 0.7 ? 1 : 1 - (d - 0.7) / 0.3
+          const distFromEast = eastX - x
+          const keepProb = distFromEast > FADE ? 1 : distFromEast / FADE
           if (grassRng() > keepProb) continue
           state.setTerrainAt(x, y, Terrain.Grass)
         }
@@ -1033,6 +1034,7 @@ export class Overworld extends Phaser.Scene {
       const southCount = 1
       const northCount = 1
       const houseCount = 2 + Math.floor((((state.worldSeed >>> 0) % 1000) / 1000) * 3)          // 2–4
+      const siteMinX = state.worldBounds.minX + GRASS_BAND_W + 1000
       const southTowns = scatterSites(
         TRAIL_WAYPOINTS,
         state.worldSeed + 8210,
@@ -1040,6 +1042,7 @@ export class Overworld extends Phaser.Scene {
         ['settlement_small'],
         [],
         true, // required — relax spacing before dropping any
+        siteMinX,
       )
       const northTowns = scatterSites(
         TRAIL_WAYPOINTS,
@@ -1048,6 +1051,7 @@ export class Overworld extends Phaser.Scene {
         ['settlement_small_north'],
         southTowns.map(s => s.x),
         true, // required
+        siteMinX,
       )
       const houses = scatterSites(
         TRAIL_WAYPOINTS,
@@ -1055,6 +1059,8 @@ export class Overworld extends Phaser.Scene {
         houseCount,
         ['lone_house'],
         [...southTowns, ...northTowns].map(s => s.x),
+        false,
+        siteMinX,
       )
       for (const site of southTowns) this.instantiateSite(site)
       for (const site of northTowns) this.instantiateSite(site)
@@ -1075,6 +1081,11 @@ export class Overworld extends Phaser.Scene {
     // Wear dirt into grass under the trails: any grass terrain cell within the
     // trail's half-width of the centerline becomes PathDirt (sandy worn track).
     this.stampPathDirt(roadCenterline, 14)
+
+    this.paintDirtRect(FORT_RECT.minX, FORT_RECT.minY, FORT_RECT.maxX, FORT_RECT.maxY)
+    this.paintDirtLine({ x: -51756, y: 2060 }, { x: -51756, y: 2276 }, 1)
+    this.paintDirtLine({ x: -51740, y: 2060 }, { x: -51740, y: 2276 }, 1)
+
 
     // Heavier pebble wear right at the crossing — a dense seeded patch within a
     // 15px radius of the junction so it reads as a well-trafficked intersection.
@@ -1179,6 +1190,8 @@ export class Overworld extends Phaser.Scene {
           }
           if (blocked) continue
           if (pointToPolylineDist(hx, hy, roadCenterline) < 45) continue
+          if (hx >= -51250 && hx <= -49780 && hy >= 1320 && hy <= 2100) continue
+          if (hx >= FORT_NO_BUILD.minX && hx <= FORT_NO_BUILD.maxX && hy >= FORT_NO_BUILD.minY && hy <= FORT_NO_BUILD.maxY) continue
           placed.push({ x: hx, y: hy })
           this.spawnRockFormation(hx, hy)
           // Story-bandit candidacy: eastern half, within 100px of the trail. Keep the
@@ -1242,46 +1255,81 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // ---- FORT WORTH GRASS TREES ---- extra cottonwoods scattered over the
-    // western grass band. Seeded candidates across the band; only those landing
-    // on grass take (placeTree makes grass trees mature), so density follows the
-    // grass falloff for free. Respects spacing, road clearance, plots, blockers.
+    // ---- FORT WORTH GRASS TREES ---- cottonwoods scattered across the western
+    // grass band. Each candidate point places a tree with probability driven by
+    // a seeded value-noise field, so trees cluster where the noise is high and
+    // thin out where it's low — random positions, uneven natural gaps, no fixed
+    // spacing. Only an overlap guard keeps trunks off each other. Trees take on
+    // grass only, so the east-edge fade thins them for free.
     {
       const wb = state.worldBounds
-      const BAND_W = 2000
-      const eastX = wb.minX + BAND_W
-      const GRASS_TREE_SPACING = 110
-      const treeRng = makeRng(state.worldSeed + 9191)
-      const area = BAND_W * wb.height
-      const candidateCount = Math.floor(area * 0.000018)   // moderate cluster
-      const placed: { x: number; y: number }[] = []
-      const spacingSq = GRASS_TREE_SPACING * GRASS_TREE_SPACING
+      const eastX = wb.minX + GRASS_BAND_W
+      const CELL = 280                 // base noise cell — larger = broader clusters
+      const NOISE_FLOOR = 0.38         // noise below this places nothing (open plains)
+      const MAX_PROB = 0.02            // place chance where noise is at its peak
+      const OVERLAP = 30               // min px between trunks
+      const STEP = 18                  // candidate grid resolution
+
+      const TREE_SEED = (state.worldSeed + 9191) >>> 0
+      const rng = makeRng(TREE_SEED)
+      const cellVal = (cx: number, cy: number) => {
+        let h = (Math.imul(cx | 0, 374761393) ^ Math.imul(cy | 0, 668265263) ^ TREE_SEED) >>> 0
+        h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
+        return (h >>> 0) / 4294967296
+      }
+      // One octave of value noise at a given cell size.
+      const sample = (x: number, y: number, cell: number) => {
+        const fx = x / cell, fy = y / cell
+        const x0 = Math.floor(fx), y0 = Math.floor(fy)
+        const sx = fx - x0, sy = fy - y0
+        const n00 = cellVal(x0, y0), n10 = cellVal(x0 + 1, y0)
+        const n01 = cellVal(x0, y0 + 1), n11 = cellVal(x0 + 1, y0 + 1)
+        const ix0 = n00 + (n10 - n00) * sx
+        const ix1 = n01 + (n11 - n01) * sx
+        return ix0 + (ix1 - ix0) * sy
+      }
+      // Three octaves so cluster shapes are irregular, not a single grid.
+      const noiseAt = (x: number, y: number) =>
+        sample(x, y, CELL) * 0.57
+        + sample(x + 9133, y + 4271, CELL / 2) * 0.29
+        + sample(x + 1777, y + 8923, CELL / 4) * 0.14
+
+      const overlapSq = OVERLAP * OVERLAP
       const blockers = this.getBlockers(40)
-      for (let i = 0; i < candidateCount; i++) {
-        const x = Math.floor(wb.minX + treeRng() * BAND_W)
-        const y = Math.floor(wb.minY + treeRng() * wb.height)
-        if (x >= eastX) continue
-        if (state.terrainAt(x, y) !== Terrain.Grass) continue
-        if (pointToPolylineDist(x, y, roadCenterline) < 25) continue
-        let blocked = false
-        for (const p of placed) {
-          const dx = x - p.x
-          const dy = y - p.y
-          if (dx * dx + dy * dy < spacingSq) { blocked = true; break }
+      const placed: { x: number; y: number }[] = []
+
+      for (let gy = wb.minY + STEP / 2; gy < wb.minY + wb.height; gy += STEP) {
+        for (let gx = wb.minX + STEP / 2; gx < eastX; gx += STEP) {
+          const x = gx + (rng() - 0.5) * STEP
+          const y = gy + (rng() - 0.5) * STEP
+          // Noise → place probability. Below the floor, never; above it, scale
+          // up to MAX_PROB at peak noise.
+          const n = noiseAt(x, y)
+          if (n < NOISE_FLOOR) continue
+          const prob = ((n - NOISE_FLOOR) / (1 - NOISE_FLOOR)) * MAX_PROB
+          if (rng() > prob) continue
+          if (state.terrainAt(x, y) !== Terrain.Grass) continue
+          if (pointToPolylineDist(x, y, roadCenterline) < 25) continue
+          if (x >= -51250 && x <= -49780 && y >= 1320 && y <= 2100) continue
+          if (x >= FORT_NO_BUILD.minX && x <= FORT_NO_BUILD.maxX && y >= FORT_NO_BUILD.minY && y <= FORT_NO_BUILD.maxY) continue
+          let blocked = false
+          for (const p of placed) {
+            const dx = x - p.x, dy = y - p.y
+            if (dx * dx + dy * dy < overlapSq) { blocked = true; break }
+          }
+          if (blocked) continue
+          for (const b of blockers) {
+            const dx = x - b.x, dy = y - b.y
+            if (dx * dx + dy * dy < b.radius * b.radius) { blocked = true; break }
+          }
+          if (blocked) continue
+          for (const v of this.plotViews) {
+            if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) { blocked = true; break }
+          }
+          if (blocked) continue
+          placed.push({ x, y })
+          this.placeTree(x, y)
         }
-        if (blocked) continue
-        for (const b of blockers) {
-          const dx = x - b.x
-          const dy = y - b.y
-          if (dx * dx + dy * dy < b.radius * b.radius) { blocked = true; break }
-        }
-        if (blocked) continue
-        for (const v of this.plotViews) {
-          if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) { blocked = true; break }
-        }
-        if (blocked) continue
-        placed.push({ x, y })
-        this.placeTree(x, y)
       }
     }
 
@@ -1297,6 +1345,38 @@ export class Overworld extends Phaser.Scene {
     // update() as the camera moves. The camera is following the player (world
     // center), so worldView is valid here.
     this.cullTrees()
+
+    const ow = this
+    this.worldCtx = {
+      playerX: () => ow.player.x,
+      playerY: () => ow.player.y,
+      canDestroyCrate: (wx, wy) => ow.canDestroyCrate(wx, wy),
+      canDestroyPost: (wx, wy) => ow.canDestroyPost(wx, wy),
+      canDestroyGate: (wx, wy) => ow.canDestroyGate(wx, wy),
+      canDestroyPlot: (wx, wy) => ow.canDestroyPlot(wx, wy),
+      canDestroyPipe: (wx, wy) => ow.canDestroyPipe(wx, wy),
+      canDestroyWood: (wx, wy) => ow.canDestroyWood(wx, wy),
+      canChopTree: (wx, wy) => ow.canChopTree(wx, wy),
+      canMineRock: (wx, wy) => ow.canMineRock(wx, wy),
+      canMount: () => ow.canMount(),
+      canDismount: (wx, wy) => ow.canDismount(wx, wy),
+      canOpenCrate: (wx, wy) => ow.canOpenCrate(wx, wy),
+      canToggleGate: (wx, wy) => ow.canToggleGate(wx, wy),
+      findPlantableDirtSpot: (wx, wy) => !!ow.findPlantableDirtSpot(wx, wy),
+      isNearTiedRope: (wx, wy) => ow.rope.isNearTiedRope(wx, wy, ow.player.x, ow.player.y, TOOL_RANGE),
+      isRopeAttached: () => ow.rope.isAttached(),
+      crateReach: () => CRATE_RANGE,
+      get gunAmmo() { return ow.gun.gunAmmo },
+      set gunAmmo(v) { ow.gun.gunAmmo = v },
+      get lastFireAt() { return ow.gun.lastFireAt },
+      set lastFireAt(v) { ow.gun.lastFireAt = v },
+      get gunFullReloadUntil() { return ow.gun.gunFullReloadUntil },
+      set gunFullReloadUntil(v) { ow.gun.gunFullReloadUntil = v },
+      get lastGunSlot() { return ow.gun.lastGunSlot },
+      set lastGunSlot(v) { ow.gun.lastGunSlot = v },
+      get horseGear() { return ow.horseGear },
+      set horseGear(v) { ow.horseGear = v },
+    }
 
     // launch the UI scene on top
     this.scene.launch('UI')
@@ -1377,6 +1457,52 @@ export class Overworld extends Phaser.Scene {
   private inCombat = false
   // true after exiting an interior; cleared once the player walks out of any door zone.
   private doorCheckBlocked = false
+
+  // Create one buyable plot at a world position. Pushes a fresh PlotState and a
+  // matching PlotView (paired by index) and wires the build/destroy/pipe click
+  // handler. The single creation path for ALL plots — the starter farm grid,
+  // and plots placed by sites/towns — so plots can live anywhere and the array
+  // grows as the map expands. Returns the new plot's index.
+  private createPlotAt(x: number, y: number): number {
+    const plotIndex = state.plots.length
+    state.plots.push({ built: 'empty', level: 1, lastTickAt: 0, lastItemTickAt: 0, output: null })
+
+    const rect = this.add.rectangle(x, y, PLOT_SIZE, PLOT_SIZE, COLORS.plotFill)
+      .setStrokeStyle(2, COLORS.plotBorder)
+      .setInteractive()
+    registerGrabbable(rect)
+
+    const priceTag = this.add.bitmapText(x, y, 'main', '$', FONT.cost)
+      .setOrigin(0.5, 0.5)
+      .setTint(COLORS.plotPriceTag)
+
+    const view: PlotView = { x, y, priceTag, building: null, nameLabel: null }
+    this.plotViews.push(view)
+
+    rect.on('pointerdown', (p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      const heldType = state.inventory[state.selectedInventorySlot]?.type
+
+      // Pipe placement: two-click flow, resolved by cursor proximity. Only on a
+      // built plot — an empty plot has nothing to connect, so the click falls
+      // through to open the build menu instead.
+      if (heldType === 'pipe' && p.leftButtonDown() && state.plots[plotIndex].built !== 'empty') {
+        ev.stopPropagation()
+        this.handlePipeClick(p.worldX, p.worldY)
+        return
+      }
+
+      if (heldType === 'axe' || heldType === 'pickaxe') {
+        if (this.tryDestroyPlot(p.worldX, p.worldY)) return
+      }
+      if (!p.leftButtonDown()) return
+      ev.stopPropagation()
+      if (state.plots[plotIndex].built === 'empty') {
+        this.registry.events.emit('open-build-menu', plotIndex)
+      }
+    })
+
+    return plotIndex
+  }
 
   private enterPlotInterior(plotIndex: number, type: BuiltType) {
     this.preInteriorPos = { x: this.player.x, y: this.player.y }
@@ -1605,6 +1731,15 @@ export class Overworld extends Phaser.Scene {
     const dy = clickY - this.player.y
     if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
 
+    // Cleave axes (chopping >= 2 — Paul Bunyan) also progress chopping on every
+    // other mature/dead tree within this radius of the targeted tree, so one
+    // swing works a whole cluster at once. Radius tuned to ~one tree-spacing
+    // (groves are spaced ~70px) so it sweeps a tight cluster, not the map.
+    const CHOP_CLEAVE_RADIUS = 90
+    const heldType = state.inventory[state.selectedInventorySlot]?.type
+    const heldDef = heldType ? ITEMS[heldType] : undefined
+    const cleave = heldDef && (heldDef.chopping ?? 0) >= 2
+
     // Elliptical hit area, biased DOWNWARD: same horizontal reach (RX), tall
     // (RY), and the center dropped by CHOP_HIT_DOWN so most of the vertical
     // reach is below the trunk center — clicks low on the tree register.
@@ -1618,28 +1753,55 @@ export class Overworld extends Phaser.Scene {
       const tdy = clickY - (t.y + CHOP_HIT_DOWN)
       if ((tdx * tdx) / (CHOP_HIT_RX * CHOP_HIT_RX) + (tdy * tdy) / (CHOP_HIT_RY * CHOP_HIT_RY) > 1) continue
 
-      const key = `${t.x},${t.y}`
-      const sprite = this.matureTreeSprites.get(key)
-      if (sprite) this.shakeTree(sprite, t.x)
-      this.lastChopAt = now   // start cooldown only on a landed hit
-
-      // count the hit; fell on the 7th
-      const hits = (this.treeHits.get(key) ?? 0) + 1
-      if (hits >= Overworld.CHOP_HITS_TO_FELL) {
-        this.treeHits.delete(key)
-        this.fellTree(t, sprite)
-      } else {
-        this.treeHits.set(key, hits)
+      this.applyChopHit(t, 1)
+      // Cleave: also progress chopping on every nearby tree, but with damage
+      // falloff over distance — the further from the click, the smaller the
+      // fractional hit. The clicked tree gets a full 1.0; a tree at the edge
+      // of the cleave radius gets close to 0. So nearby trees fall later than
+      // the targeted one, chaining outward instead of all toppling together.
+      if (cleave) {
+        const cleaveSq = CHOP_CLEAVE_RADIUS * CHOP_CLEAVE_RADIUS
+        for (const other of state.plantedTrees) {
+          if (other === t) continue
+          if (other.stage !== 'mature' && other.stage !== 'dead') continue
+          const odx = other.x - t.x
+          const ody = other.y - t.y
+          const distSq = odx * odx + ody * ody
+          if (distSq > cleaveSq) continue
+          // linear falloff from 1.0 at the targeted tree to 0 at the radius edge
+          const dist = Math.sqrt(distSq)
+          const amount = 1 - dist / CHOP_CLEAVE_RADIUS
+          if (amount <= 0) continue
+          this.applyChopHit(other, amount)
+        }
       }
+      this.lastChopAt = now   // start cooldown only on a landed hit
       return true
     }
     return false
   }
 
+  // Apply one chop hit (possibly fractional) to a tree: shake the sprite,
+  // accumulate the hit amount, and fell on CHOP_HITS_TO_FELL. Fractional hits
+  // come from cleave axes — closer trees get full 1.0 hits, farther ones get
+  // smaller fractions, so a cluster falls in a chain instead of all at once.
+  private applyChopHit(t: { x: number; y: number; stage: string }, amount: number) {
+    const key = `${t.x},${t.y}`
+    const sprite = this.matureTreeSprites.get(key)
+    if (sprite) this.shakeTree(sprite, t.x)
+    const hits = (this.treeHits.get(key) ?? 0) + amount
+    if (hits >= Overworld.CHOP_HITS_TO_FELL) {
+      this.treeHits.delete(key)
+      this.fellTree(t as any, sprite)
+    } else {
+      this.treeHits.set(key, hits)
+    }
+  }
+
   // Melee-click on a nearby coyote: deals `damage`, flashes it red, knocks it
   // back. Shares the axe swing cooldown + range gate with tryChop, so one swing
   // hits a tree OR an enemy. Returns true on a landed hit.
-  private tryAxeEnemy(clickX: number, clickY: number, damage: number): boolean {
+  private tryMeleeEnemy(clickX: number, clickY: number, damage: number): boolean {
     const now = state.gameTime
     if (now - this.lastChopAt < Overworld.CHOP_COOLDOWN_MS) return false
     const dx = clickX - this.player.x
@@ -1946,15 +2108,19 @@ export class Overworld extends Phaser.Scene {
   }
 
   canOpenCrate(wx: number, wy: number): number | null {
-    const hitSq = 26 * 26
+    // The cursor must agree with the click. Each placed crate has a Phaser
+    // sprite (index-aligned with state.placedCrates) whose interactive bounds
+    // are what the click handler tests. Hit-test those same bounds here so
+    // cursor and click share one source of truth — no separate radius math
+    // that can drift away from the sprite's actual clickable area.
     let best = -1
-    let bestDistSq = hitSq
     for (let i = 0; i < state.placedCrates.length; i++) {
-      const c = state.placedCrates[i]
-      const dx = wx - c.x
-      const dy = wy - c.y
-      const dSq = dx * dx + dy * dy
-      if (dSq <= bestDistSq) { bestDistSq = dSq; best = i }
+      const sprite = this.crateSprites[i]
+      if (!sprite) continue
+      const b = sprite.getBounds()
+      if (wx < b.x || wy < b.y || wx > b.x + b.width || wy > b.y + b.height) continue
+      best = i
+      break
     }
     if (best < 0) return null
     const c = state.placedCrates[best]
@@ -2007,122 +2173,24 @@ export class Overworld extends Phaser.Scene {
     return null
   }
 
+  // Mounted dismount target: the ridden honse, if the cursor is within
+  // MOUNT_RANGE of it. Cursor-relative (unlike canMount's player-relative
+  // check) so the player clicks near the honse to get off.
+  canDismount(wx: number, wy: number): number | null {
+    if (state.mounted === null) return null
+    const h = state.honses[state.mounted]
+    if (!h) return null
+    const dx = h.x - wx
+    const dy = h.y - wy
+    return dx * dx + dy * dy <= MOUNT_RANGE * MOUNT_RANGE ? state.mounted : null
+  }
+
   // The resolver. Context: 'overworld' for world clicks/cursor, 'interior'
   // for field/workshop (currently only tools matter there — no position
   // predicates). worldX/worldY are the pointer's world-space coords.
   resolveOverworldAction(worldX: number, worldY: number): OverworldAction | null {
-    // A free-floating drag item owns the cursor — suppress all tool/aim cursors
-    // and world actions so there's only ever one thing on the cursor at a time.
     const ui = this.scene.get('UI') as UI
-    if (ui.getDragController().isHolding()) return null
-
-    const sel = state.inventory[state.selectedInventorySlot]
-    const heldType = sel?.type ?? null
-    const tool = state.getSelectedTool()
-    const isDestroyTool = heldType === 'axe' || heldType === 'pickaxe'
-
-    // 1. Untie rope (interior segments only — ends excluded elsewhere).
-    // Works mounted or on foot.
-    if (this.rope.isNearTiedRope(worldX, worldY, this.player.x, this.player.y, TOOL_RANGE)) {
-      return { kind: 'untie-rope' }
-    }
-
-    // Selected food shows its sprite on the cursor (signals "click to eat").
-    // No range — you're eating it, not aiming at the world.
-    if (heldType !== null && ITEMS[heldType].edible) {
-      return { kind: 'eat-food', sprite: ITEMS[heldType].sprite, scale: ITEMS[heldType].scale }
-    }
-
-    // 2. Destroy targets (axe or pickaxe held)
-    if (isDestroyTool) {
-      if (this.canDestroyPost(worldX, worldY) !== null) return { kind: 'destroy-post' }
-      if (this.canDestroyCrate(worldX, worldY) !== null) return { kind: 'destroy-crate' }
-      if (this.canDestroyGate(worldX, worldY) !== null) return { kind: 'destroy-gate' }
-      if (this.canDestroyPlot(worldX, worldY) !== null) return { kind: 'destroy-plot' }
-      if (this.canDestroyPipe(worldX, worldY) !== null) return { kind: 'destroy-pipe' }
-      if (this.canDestroyWood(worldX, worldY)) return { kind: 'destroy-wood' }
-      if (heldType === 'axe' && this.canChopTree(worldX, worldY)) return { kind: 'chop-tree', sprite: tool!.sprite, scale: tool!.scale }
-    }
-
-    // 3. Mine (pickaxe only)
-    if (heldType === 'pickaxe' && this.canMineRock(worldX, worldY)) {
-      return { kind: 'mine-rock', sprite: tool!.sprite, scale: tool!.scale }
-    }
-
-    // 4. Tool-range actions (shovel, sapling, post, crate, rope)
-    if (tool) {
-      const dx = worldX - this.player.x
-      const dy = worldY - this.player.y
-      const reach = (heldType === 'crate' || heldType === 'chest' || heldType === 'silver_lockbox' || heldType === 'gold_lockbox') ? CRATE_RANGE : TOOL_RANGE
-      const inRange = dx * dx + dy * dy <= reach * reach
-
-      if (heldType === 'shovel' && inRange) {
-        return { kind: 'dig', sprite: tool.sprite, scale: tool.scale }
-      }
-      if (heldType === 'cottonwood_sapling') {
-        if (inRange && this.findPlantableDirtSpot(worldX, worldY)) {
-          return { kind: 'plant-sapling', sprite: tool.sprite, scale: tool.scale }
-        }
-        return null  // sapling held but not over dirt → default cursor
-      }
-      if ((heldType === 'post' || heldType === 'cedar_post' || heldType === 'iron_post') && inRange) {
-        return { kind: 'place-post', sprite: tool.sprite, scale: tool.scale }
-      }
-      if ((heldType === 'crate' || heldType === 'chest') && inRange) {
-        return { kind: 'place-crate', sprite: tool.sprite, scale: tool.scale }
-      }
-      if ((heldType === 'plank' || heldType === 'flagstone' || heldType === 'sandstone') && inRange) {
-        return { kind: 'place-plank', sprite: tool.sprite, scale: tool.scale }
-      }
-      if (heldType === 'fence_gate' && inRange) {
-        return { kind: 'place-gate', sprite: tool.sprite, scale: tool.scale }
-      }
-      if (heldType === 'rope') {
-        return { kind: 'throw-rope', sprite: tool.sprite, scale: tool.scale }
-      }
-      if (heldType === 'quirt') {
-        return { kind: 'quirt', sprite: tool.sprite, scale: tool.scale, gear: this.horseGear }
-      }
-      if (tool.gunSpread != null) {
-        if (state.selectedInventorySlot !== this.lastGunSlot) {
-          this.lastFireAt = 0
-          this.gunFullReloadUntil = 0
-          this.gunAmmo = tool.gunAmmo ?? 1
-          this.lastGunSlot = state.selectedInventorySlot
-        }
-        const reloading = state.gameTime < this.gunFullReloadUntil
-          || state.gameTime - this.lastFireAt < (tool.gunReloadMs ?? 0)
-        const reticle = reloading ? 'crosshair_empty' : 'crosshair'
-        if (tool.gunAmmo != null) {
-          const shown = reloading && state.gameTime < this.gunFullReloadUntil ? 0 : this.gunAmmo
-          return { kind: 'aim', sprite: reticle, scale: 3, bullets: `bullets_${shown}` }
-        }
-        return { kind: 'aim', sprite: reticle, scale: 3 }
-      }
-      // any other tool in range → show its cursor
-      if (inRange) {
-        return { kind: 'tool-generic', sprite: tool.sprite, scale: tool.scale }
-      }
-      return null  // tool held but out of range → default cursor
-    }
-
-    // 5. Mount honse (no tool held, not mounted, rope not attached)
-    if (state.mounted === null && !this.rope.isAttached()) {
-      const mi = this.canMount()
-      if (mi !== null) {
-        const h = state.honses[mi]
-        // cursor shows the hovered honse's own sprite + coat color
-        return { kind: 'mount', sprite: h.sprite, scale: 1, tint: h.tinted ? h.tint : null }
-      }
-    }
-
-    // 6. Open crate (no tool held)
-    if (state.mounted === null) {
-      if (this.canOpenCrate(worldX, worldY) !== null) return { kind: 'open-crate' }
-      if (this.canToggleGate(worldX, worldY) !== null) return { kind: 'toggle-gate' }
-    }
-
-    return null
+    return resolveAction(this.worldCtx, worldX, worldY, ui.getDragController().isHolding())
   }
 
   // Axe-destroy a placed post: removes it from state, sprite, and collision,
@@ -2393,9 +2461,27 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  private makePostObstacle(px: number, py: number) {
-    const POST_W = 15
-    const POST_H = 5
+  private makePostObstacle(px: number, py: number, species?: string) {
+    if (species === 'wood_wall') {
+      const g = this.postGridFor('wood_wall')
+      const vertical = state.placedPosts.some(p => p.x === px && (p.y === py - g || p.y === py + g))
+      if (vertical) {
+        // Vertical run: tall narrow box centered on the segment so it blocks
+        // movement through the sides, and stacks seamlessly with neighbors.
+        const W = 16, H = g
+        return {
+          x: px - W / 2,
+          y: py - H / 2,
+          w: W,
+          h: H,
+          kind: 'post' as ObstacleKind,
+          originX: px,
+          originY: py,
+        }
+      }
+    }
+    const POST_W = species === 'wood_wall' ? 48 : 15
+    const POST_H = species === 'wood_wall' ? 8 : 5
     const bottomY = py + 4
     return {
       x: px - POST_W / 2,
@@ -2411,8 +2497,8 @@ export class Overworld extends Phaser.Scene {
   // Collision body for a post. Deeper than the 5px visual footprint so a fast
   // honse can't step over the thin bar in one frame (vertical-fence tunneling).
   private static POST_BLOCKER_H = 12
-  private makePostBlocker(px: number, py: number): MatterJS.BodyType {
-    const obs = this.makePostObstacle(px, py)
+  private makePostBlocker(px: number, py: number, species?: string): MatterJS.BodyType {
+    const obs = this.makePostObstacle(px, py, species)
     const cy = obs.y + obs.h / 2
     return this.addBlocker({
       x: obs.x,
@@ -2422,12 +2508,57 @@ export class Overworld extends Phaser.Scene {
     })
   }
 
+  private static WATER_SOUTH_TRIM = 8
+
+  private makeWaterObstacle(wx: number, wy: number) {
+    const T = WOOD_TILE
+    const trim = Overworld.WATER_SOUTH_TRIM
+    return { x: wx - T / 2, y: wy - T / 2, w: T, h: T - trim, kind: 'water' as ObstacleKind, originX: wx, originY: wy }
+  }
+
+  private makeWaterBlocker(wx: number, wy: number): MatterJS.BodyType {
+    const T = WOOD_TILE
+    const trim = Overworld.WATER_SOUTH_TRIM
+    return this.matter.add.rectangle(
+      wx,
+      wy - trim / 2,
+      T,
+      T - trim,
+      { isStatic: true, collisionFilter: { category: CAT_WATER, mask: 0xFFFFFFFF } },
+    )
+  }
+
+  private addWaterCollision(wx: number, wy: number) {
+    const key = `${wx},${wy}`
+    const obs = this.makeWaterObstacle(wx, wy)
+    const body = this.makeWaterBlocker(wx, wy)
+    this.obstacles.push(obs)
+    this.placedWaterCollision.set(key, { obs, body })
+  }
+
+  private removeWaterCollision(wx: number, wy: number) {
+    const key = `${wx},${wy}`
+    const entry = this.placedWaterCollision.get(key)
+    if (!entry) return
+    const oi = this.obstacles.indexOf(entry.obs)
+    if (oi !== -1) this.obstacles.splice(oi, 1)
+    this.matter.world.remove(entry.body)
+    this.placedWaterCollision.delete(key)
+  }
+
   private static PLAYER_HALF = 5
 
   // Shared post-placement grid. Player placement (tryPlacePost) and settlement
   // gen (instantiateSite) both snap to this, so authored fences always line up
   // with hand-placed posts no matter what offsets a template uses.
   private static POST_GRID = 10
+
+  // wood walls tile flush on a grid matching their rendered width; posts use
+  // the fine 10px grid.
+  private postGridFor(species?: string): number {
+    return species === 'wood_wall' ? 24 : Overworld.POST_GRID
+  }
+
 
   // Change dismount location if above/under it
   private solidBlockedAt(px: number, py: number, ignoreHonseIndex: number): boolean {
@@ -2476,7 +2607,7 @@ export class Overworld extends Phaser.Scene {
   private static IFRAME_MS = 1000
   // Per-weapon melee damage to enemies. New weapons (tomahawk 5, etc.) slot in
   // here as data — the hit logic reads from this, nothing hardcoded per swing.
-  private static WEAPON_DAMAGE: Record<string, number> = { axe: 3 }
+  private static WEAPON_DAMAGE: Record<string, number> = { axe: 3, pickaxe: 1 }
   // Speed of the knockback impulse applied to an enemy on a melee hit.
   private static ENEMY_KNOCKBACK = 250
   // How long the enemy's AI yields to that impulse (the shove duration).
@@ -2492,116 +2623,68 @@ export class Overworld extends Phaser.Scene {
 
   // Spawn a bullet from the player toward (tx, ty). Straight-line travel,
   // updated each frame in updateBullets. Damages coyotes on contact.
-  private static BULLET_SPEED = 600   // px/sec
-  private static BULLET_DAMAGE = 5    // 3 shots kill a 15-hp coyote
-  private fireBullet(tx: number, ty: number, spread: number) {
-    const dx = tx - this.player.x
-    const dy = ty - this.player.y
-    let angle = Math.atan2(dy, dx)
-    if (spread > 0) angle += (this.bulletRng() - 0.5) * spread
-    const vx = Math.cos(angle) * Overworld.BULLET_SPEED
-    const vy = Math.sin(angle) * Overworld.BULLET_SPEED
-    const sprite = this.add.rectangle(this.player.x, this.player.y, 8, 3, 0x2A2A2A)
-      .setDepth(50000)
-      .setRotation(angle)
-    this.bullets.push({ x: this.player.x, y: this.player.y, vx, vy, sprite, fromBandit: false })
-    spookHonsesFromShot(state.honses, this.player.x, this.player.y, state.gameTime, state.mounted)
-  }
-
+  private static BULLET_DAMAGE = 5
+  private static BANDIT_BULLET_DAMAGE = 1
   // A bandit fires from its own position along a pre-computed unit aim direction
   // (already lead-solved). Same straight-line bullet as the player's, flagged as
-  // hostile so updateBullets tests it against the player instead of enemies.
+  // hostile so the bullet update tests it against the player instead of enemies.
   private fireBanditBullet(bx: number, by: number, dirX: number, dirY: number) {
-    // Perturb the exact lead angle by the bandit's spread cone, same seeded RNG
-    // as the player's gun so shots stay deterministic with worldgen.
-    const angle = Math.atan2(dirY, dirX) + (this.bulletRng() - 0.5) * BANDIT_SPREAD
-    const vx = Math.cos(angle) * Overworld.BULLET_SPEED
-    const vy = Math.sin(angle) * Overworld.BULLET_SPEED
-    const sprite = this.add.rectangle(bx, by, 8, 3, 0x2A2A2A)
-      .setDepth(50000)
-      .setRotation(angle)
-    this.bullets.push({ x: bx, y: by, vx, vy, sprite, fromBandit: true })
+    const angle = Math.atan2(dirY, dirX) + (this.gun.nextSpread() - 0.5) * BANDIT_SPREAD
+    this.gun.spawnHostile(this, bx, by, angle)
   }
 
-  // Move bullets, check coyote hits, despawn off-screen. Called each frame.
+  // Move bullets, check hits against this scene's population, despawn off-screen.
+  // The lifecycle lives in GunController; the hit consequences (enemies, honses,
+  // obstacles, player) are overworld-specific and supplied here as a callback.
   private updateBullets(dt: number) {
-    if (this.bullets.length === 0) return
     const cam = this.cameras.main
     const margin = 80
-    const viewLeft = cam.worldView.x - margin
-    const viewRight = cam.worldView.x + cam.worldView.width + margin
-    const viewTop = cam.worldView.y - margin
-    const viewBottom = cam.worldView.y + cam.worldView.height + margin
+    const bounds = {
+      left: cam.worldView.x - margin,
+      right: cam.worldView.x + cam.worldView.width + margin,
+      top: cam.worldView.y - margin,
+      bottom: cam.worldView.y + cam.worldView.height + margin,
+    }
     const hitSq = 24 * 24
-    const sec = dt / 1000
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const b = this.bullets[i]
-      b.x += b.vx * sec
-      b.y += b.vy * sec
-      b.sprite.setPosition(b.x, b.y)
-
-      let hit = false
-
+    this.gun.update(dt, bounds, (b: Bullet) => {
       if (b.fromBandit) {
-        // Hostile bullet: only the player can be hit.
         const pdx = b.x - this.player.x
         const pdy = b.y - this.player.y
         if (pdx * pdx + pdy * pdy <= hitSq) {
-          this.damagePlayer(Overworld.BULLET_DAMAGE)
-          hit = true
+          this.damagePlayer(Overworld.BANDIT_BULLET_DAMAGE)
+          return true
         }
       } else {
-        // Friendly bullet: any enemy, then (below) honses. Original radius test
-        // around a point lifted 8px toward the sprite center — unchanged feel.
         for (const ref of listEnemies(state.coyotes, state.bandits)) {
           if (ref.enemy.dying) continue
           const cdx = b.x - ref.enemy.x
           const cdy = b.y - (ref.enemy.y - 8)
           if (cdx * cdx + cdy * cdy <= hitSq) {
-            // Bullets bypass the i-frame (melee-only); they always land.
-            // Knock back along the bullet's TRAVEL direction, not from its impact
-            // point (which sits almost on the enemy's center, collapsing the
-            // horizontal push and making him pop straight up). A point just behind
-            // the bullet on its path gives a clean "shoved the way the shot flew".
             this.damageEnemy(ref, Overworld.BULLET_DAMAGE, b.x - b.vx, b.y - b.vy, true)
-            hit = true
-            break
+            return true
           }
         }
       }
 
-      // Obstacles block both teams.
-      if (!hit) {
-        for (const o of this.obstacles) {
-          if (b.x >= o.x && b.x <= o.x + o.w && b.y >= o.y && b.y <= o.y + o.h) {
-            hit = true
-            break
-          }
+      for (const o of this.obstacles) {
+        if (o.kind === 'water') continue
+        if (b.x >= o.x && b.x <= o.x + o.w && b.y >= o.y && b.y <= o.y + o.h) {
+          return true
         }
       }
 
-      // A bullet that hits a horse hurts it — it's a living thing, no matter who
-      // fired. Only exception: your own bullets pass through the mount you're riding
-      // (so you can't shoot your own horse); a bandit's bullet still hits that mount.
-      if (!hit) {
-        for (let hi = 0; hi < state.honses.length; hi++) {
-          if (hi === state.mounted && !b.fromBandit) continue   // your shots don't hit your own mount
-          if (state.honses[hi].dying) continue
-          const hb = getHonseBodyAABB(state.honses[hi])
-          if (b.x >= hb.x && b.x <= hb.x + hb.w && b.y >= hb.y && b.y <= hb.y + hb.h) {
-            this.damageHonse(hi, Overworld.BULLET_DAMAGE, b.x, b.y)
-            hit = true
-            break
-          }
+      for (let hi = 0; hi < state.honses.length; hi++) {
+        if (hi === state.mounted && !b.fromBandit) continue
+        if (state.honses[hi].dying) continue
+        const hb = getHonseBodyAABB(state.honses[hi])
+        if (b.x >= hb.x && b.x <= hb.x + hb.w && b.y >= hb.y && b.y <= hb.y + hb.h) {
+          this.damageHonse(hi, Overworld.BULLET_DAMAGE, b.x, b.y)
+          return true
         }
       }
 
-      // Despawn on hit or once off-screen
-      if (hit || b.x < viewLeft || b.x > viewRight || b.y < viewTop || b.y > viewBottom) {
-        b.sprite.destroy()
-        this.bullets.splice(i, 1)
-      }
-    }
+      return false
+    })
   }
 
   // Damage any enemy: subtract hp, flash red, knock back away from (fromX,fromY),
@@ -2616,30 +2699,7 @@ export class Overworld extends Phaser.Scene {
   // bullets bypass it via ignoreInvuln, since they're already rate-limited by the
   // gun's fire rate and travel time.
   private damageEnemy(ref: EnemyRef, amount: number, fromX: number, fromY: number, ignoreInvuln = false, melee = false): boolean {
-    const e = ref.enemy
-    if (e.dying) return false
-    if (!ignoreInvuln && state.gameTime < e.hurtUntil) return false   // still flashing → melee can't hit
-    e.health -= amount
-    e.hurtUntil = state.gameTime + Overworld.ENEMY_HURT_MS
-    let kx = e.x - fromX
-    let ky = e.y - fromY
-    const len = Math.sqrt(kx * kx + ky * ky) || 1
-    kx /= len; ky /= len
-    const kb = ref.kind === 'bandit' ? BANDIT_KNOCKBACK : Overworld.ENEMY_KNOCKBACK
-    const kbMs = ref.kind === 'bandit' ? BANDIT_KNOCKBACK_MS : Overworld.ENEMY_KNOCKBACK_MS
-    // A dormant bandit who gets shot wakes up — no free kills while he's holding.
-    if (ref.kind === 'bandit') (e as Bandit).active = true
-    e.vx = kx * kb
-    e.vy = ky * kb
-    e.knockbackUntil = state.gameTime + kbMs
-    if (e.health <= 0) {
-      e.dying = true
-      e.hurtUntil = state.gameTime + Overworld.ENEMY_DEATH_MS
-    } else if (melee && ref.kind === 'bandit') {
-      // Swung at and survived → he scrambles away from the attacker.
-      startBanditRetreat(e as Bandit, fromX, fromY, state.gameTime)
-    }
-    return true
+    return damageEnemy(ref, amount, fromX, fromY, ignoreInvuln, melee)
   }
 
   private damageHonse(index: number, amount: number, fromX: number, fromY: number) {
@@ -2722,10 +2782,12 @@ export class Overworld extends Phaser.Scene {
   spawnRockFormation(x: number, y: number) {
     const TILE = 24
     const bottomY = y + TILE / 2   // bump sprite anchor (vertical position)
-    const sortDepth = y + 8 // sort by the rock's ground line (its base)
+    const sortDepth = y 
     const formKey = `${x},${y}`
     const container = this.add.container(0, 0).setDepth(sortDepth)
     this.rockContainers.set(formKey, container)
+    const shadow = this.add.sprite(x + TILE, y + TILE / 2, 'rock_shadow').setScale(3).setDepth(sortDepth - 1).setAlpha(0.22)
+    container.add(shadow)
     const register = (sprite: Phaser.GameObjects.Sprite, tx: number, ty: number) => {
       sprite.setDepth(sortDepth)
       container.add(sprite)
@@ -2749,8 +2811,8 @@ export class Overworld extends Phaser.Scene {
       .setCrop(0, 0, BUMP_W, TOP_ROWS)
     register(top, midX, y - TILE)   
     this.rockMineBlockedBy.set(`${midX},${y}`, `${midX},${y - TILE}`)
-    this.rockBodies.set(formKey, this.addBlocker({ x: x - TILE / 2, y: y - TILE / 2, w: TILE * 3, h: TILE }))
-    const collObs = { x: x - TILE / 2, y: y - TILE / 2, w: TILE * 3, h: TILE, kind: 'rock' as ObstacleKind }
+    this.rockBodies.set(formKey, this.addBlocker({ x: x - TILE / 2, y: y - TILE / 2, w: TILE * 3, h: TILE - 6 }))
+    const collObs = { x: x - TILE / 2, y: y - TILE / 2, w: TILE * 3, h: TILE - 6, kind: 'rock' as ObstacleKind }
     this.obstacles.push(collObs)
     this.rockCollision.set(formKey, collObs)
   }
@@ -2841,29 +2903,13 @@ export class Overworld extends Phaser.Scene {
     this.logPlacement(stack.type, x, y)
   }
 
-  // Consume 1 of the selected hotbar item if it's edible. Returns true if eaten.
-  private tryEatSelected(): boolean {
-    const slot = state.selectedInventorySlot
-    const stack = state.inventory[slot]
-    if (!stack) return false
-    if (!ITEMS[stack.type].edible) return false
-    stack.count -= 1
-    if (stack.count <= 0) state.inventory[slot] = null
-    this.registry.events.emit('inventory-changed')
-    return true
-  }
-
-  // Eat the selected hotbar food (if any), applying crumbs + buffs + heal.
+  // Eat the selected hotbar food (if any), applying crumbs in the world.
   // Returns true if something was eaten. Shared by left and right click so
   // either button consumes the held-in-hotbar food.
   private eatSelectedFood(): boolean {
-    const def = this.peekSelectedEdibleDef()
-    if (!def || !this.tryEatSelected()) return false
+    const def = state.eatFromSlot(state.selectedInventorySlot, this.registry)
+    if (!def) return false
     this.spawnCrumbs(this.player.x, this.player.y, def.crumbColor!)
-    state.speedBuffEndsAt = state.gameTime + FOOD_BUFF_MS
-    state.speedBuffAmount = def.speedBuff!
-    if (def.healFull) state.healToFull(this.registry)
-    else if (def.healHearts) state.changeHealth(def.healHearts, this.registry)
     return true
   }
 
@@ -2879,34 +2925,7 @@ export class Overworld extends Phaser.Scene {
   // Four waves of food-colored crumbs spraying from the player. Pixel-art friendly:
   // no fade, just arc-and-snap-and-vanish like spawnParticles.
   private spawnCrumbs(x: number, y: number, color: number) {
-    this.spawnCrumbWave(x, y, color)
-    this.time.delayedCall(150, () => this.spawnCrumbWave(x, y, color))
-    this.time.delayedCall(300, () => this.spawnCrumbWave(x, y, color))
-    this.time.delayedCall(450, () => this.spawnCrumbWave(x, y, color))
-  }
-
-  private spawnCrumbWave(x: number, y: number, color: number) {
-    const COUNT = 6
-    for (let i = 0; i < COUNT; i++) {
-      const angle = (Math.PI / 6) + Math.random() * (Math.PI * 2 / 3)
-      const speed = 8 + Math.random() * 8
-      const dx = Math.cos(angle) * speed
-      const dy = -Math.sin(angle) * speed
-      const p = this.add.rectangle(x, y - 2, 2, 2, color).setDepth(1001)
-      const landX = Math.floor(x + dx)
-      const landY = Math.floor(y + dy + 10)   // small gravity arc
-      this.tweens.add({
-        targets: p,
-        x: landX,
-        y: landY,
-        duration: 300 + Math.random() * 80,
-        ease: 'Quad.easeOut',
-        onComplete: () => {
-          p.setPosition(landX, landY)
-          this.time.delayedCall(200, () => p.destroy())
-        },
-      })
-    }
+    spawnCrumbs(this, x, y, color)
   }
 
   private trySaplingPlant(clickX: number, clickY: number): boolean {
@@ -2924,34 +2943,35 @@ export class Overworld extends Phaser.Scene {
   private tryPlacePost(clickX: number, clickY: number): boolean {
     const slotIdx = state.selectedInventorySlot
     const stack = state.inventory[slotIdx]
-    if (!stack || (stack.type !== 'post' && stack.type !== 'cedar_post' && stack.type !== 'iron_post')) return false
+    if (!stack || (stack.type !== 'post' && stack.type !== 'cedar_post' && stack.type !== 'iron_post' && stack.type !== 'wood_wall')) return false
     const dx = clickX - this.player.x
     const dy = clickY - this.player.y
     if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
-    const species = stack.type   // 'post' | 'cedar_post'
+    const species = stack.type
 
-    const POST_GRID = Overworld.POST_GRID
+    const POST_GRID = this.postGridFor(species)
     const x = Math.round(clickX / POST_GRID) * POST_GRID
     const y = Math.round(clickY / POST_GRID) * POST_GRID
 
-    // refuse if a post already occupies this exact grid cell. 
     if (this.placedPostSprites.has(`${x},${y}`)) return false
 
-    // refuse if inside any plot footprint
     for (const v of this.plotViews) {
       if (Math.abs(x - v.x) < PLOT_SIZE / 2 && Math.abs(y - v.y) < PLOT_SIZE / 2) return false
     }
-    // refuse if inside any world structure footprint (~32px square)
+    const STRUCTURE_KEEPOUT = 18
     for (const s of state.worldStructures) {
-      if (Math.abs(x - s.x) < 32 && Math.abs(y - s.y) < 32) return false
+      if (Math.abs(x - s.x) < STRUCTURE_KEEPOUT && Math.abs(y - s.y) < STRUCTURE_KEEPOUT) return false
     }
-    // refuse if the post's base would overlap any existing obstacle except other posts
-    const newObs = this.makePostObstacle(x, y)
+    const newObs = this.makePostObstacle(x, y, species)
+    const POST_OBSTACLE_SLACK = 8
     for (const o of this.obstacles) {
       if (o.kind === 'post') continue
-      if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, o.x, o.y, o.w, o.h)) return false
+      const ox = o.x + POST_OBSTACLE_SLACK
+      const oy = o.y + POST_OBSTACLE_SLACK
+      const ow = Math.max(0, o.w - POST_OBSTACLE_SLACK * 2)
+      const oh = Math.max(0, o.h - POST_OBSTACLE_SLACK * 2)
+      if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, ox, oy, ow, oh)) return false
     }
-    // refuse if the post's base would overlap any honse body
     for (const h of state.honses) {
       const b = getHonseBodyAABB(h)
       if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, b.x, b.y, b.w, b.h)) return false
@@ -2963,7 +2983,7 @@ export class Overworld extends Phaser.Scene {
     state.placedPosts.push({ x, y, species })
     this.spawnPostSprite(x, y, species)
     this.obstacles.push(newObs)
-    this.placedPostBodies.set(`${x},${y}`, this.makePostBlocker(x, y))
+    this.placedPostBodies.set(`${x},${y}`, this.makePostBlocker(x, y, species))
     this.logPlacement(species, x, y)
     this.refreshPostNeighbors(x, y)
 
@@ -3018,7 +3038,8 @@ export class Overworld extends Phaser.Scene {
     const sprite = this.add.sprite(x, y, def.sprite).setScale(def.scale).setDepth(y - 8).setInteractive()
     this.attachCrateOpenHandler(sprite)
     this.crateSprites.push(sprite)
-    const cbody = this.matter.add.rectangle(x, y, w, h, { frictionAir: 0.4 })
+    const phys = CONTAINER_PHYSICS[item] ?? DEFAULT_CONTAINER_PHYSICS
+    const cbody = this.matter.add.rectangle(x, y, w, h, { frictionAir: phys.frictionAir, mass: phys.mass, collisionFilter: { category: CAT_CRATE, mask: CAT_WORLD | CAT_CRATE } })
     // Lock rotation: the sprite always draws upright, so the body must not spin
     // (otherwise the rope anchor / constraint pointB drift off the visual box).
     this.matter.body.setInertia(cbody, Infinity)
@@ -3097,6 +3118,95 @@ export class Overworld extends Phaser.Scene {
     if (stack.count <= 0) state.inventory[slotIdx] = null
     this.registry.events.emit('inventory-changed')
     return true
+  }
+
+  private tryPlaceWater(clickX: number, clickY: number): boolean {
+    const slotIdx = state.selectedInventorySlot
+    const stack = state.inventory[slotIdx]
+    if (!stack || stack.type !== 'water') return false
+    const dx = clickX - this.player.x
+    const dy = clickY - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+    const T = WOOD_TILE
+    const wb = state.worldBounds
+    const x = Math.floor((clickX - wb.minX) / T) * T + wb.minX + T / 2
+    const y = Math.floor((clickY - wb.minY) / T) * T + wb.minY + T / 2
+    if (state.placedWaters.some(w => w.x === x && w.y === y)) return false
+    const newObs = this.makeWaterObstacle(x, y)
+    for (const o of this.obstacles) {
+      if (o.kind === 'water') continue
+      if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, o.x, o.y, o.w, o.h)) return false
+    }
+    const half = Overworld.PLAYER_HALF
+    if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h,
+      this.player.x - half, this.player.y - half, half * 2, half * 2)) return false
+    for (const h of state.honses) {
+      const b = getHonseBodyAABB(h)
+      if (boxOverlap(newObs.x, newObs.y, newObs.w, newObs.h, b.x, b.y, b.w, b.h)) return false
+    }
+    state.placedWaters.push({ x, y })
+    this.addWaterCollision(x, y)
+    this.rebuildWaters()
+    this.logPlacement('water', x, y)
+    stack.count -= 1
+    if (stack.count <= 0) state.inventory[slotIdx] = null
+    this.registry.events.emit('inventory-changed')
+    return true
+  }
+
+  private tryDestroyWater(clickX: number, clickY: number): boolean {
+    const dx = clickX - this.player.x
+    const dy = clickY - this.player.y
+    if (dx * dx + dy * dy > TOOL_RANGE * TOOL_RANGE) return false
+    const T = WOOD_TILE
+    const wb = state.worldBounds
+    const x = Math.floor((clickX - wb.minX) / T) * T + wb.minX + T / 2
+    const y = Math.floor((clickY - wb.minY) / T) * T + wb.minY + T / 2
+    const i = state.placedWaters.findIndex(w => w.x === x && w.y === y)
+    if (i < 0) return false
+    state.placedWaters.splice(i, 1)
+    this.removeWaterCollision(x, y)
+    this.rebuildWaters()
+    this.dropStack(x, y, { type: 'water', count: 1 })
+    return true
+  }
+
+  private rebuildWaters() {
+    for (const c of this.placedWaterContainers.values()) c.destroy(true)
+    this.placedWaterContainers.clear()
+    const T = WOOD_TILE
+    const scale = ITEMS['water'].scale
+    const waColor = Phaser.Display.Color.HexStringToColor(WA).color
+    const has = (cx: number, cy: number) => state.placedWaters.some(w => w.x === cx && w.y === cy)
+    for (const w of state.placedWaters) {
+      const { x, y } = w
+      const container = this.add.container(0, 0).setDepth(y - 28)
+      this.placedWaterContainers.set(`${x},${y}`, container)
+      const right = has(x + T, y)
+      const left = has(x - T, y)
+      const below = has(x, y + T)
+      const tex = left && right ? 'item_water_middle'
+        : right && below ? 'item_water_right_below'
+        : left && below ? 'item_water_left_below'
+        : right ? 'item_water_right'
+        : below ? 'item_water_below'
+        : left ? 'item_water_left'
+        : 'item_water'
+      container.add(this.add.sprite(x, y, tex).setScale(scale))
+    }
+    for (const w of state.placedWaters) {
+      const { x, y } = w
+      const rects = this.add.container(0, 0).setDepth(y - 27)
+      this.placedWaterContainers.set(`r${x},${y}`, rects)
+      if (has(x - T, y)) rects.add(this.add.rectangle(x - T / 2, y - 4, T, 8, waColor))
+      if (has(x + T, y)) rects.add(this.add.rectangle(x + T / 2, y - 4, T, 8, waColor))
+      if (has(x, y - T)) rects.add(this.add.rectangle(x, y - T / 2 - 4, 20, T, waColor))
+      if (has(x, y + T)) rects.add(this.add.rectangle(x, y + T / 2 - 4, 20, T, waColor))
+      if (has(x, y - T) && has(x - T, y) && has(x - T, y - T)) rects.add(this.add.rectangle(x - T / 2, y - T / 2 - 4, 24, 16, waColor))
+      if (has(x, y - T) && has(x + T, y) && has(x + T, y - T)) rects.add(this.add.rectangle(x + T / 2, y - T / 2 - 4, 24, 16, waColor))
+      if (has(x, y + T) && has(x - T, y) && has(x - T, y + T)) rects.add(this.add.rectangle(x - T / 2, y + T / 2 - 4, 24, 16, waColor))
+      if (has(x, y + T) && has(x + T, y) && has(x + T, y + T)) rects.add(this.add.rectangle(x + T / 2, y + T / 2 - 4, 24, 16, waColor))
+    }
   }
 
   private tryPickupWood(clickX: number, clickY: number): boolean {
@@ -3455,8 +3565,8 @@ export class Overworld extends Phaser.Scene {
   // Place a roofed (occupied, non-enterable) house with seeded colors: a gray
   // roof whose tint varies per instance, and a muted wall color. Bakes a unique
   // recolored texture so the two regions are truly independent (not a flat tint).
-  private placeRoofedHouse(x: number, y: number, scale: number) {
-    const rng = makeRng(state.worldSeed + x * 71 + y * 31)
+  private placeRoofedHouse(x: number, y: number, scale: number, colorSeed?: number) {
+    const rng = makeRng(colorSeed ?? (state.worldSeed + x * 71 + y * 31))
     // roof gray: ~50–70% lightness, very low saturation, hue drifts slightly
     const roofHue = rng()
     const roofMain = this.hslHex(roofHue, 0.06 + rng() * 0.06, 0.5 + rng() * 0.12)
@@ -3512,7 +3622,48 @@ export class Overworld extends Phaser.Scene {
     }
   }
 
-  // HSL (h,s,l in 0..1) → '#rrggbb'
+  // Paints a straight line of PathDirt tiles from a to b, `widthTiles` wide,
+  // centered on the line. No drift, no rounded ends — fills exactly the tiles
+  // between the two points. Only grass converts.
+  private paintDirtLine(a: { x: number; y: number }, b: { x: number; y: number }, widthTiles: number) {
+    const T = TERRAIN_TILE
+    const half = Math.floor(widthTiles / 2)
+    const dist = Math.hypot(b.x - a.x, b.y - a.y)
+    const steps = Math.max(1, Math.ceil(dist / T))
+    // perpendicular unit direction, for the width offset
+    const dx = b.x - a.x, dy = b.y - a.y
+    const len = Math.max(1, dist)
+    const px = -dy / len, py = dx / len
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps
+      const cx = a.x + dx * t
+      const cy = a.y + dy * t
+      for (let w = -half; w <= half; w++) {
+        const wx = cx + px * w * T
+        const wy = cy + py * w * T
+        if (state.terrainAt(wx, wy) === Terrain.Grass) {
+          state.setTerrainAt(wx, wy, Terrain.PathDirt)
+          this.chunkTerrain?.markTileDirty(wx, wy)
+        }
+      }
+    }
+  }
+
+  // Fills every tile in the rectangle (x1,y1)-(x2,y2) with PathDirt. Corners in
+  // any order. Only grass converts.
+  private paintDirtRect(x1: number, y1: number, x2: number, y2: number) {
+    const T = TERRAIN_TILE
+    const minX = Math.min(x1, x2), maxX = Math.max(x1, x2)
+    const minY = Math.min(y1, y2), maxY = Math.max(y1, y2)
+    for (let wy = minY; wy <= maxY; wy += T) {
+      for (let wx = minX; wx <= maxX; wx += T) {
+        if (state.terrainAt(wx, wy) === Terrain.Grass) {
+          state.setTerrainAt(wx, wy, Terrain.PathDirt)
+          this.chunkTerrain?.markTileDirty(wx, wy)
+        }
+      }
+    }
+  }
   private hslHex(h: number, s: number, l: number): string {
     const f = (n: number) => {
       const k = (n + h * 12) % 12
@@ -3583,7 +3734,6 @@ export class Overworld extends Phaser.Scene {
           type: b.type,
           x: bx,
           y: by,
-          townId: null,
           flipX: b.flipX,
           tint,
           loot: b.loot ?? [],
@@ -3635,6 +3785,11 @@ export class Overworld extends Phaser.Scene {
         const px = Math.round((site.x + p.dx) / G) * G
         const py = Math.round((site.y + p.dy) / G) * G
         this.placePost(px, py, p.species)
+      }
+    }
+    if (template.plots) {
+      for (const pl of template.plots) {
+        this.createPlotAt(site.x + pl.dx, site.y + pl.dy)
       }
     }
     let pendingPathLine: { x: number; y: number }[] | null = null
@@ -3768,9 +3923,11 @@ export class Overworld extends Phaser.Scene {
     this.decorData.push(...decor)
     // Buried coins and gems for the new strip, at the same densities as the
     // original world. Without this, all treasure stays locked in the spawn box.
-    const { buried, buriedGems } = generateRegionBuried(strip, stripSeed + 1)
+    const { buried, buriedGems, buriedLockboxes, buriedKeys } = generateRegionBuried(strip, stripSeed + 1)
     state.buriedItems.push(...buried)
     state.buriedGems.push(...buriedGems)
+    state.buriedLockboxes.push(...buriedLockboxes)
+    state.buriedKeys.push(...buriedKeys)
     this.cullDecor()
     return added
   }
@@ -3900,6 +4057,8 @@ export class Overworld extends Phaser.Scene {
     const spr = this.add.sprite(x, y, honse.sprite).setScale(2).setDepth(y - 8)
     if (honse.tinted) spr.setTint(honse.tint)
     this.honseSprites.push(spr)
+    const sh = this.add.sprite(x, y + 12, 'blob_shadow').setOrigin(0.5, 0).setScale(2).setDepth(y - 9).setAlpha(0.22)
+    this.honseShadows.push(sh)
     this.honseBodies.push(
       this.matter.add.rectangle(x, y + 3, 30, 12, { inertia: Infinity, frictionAir: 0.05, restitution: 0.6, collisionFilter: { category: CAT_HONSE, mask: 0xFFFFFFFF, group: 0 } } as any)
     )
@@ -3923,13 +4082,35 @@ export class Overworld extends Phaser.Scene {
     )
   }
 
-  private placePost(x: number, y: number, species: 'post' | 'cedar_post' | 'iron_post') {
+  private placePost(x: number, y: number, species: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall') {
     state.placedPosts.push({ x, y, species })
     this.spawnPostSprite(x, y, species)
-    const obs = this.makePostObstacle(x, y)
+    const obs = this.makePostObstacle(x, y, species)
     this.obstacles.push(obs)
-    this.placedPostBodies.set(`${x},${y}`, this.makePostBlocker(x, y))
+    this.placedPostBodies.set(`${x},${y}`, this.makePostBlocker(x, y, species))
     this.refreshPostNeighbors(x, y)
+  }
+
+  // Places a row of posts from (x1,y1) to (x2,y2), one every `spacing` px.
+  // Skips cells already holding a post so shared box corners aren't doubled.
+  private postLine(x1: number, y1: number, x2: number, y2: number, spacing: number, species: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall') {
+    const dx = x2 - x1, dy = y2 - y1
+    const steps = Math.max(1, Math.round(Math.hypot(dx, dy) / spacing))
+    for (let i = 0; i <= steps; i++) {
+      const x = Math.round(x1 + (dx * i) / steps)
+      const y = Math.round(y1 + (dy * i) / steps)
+      if (this.placedPostSprites.has(`${x},${y}`)) continue
+      this.placePost(x, y, species)
+    }
+  }
+
+  // Closed rectangle of posts. Corners are placed once thanks to postLine's
+  // dedupe. left/right are x bounds, top/bottom are y bounds.
+  private postBox(left: number, top: number, right: number, bottom: number, spacing: number, species: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall') {
+    this.postLine(left, top, right, top, spacing, species)
+    this.postLine(left, bottom, right, bottom, spacing, species)
+    this.postLine(left, top, left, bottom, spacing, species)
+    this.postLine(right, top, right, bottom, spacing, species)
   }
 
   // ---- Pipe placement ----
@@ -4197,6 +4378,9 @@ export class Overworld extends Phaser.Scene {
         if (s && s.count > 0) return { type: s.type, count: s.count }
       }
     }
+    if (plot.built === 'smithy') {
+      return plot.smithyOutput ? { type: plot.smithyOutput.type, count: plot.smithyOutput.count } : null
+    }
     return null
   }
 
@@ -4219,8 +4403,10 @@ export class Overworld extends Phaser.Scene {
       // drain from the first non-empty slot of the moved type
       for (let i = 0; i < plot.storageContents.length && remaining > 0; i++) {
         const s = plot.storageContents[i]
-        if (s && s.count > 0) plot.storageContents[i] = drain(s)
+      if (s && s.count > 0) plot.storageContents[i] = drain(s)
       }
+    } else if (plot.built === 'smithy') {
+      plot.smithyOutput = drain(plot.smithyOutput)
     }
   }
 
@@ -4290,6 +4476,31 @@ export class Overworld extends Phaser.Scene {
     }
 
     // mill/well/field don't accept piped input
+    if (plot.built === 'smithy') {
+      const isFuel = type in FUEL_BURN_MS
+      const isOre = type in SMELT_RECIPES
+      if (isFuel) {
+        const slot = plot.smithyFuel
+        if (slot && slot.type !== type) return 0
+        const have = slot ? slot.count : 0
+        const room = cap - have
+        if (room <= 0) return 0
+        const move = Math.min(room, remaining)
+        if (slot) slot.count += move; else plot.smithyFuel = { type, count: move }
+        return move
+      }
+      if (isOre) {
+        const slot = plot.smithyOre
+        if (slot && slot.type !== type) return 0
+        const have = slot ? slot.count : 0
+        const room = cap - have
+        if (room <= 0) return 0
+        const move = Math.min(room, remaining)
+        if (slot) slot.count += move; else plot.smithyOre = { type, count: move }
+        return move
+      }
+      return 0
+    }
     return 0
   }
 
@@ -4330,7 +4541,7 @@ export class Overworld extends Phaser.Scene {
   // when no post is held.
   previewPostTexture(x: number, y: number): string | null {
     const species = state.inventory[state.selectedInventorySlot]?.type
-    if (species !== 'post' && species !== 'cedar_post' && species !== 'iron_post') return null
+    if (species !== 'post' && species !== 'cedar_post' && species !== 'iron_post' && species !== 'wood_wall') return null
     return this.resolvePostTexture(x, y, species)
   }
 
@@ -4340,7 +4551,7 @@ export class Overworld extends Phaser.Scene {
 
   private computePostDragPath(): { x: number; y: number }[] {
     if (!this.postDragAnchor) return []
-    const G = Overworld.POST_GRID
+    const G = this.postGridFor(this.postDragSpecies ?? undefined)
     const ptr = this.input.activePointer
     const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y)
     const cx = Math.round(w.x / G) * G
@@ -4372,6 +4583,107 @@ export class Overworld extends Phaser.Scene {
     return filtered
   }
 
+  private computeWaterDragPath(): { x: number; y: number }[] {
+    if (!this.waterDragAnchor) return []
+    const G = WOOD_TILE
+    const wb = state.worldBounds
+    const ptr = this.input.activePointer
+    const w = this.cameras.main.getWorldPoint(ptr.x, ptr.y)
+    const cx = Math.floor((w.x - wb.minX) / G) * G + wb.minX + G / 2
+    const cy = Math.floor((w.y - wb.minY) / G) * G + wb.minY + G / 2
+    const ax = this.waterDragAnchor.x
+    const ay = this.waterDragAnchor.y
+    const path: { x: number; y: number }[] = []
+    const stepX = cx > ax ? G : -G
+    if (cx !== ax) {
+      for (let x = ax; x !== cx + stepX; x += stepX) path.push({ x, y: ay })
+    } else {
+      path.push({ x: ax, y: ay })
+    }
+    const stepY = cy > ay ? G : -G
+    if (cy !== ay) {
+      for (let y = ay + stepY; y !== cy + stepY; y += stepY) path.push({ x: cx, y })
+    }
+    const rangeSq = TOOL_RANGE * TOOL_RANGE
+    const stack = state.inventory[state.selectedInventorySlot]
+    const maxCount = stack?.count ?? 0
+    const filtered: { x: number; y: number }[] = []
+    for (const cell of path) {
+      if (filtered.length >= maxCount) break
+      const dx = cell.x - this.player.x
+      const dy = cell.y - this.player.y
+      if (dx * dx + dy * dy > rangeSq) continue
+      filtered.push(cell)
+    }
+    return filtered
+  }
+
+  private updateWaterDragGhosts() {
+    const path = this.computeWaterDragPath()
+    const T = WOOD_TILE
+    const scale = ITEMS['water'].scale
+    const waColor = Phaser.Display.Color.HexStringToColor(WA).color
+    const inPath = (cx: number, cy: number) => path.some(c => c.x === cx && c.y === cy)
+    const has = (cx: number, cy: number) =>
+      inPath(cx, cy) || state.placedWaters.some(w => w.x === cx && w.y === cy)
+
+    const cam = this.cameras.main
+    const view = cam.worldView
+    if (!this.waterDragRT) {
+      this.waterDragRT = this.add.renderTexture(view.x, view.y, view.width, view.height)
+        .setOrigin(0, 0)
+        .setAlpha(0.65)
+        .setDepth(900000)
+    }
+    const rt = this.waterDragRT
+    if (rt.width !== view.width || rt.height !== view.height) rt.setSize(view.width, view.height)
+    rt.setPosition(view.x, view.y)
+    rt.clear()
+    if (path.length === 0) { rt.render(); return }
+
+    const spriteStamp = (key: string) => {
+      let s = this.waterDragStamps.get(key)
+      if (!s) {
+        s = this.make.sprite({ x: 0, y: 0, key, add: false }).setOrigin(0.5, 0.5).setScale(scale)
+        this.waterDragStamps.set(key, s)
+      }
+      return s
+    }
+    const drawRect = (cx: number, cy: number, w: number, h: number) => {
+      const r = this.add.rectangle(0, 0, w, h, waColor).setOrigin(0.5, 0.5).setVisible(false)
+      rt.draw(r, cx - view.x, cy - view.y)
+      r.destroy()
+    }
+
+    for (const cell of path) {
+      const { x, y } = cell
+      const right = has(x + T, y)
+      const left = has(x - T, y)
+      const below = has(x, y + T)
+      const tex = left && right ? 'item_water_middle'
+        : right && below ? 'item_water_right_below'
+        : left && below ? 'item_water_left_below'
+        : right ? 'item_water_right'
+        : below ? 'item_water_below'
+        : left ? 'item_water_left'
+        : 'item_water'
+      rt.draw(spriteStamp(tex), x - view.x, y - view.y)
+      if (has(x - T, y)) drawRect(x - T / 2, y - 4, T, 8)
+      if (has(x + T, y)) drawRect(x + T / 2, y - 4, T, 8)
+      if (has(x, y - T)) drawRect(x, y - T / 2 - 4, 20, T)
+      if (has(x, y + T)) drawRect(x, y + T / 2 - 4, 20, T)
+      if (has(x, y - T) && has(x - T, y) && has(x - T, y - T)) drawRect(x - T / 2, y - T / 2 - 4, 24, 16)
+      if (has(x, y - T) && has(x + T, y) && has(x + T, y - T)) drawRect(x + T / 2, y - T / 2 - 4, 24, 16)
+      if (has(x, y + T) && has(x - T, y) && has(x - T, y + T)) drawRect(x - T / 2, y + T / 2 - 4, 24, 16)
+      if (has(x, y + T) && has(x + T, y) && has(x + T, y + T)) drawRect(x + T / 2, y + T / 2 - 4, 24, 16)
+    }
+    rt.render()
+  }
+
+  private clearWaterDragGhosts() {
+    if (this.waterDragRT) { this.waterDragRT.destroy(); this.waterDragRT = null }
+  }
+
   private updatePostDragGhosts() {
     const path = this.computePostDragPath()
     const species = this.postDragSpecies!
@@ -4395,14 +4707,16 @@ export class Overworld extends Phaser.Scene {
     rt.clear()
     if (showPath.length === 0) { rt.render(); return }
 
-    const G = Overworld.POST_GRID
+    const G = this.postGridFor(species)
     const pathSet = new Set(showPath.map(p => `${p.x},${p.y}`))
     for (const cell of showPath) {
       if (this.placedPostSprites.has(`${cell.x},${cell.y}`)) continue
       const hasAbove = pathSet.has(`${cell.x},${cell.y - G}`) || state.placedPosts.some(p => p.x === cell.x && p.y === cell.y - G)
       const hasBelow = pathSet.has(`${cell.x},${cell.y + G}`) || state.placedPosts.some(p => p.x === cell.x && p.y === cell.y + G)
       let tex = species as string
-      if (hasAbove || hasBelow) {
+      if (species === 'wood_wall') {
+        if (hasAbove || hasBelow) tex = 'wood_wall_v'
+      } else if (hasAbove || hasBelow) {
         if (species === 'cedar_post') tex = 'cedar_post_v'
         else if (species === 'iron_post') tex = 'iron_post_v'
         else tex = 'post_v'
@@ -4429,7 +4743,13 @@ export class Overworld extends Phaser.Scene {
   // Determine if a post at (x,y) should use the vertical sprite variant.
   // Vertical = has a neighbor directly above or below (same x, y ± 10)
   // but NOT left or right (x ± 10, same y).
-  private resolvePostTexture(x: number, y: number, species: 'post' | 'cedar_post' | 'iron_post'): string {
+  private resolvePostTexture(x: number, y: number, species: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall'): string {
+    if (species === 'wood_wall') {
+      const g = this.postGridFor('wood_wall')
+      const vAbove = state.placedPosts.some(p => p.x === x && p.y === y - g)
+      const vBelow = state.placedPosts.some(p => p.x === x && p.y === y + g)
+      return (vAbove || vBelow) ? 'wood_wall_v' : 'wood_wall'
+    }
     const hasAbove = state.placedPosts.some(p => p.x === x && p.y === y - 10)
     const hasBelow = state.placedPosts.some(p => p.x === x && p.y === y + 10)
     if (hasAbove || hasBelow) {
@@ -4444,7 +4764,13 @@ export class Overworld extends Phaser.Scene {
   // horizontal texture from neighbor data and registers the sprite. Every post
   // sprite (live placement, settlement gen, state restore) goes through here so
   // orientation is never call-site dependent.
-  private spawnPostSprite(x: number, y: number, species: 'post' | 'cedar_post' | 'iron_post'): Phaser.GameObjects.Sprite {
+  private spawnPostSprite(x: number, y: number, species: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall'): Phaser.GameObjects.Sprite {
+    if (species === 'wood_wall') {
+      const tex = this.resolvePostTexture(x, y, species)
+      const sprite = this.add.sprite(x, y, tex).setScale(2).setDepth(y - 8)
+      this.placedPostSprites.set(`${x},${y}`, sprite)
+      return sprite
+    }
     const tex = this.resolvePostTexture(x, y, species)
     // Iron post art is 2px taller (scaled) than wood; centered draw would plant
     // its base lower. Nudge up so all post species share the same ground line.
@@ -4457,7 +4783,8 @@ export class Overworld extends Phaser.Scene {
   // After placing/removing a post, update the sprites of its vertical neighbors
   // in case they need to switch between horizontal and vertical variants.
   private refreshPostNeighbors(x: number, y: number) {
-    const neighbors = [`${x},${y - 10}`, `${x},${y + 10}`, `${x - 10},${y}`, `${x + 10},${y}`]
+    const g = this.postGridFor('wood_wall')
+    const neighbors = [`${x},${y - 10}`, `${x},${y + 10}`, `${x - 10},${y}`, `${x + 10},${y}`, `${x},${y - g}`, `${x},${y + g}`]
     for (const key of neighbors) {
       const spr = this.placedPostSprites.get(key)
       if (spr) {
@@ -4466,6 +4793,17 @@ export class Overworld extends Phaser.Scene {
         if (entry) {
           const tex = this.resolvePostTexture(nx, ny, entry.species ?? 'post')
           spr.setTexture(tex)
+          // A wood_wall that flipped orientation needs its collision rebuilt to
+          // match — its hitbox was set when it was first placed (often horizontal).
+          if (entry.species === 'wood_wall') {
+            const oldBody = this.placedPostBodies.get(key)
+            if (oldBody) { this.matter.world.remove(oldBody); this.placedPostBodies.delete(key) }
+            const idx = this.obstacles.findIndex(o => o.originX === nx && o.originY === ny)
+            if (idx !== -1) this.obstacles.splice(idx, 1)
+            const newObs = this.makePostObstacle(nx, ny, 'wood_wall')
+            this.obstacles.push(newObs)
+            this.placedPostBodies.set(key, this.makePostBlocker(nx, ny, 'wood_wall'))
+          }
         }
       }
     }
@@ -4661,6 +4999,54 @@ export class Overworld extends Phaser.Scene {
           const stack = { type: g.type as ItemType, count: 1 }
           state.droppedItems.push({ x, y, stack })
           this.droppedSprites.push(this.spawnDroppedSprite(x, y, stack.type, true))
+          revealed = true
+          break
+        }
+      }
+
+      if (!revealed) {
+        // Buried lockbox dig: the tool inside was rolled at world-gen time and
+        // is stored on the buried record. Place the box as a real container on
+        // the ground (not a bouncing dropped item) — still locked, with the
+        // pre-rolled tool already in slot 0 of its contents. Player picks it
+        // up like any other placed lockbox; pickup preserves stack.contents.
+        for (let i = state.buriedLockboxes.length - 1; i >= 0; i--) {
+          const lb = state.buriedLockboxes[i]
+          const dx = lb.x - x
+          const dy = lb.y - y
+          if (dx * dx + dy * dy > revSq) continue
+          state.buriedLockboxes.splice(i, 1)
+          const contents = createContainerContents(lb.lockboxType)
+          // slots 0..2: pre-rolled tools (may include nulls)
+          for (let s = 0; s < lb.tools.length && s < contents.length; s++) {
+            const t = lb.tools[s]
+            if (t) contents[s] = { type: t as ItemType, count: 1 }
+          }
+          // slots 3+: pre-rolled side loot (bars/gems/ammo/materials)
+          for (let s = 0; s < lb.side.length && (3 + s) < contents.length; s++) {
+            const entry = lb.side[s]
+            if (entry) contents[3 + s] = { type: entry.type as ItemType, count: entry.count }
+          }
+          state.placedCrates.push({ x, y, item: lb.lockboxType as any, contents, unlocked: false })
+          this.spawnContainer(x, y, lb.lockboxType)
+          revealed = true
+          break
+        }
+      }
+
+      if (!revealed) {
+        // Buried key dig: just an item drop, no container. Same shape as the
+        // gem reveal — splice the record, drop a key stack on the ground.
+        for (let i = state.buriedKeys.length - 1; i >= 0; i--) {
+          const k = state.buriedKeys[i]
+          const dx = k.x - x
+          const dy = k.y - y
+          if (dx * dx + dy * dy > revSq) continue
+          state.buriedKeys.splice(i, 1)
+          const stack = { type: k.keyType as ItemType, count: 1 }
+          state.droppedItems.push({ x, y, stack })
+          this.droppedSprites.push(this.spawnDroppedSprite(x, y, stack.type, true))
+          revealed = true
           break
         }
       }
@@ -4674,28 +5060,7 @@ export class Overworld extends Phaser.Scene {
   }
 
   private spawnParticles(x: number, y: number, colors: number[], wave = 0) {
-    const PARTICLE_COUNT = 12
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const angle = (Math.PI / 6) + Math.random() * (Math.PI * 2 / 3)
-      const speed = 12 + Math.random() * 10 + wave * 3   // each wave a bit farther
-      const dx = Math.cos(angle) * speed
-      const dy = -Math.sin(angle) * speed
-      const color = colors[Math.floor(Math.random() * colors.length)]
-      const p = this.add.rectangle(x, y - 4, 3, 3, color).setDepth(4)
-      const landX = Math.floor(x + dx)
-      const landY = Math.floor(y + dy + 12)   // small gravity so particles still arc down
-      this.tweens.add({
-        targets: p,
-        x: landX,
-        y: landY,
-        duration: 400 + Math.random() * 100,
-        ease: 'Quad.easeOut',
-        onComplete: () => {
-          p.setPosition(landX, landY)
-          this.time.delayedCall(300, () => p.destroy())
-        },
-      })
-    }
+    spawnParticles(this, x, y, colors, wave)
   }
 
   private spawnGoldFloat(x: number, y: number, amount: number) {
@@ -4721,32 +5086,13 @@ export class Overworld extends Phaser.Scene {
   // rounds (capped to what's owned) when the timer completes — shares the refill
   // path with the auto-reload via pendingReloadAmount.
   private tryStartReload() {
-    if (this.gunFullReloadUntil !== 0) return   // already reloading
-    const sel = state.inventory[state.selectedInventorySlot]
-    const selDef = sel ? ITEMS[sel.type] : null
-    if (!selDef || selDef.gunSpread == null || selDef.gunAmmo == null) return
-    const missing = selDef.gunAmmo - this.gunAmmo
-    if (missing <= 0) return                     // clip already full
-    const owned = state.countItem('colt_ammo')
-    if (owned <= 0) return                       // nothing to load
-    this.pendingReloadAmount = Math.min(missing, owned)
-    this.gunFullReloadUntil = state.gameTime + (selDef.gunFullReloadMs ?? 0)
+    this.gun.tryStartReload('colt_ammo')
   }
 
   private refillGunIfReloaded() {
-    if (this.gunFullReloadUntil === 0) return
-    if (state.gameTime < this.gunFullReloadUntil) return
-    const sel = state.inventory[state.selectedInventorySlot]
-    const selDef = sel ? ITEMS[sel.type] : null
-    if (selDef && selDef.gunAmmo != null) {
-      // Charge only what this reload adds (full mag for auto, missing rounds for R).
-      this.gunAmmo = Math.min(selDef.gunAmmo, this.gunAmmo + this.pendingReloadAmount)
-      state.consumeItem('colt_ammo', this.pendingReloadAmount)
-      this.registry.events.emit('inventory-changed')
-    }
-    this.gunFullReloadUntil = 0
-    this.pendingReloadAmount = 0
+    this.gun.refillIfReloaded(this.registry, 'colt_ammo')
   }
+
 
   update(_t: number, dt: number) {
     // Advance the pausable game clock. This is the ONLY site that advances it.
@@ -4756,6 +5102,25 @@ export class Overworld extends Phaser.Scene {
     // Everything below that gates a game mechanic reads state.gameTime, so a
     // single guard here freezes the entire simulation on pause.
     if (!state.paused) state.gameTime += dt
+
+    const trooperStep = Math.floor(state.gameTime / 900) % 2 === 1
+    const trooperTex = trooperStep ? 'cavalry_trooper_step' : 'cavalry_trooper'
+    {
+      const leftX = -51134, rightX = -49900, speed = 40
+      const move = state.paused ? 0 : (speed * dt) / 1000
+      for (let ti = 0; ti < this.troopers.length; ti++) {
+        const t = this.troopers[ti]
+        t.setTexture(trooperTex)
+        let dir = t.getData('dir') as number
+        t.x += dir * move
+        if (t.x >= rightX) { t.x = rightX; dir = -1 }
+        else if (t.x <= leftX) { t.x = leftX; dir = 1 }
+        t.setData('dir', dir)
+        t.setFlipX(dir < 0)
+        const sh = this.trooperShadows[ti]
+        if (sh) sh.x = t.x
+      }
+    }
 
     this.refillGunIfReloaded()
 
@@ -4826,13 +5191,13 @@ export class Overworld extends Phaser.Scene {
         // line-of-sight: same obstacles but honses ignored, so a horse is never cover
         (px, py) => this.collidesAt(px, py, undefined, true, true),
         { x: this.player.x, y: this.player.y, vx: this.playerVX, vy: this.playerVY },
-        Overworld.BULLET_SPEED,
+        BULLET_SPEED,
         (bi, dx, dy) => {
           const ba = state.bandits[bi]
           this.fireBanditBullet(ba.x, ba.y + BANDIT_MUZZLE_DY, dx, dy)
         },
         // Threats he can dodge: the player's own bullets in flight.
-        this.bullets.filter(bl => !bl.fromBandit).map(bl => ({ x: bl.x, y: bl.y, vx: bl.vx, vy: bl.vy })),
+        this.gun.bullets.filter(bl => !bl.fromBandit).map(bl => ({ x: bl.x, y: bl.y, vx: bl.vx, vy: bl.vy })),
         this.banditRng,
         (i) => this.rope.getBanditTetherAnchor(i),
       )
@@ -4865,10 +5230,19 @@ export class Overworld extends Phaser.Scene {
 
     if (this.postDragAnchor) {
       const stack = state.inventory[state.selectedInventorySlot]
-      if (!stack || (stack.type !== 'post' && stack.type !== 'cedar_post' && stack.type !== 'iron_post')) {
+      if (!stack || (stack.type !== 'post' && stack.type !== 'cedar_post' && stack.type !== 'iron_post' && stack.type !== 'wood_wall')) {
         this.clearPostDragGhosts()
       } else {
         this.updatePostDragGhosts()
+      }
+    }
+
+    if (this.waterDragAnchor) {
+      const stack = state.inventory[state.selectedInventorySlot]
+      if (!stack || stack.type !== 'water') {
+        this.clearWaterDragGhosts()
+      } else {
+        this.updateWaterDragGhosts()
       }
     }
 
@@ -4972,6 +5346,8 @@ export class Overworld extends Phaser.Scene {
       s.y = h.y
       s.setDepth(h.y - 8)
       s.setFlipX(h.facingRight)
+      const sh = this.honseShadows[i]
+      if (sh) { sh.x = h.x; sh.y = h.y + 12; sh.setDepth(h.y - 9) }
 
       // Red hit-flash: swap to the shared red silhouette, then back to the
       // honse's own coat sprite after the flash window.
@@ -4987,6 +5363,8 @@ export class Overworld extends Phaser.Scene {
       if (h.dying && state.gameTime >= h.hurtUntil) {
         s.destroy()
         this.honseSprites.splice(i, 1)
+        this.honseShadows[i]?.destroy()
+        this.honseShadows.splice(i, 1)
         const mb = this.honseBodies[i]
         if (mb) this.matter.world.remove(mb)
         this.honseBodies.splice(i, 1)
@@ -5133,6 +5511,18 @@ export class Overworld extends Phaser.Scene {
 
     this.rope.update()
 
+    for (let ci = 0; ci < this.crateBodies.length; ci++) {
+      const cb = this.crateBodies[ci]
+      const cs = this.crateSprites[ci]
+      const sc = state.placedCrates[ci]
+      if (cb && cs) {
+        cs.x = cb.position.x
+        cs.y = cb.position.y
+        cs.setDepth(cb.position.y - 8)
+        if (sc) { sc.x = cb.position.x; sc.y = cb.position.y }
+      }
+    }
+
     // ---- tumbleweeds ----
     updateTumbleweeds(this, this.player.x, this.player.y, Overworld.PLAYER_HALF)
 
@@ -5142,47 +5532,42 @@ export class Overworld extends Phaser.Scene {
       this.tryStartReload()
     }
 
-    // Mount/dismount the nearest honse
+    // Interact key (E). Mount/dismount is click-only — handled in the pointer
+    // path — so E never touches honses here.
     if (overworldVisible && Phaser.Input.Keyboard.JustDown(this.eKey)) {
       const ui = this.scene.get('UI') as UI
-      if (ui.isCrateOpen()) {
+      if (ui.isBuildMenuOpen()) {
+        // build menu open → E closes it (and nothing else this press)
+        ui.closeMenu()
+      } else if (ui.isCrateOpen()) {
         // crate open → E closes it (single owner of the toggle, so the same
         // keypress can never close-then-reopen)
         ui.closeCrate()
       } else if (ui.isUpperInventoryOpen()) {
         // upper inventory open → E closes it
         this.registry.events.emit('toggle-inventory')
-      } else if (state.mounted !== null) {
-        this.dismount()
-      } else if (!this.mountNearestHonse()) {
-        // no honse in range — open the nearest crate within reach (E has no
-        // cursor, so search a radius around the player, not a tight on-sprite hit)
-        if (!this.tryOpenCrate(this.player.x, this.player.y, CRATE_RANGE)) {
-          // no crate either — loot a dead bandit if one's in reach
-          if (!this.tryLootBody(this.player.x, this.player.y)) {
-            // nothing interactable in range — toggle inventory
-            this.registry.events.emit('toggle-inventory')
-          }
+      } else if (!this.tryOpenCrate(this.player.x, this.player.y, CRATE_RANGE)) {
+        // no crate in range — loot a dead bandit if one's in reach. Looting is
+        // foot-only (you must dismount to rifle a body); mounted skips straight
+        // to the inventory toggle. Crate-opening above stays allowed mounted.
+        const looted = state.mounted === null && this.tryLootBody(this.player.x, this.player.y)
+        if (!looted) {
+          // nothing interactable in range — toggle inventory
+          this.registry.events.emit('toggle-inventory')
         }
       }
     }
 
     // ---- floating "E" prompt above the nearest interactable ----
-    // Mirrors exactly what an E-press would target: nearest honse (mount) or
-    // crate (open). Hidden while mounted, while a crate panel is open, or when
-    // the overworld isn't the active view.
+    // Mirrors exactly what an E-press would target: nearest crate (open) or
+    // bandit body (loot). Honses are click-to-mount, so they get no E prompt.
+    // Hidden while mounted, while a crate panel is open, or when the overworld
+    // isn't the active view.
     {
       const uiE = this.scene.get('UI') as UI
       let target: { x: number; y: number } | null = null
       if (overworldVisible && state.mounted === null && !uiE.isCrateOpen()) {
         let bestSq = Infinity
-        const mountSq = MOUNT_RANGE * MOUNT_RANGE
-        for (const h of state.honses) {
-          const dx = h.x - this.player.x
-          const dy = h.y - this.player.y
-          const d = dx * dx + dy * dy
-          if (d <= mountSq && d < bestSq) { bestSq = d; target = { x: h.x, y: h.y - 20 } }
-        }
         const crateSq = CRATE_RANGE * CRATE_RANGE
         for (const c of state.placedCrates) {
           const dx = c.x - this.player.x
@@ -5214,10 +5599,9 @@ export class Overworld extends Phaser.Scene {
       let dy = 0
       if (this.wasd.A.isDown || this.arrows.left!.isDown) dx -= 1
       if (this.wasd.D.isDown || this.arrows.right!.isDown) dx += 1
-      if (this.wasd.W.isDown || this.arrows.up!.isDown) dy -= 1
-      if (this.wasd.S.isDown || this.arrows.down!.isDown) dy += 1
+      if (this.wasd.W.isDown) dy -= 1
+      if (this.wasd.S.isDown) dy += 1
       if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2 }
-
       // Acceleration ramp: honse starts at walk speed and builds to gallop
       const reversedX = dx !== 0 && this.mountedLastDx !== 0 && Math.sign(dx) !== Math.sign(this.mountedLastDx)
       const reversedY = dy !== 0 && this.mountedLastDy !== 0 && Math.sign(dy) !== Math.sign(this.mountedLastDy)
@@ -5336,45 +5720,20 @@ export class Overworld extends Phaser.Scene {
       // the rider casts no separate ground shadow while up on the honse
       this.playerShadow.setVisible(false)
     } else if (overworldVisible && !this.inPopup) {
-      const baseSpeed = state.playerSpeedOverride ?? PLAYER_SPEED
-      const buffed = state.gameTime < state.speedBuffEndsAt
-      const speed = baseSpeed + (buffed ? state.speedBuffAmount : 0)
+      const speed = state.playerSpeedOverride ?? PLAYER_SPEED
       const step = (speed * dt) / 1000
       let dx = 0
       let dy = 0
       if (this.wasd.A.isDown || this.arrows.left!.isDown) dx -= 1
       if (this.wasd.D.isDown || this.arrows.right!.isDown) dx += 1
-      if (this.wasd.W.isDown || this.arrows.up!.isDown) dy -= 1
-      if (this.wasd.S.isDown || this.arrows.down!.isDown) dy += 1
+      if (this.wasd.W.isDown) dy -= 1
+      if (this.wasd.S.isDown) dy += 1
       if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2 }
       // axis-separated movement so the player can slide along obstacle edges
       const collidesAt = (px: number, py: number): boolean => this.collidesAt(px, py)
-      // rope leash: when attached to a post or honse, dampen movement 
-      if (this.rope.isAttached() && (dx !== 0 || dy !== 0)) {
-        const anchor = this.rope.getLeashAnchor()
-        if (anchor !== null) {
-          const rx = this.player.x - anchor.x
-          const ry = this.player.y - anchor.y
-          const dist = Math.sqrt(rx * rx + ry * ry)
-          if (dist > 0.0001) {
-            const rNormX = rx / dist
-            const rNormY = ry / dist
-            // signed radial component: positive = moving away from the anchor
-            const radial = dx * rNormX + dy * rNormY
-            if (radial > 0) {
-              // scale outward motion: 1.0 at < soft start, → 0 at the leash limit
-              const softStart = ROPE_LEASH_LENGTH * ROPE_LEASH_SOFT_START
-              const t = Math.max(0, Math.min(1, (dist - softStart) / (ROPE_LEASH_LENGTH - softStart)))
-              const scale = 1 - t   // linear falloff; quadratic (1 - t*t) feels softer
-              // remove outward radial, then add back the scaled version
-              dx -= radial * rNormX
-              dy -= radial * rNormY
-              dx += radial * scale * rNormX
-              dy += radial * scale * rNormY
-            }
-          }
-        }
-      }
+      const leash = this.rope.dampenLeash(this.player.x, this.player.y, dx, dy)
+      dx = leash.dx
+      dy = leash.dy
       // Pushable containers: apply a force toward the player's movement so the
       // body's mass + friction resist (feels heavy), instead of hard-setting
       // velocity (which would ignore friction and track the player exactly).
@@ -5389,9 +5748,8 @@ export class Overworld extends Phaser.Scene {
           const fp = this.containerFootprint(c.item ?? 'crate')
           if (aabbOverlap(npx, npy, half, c.x - fp.w / 2, c.y - fp.h / 2, fp.w, fp.h)) {
             if (body.isSleeping) { body.isSleeping = false; (body as any).sleepCounter = 0 }
-            // Force scales with the body's mass so heavier containers still move,
-            // but the push has to overcome inertia + friction each frame.
-            const f = PUSH_FORCE * body.mass
+            const phys = CONTAINER_PHYSICS[c.item ?? 'crate'] ?? DEFAULT_CONTAINER_PHYSICS
+            const f = phys.pushForce * body.mass
             this.matter.body.applyForce(body, body.position, { x: dx * f, y: dy * f })
           }
         }
@@ -5477,8 +5835,9 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // pickup any revealed coins the player has walked over
-    if (overworldVisible && state.revealedItems.length > 0) {
+    // pickup any revealed coins the player has walked over. Blocked while
+    // mounted — you must be on foot to collect, so riding past loot leaves it.
+    if (overworldVisible && state.mounted === null && state.revealedItems.length > 0) {
       const pickSq = Overworld.PICKUP_RADIUS * Overworld.PICKUP_RADIUS
       for (let i = state.revealedItems.length - 1; i >= 0; i--) {
         const r = state.revealedItems[i]
@@ -5494,8 +5853,19 @@ export class Overworld extends Phaser.Scene {
       }
     }
 
-    // pickup any dropped items the player has walked over with loot magnet
-    if (overworldVisible && state.droppedItems.length > 0) {
+    // While mounted the loot magnet is off (drops are uncollectable on
+    // horseback). Clear any attract flag left set at the moment of mounting so
+    // those sprites resume their normal bob instead of freezing mid-pull.
+    if (state.mounted !== null) {
+      for (const s of this.droppedSprites) {
+        if (s && s.getData('attracting')) s.setData('attracting', false)
+      }
+    }
+
+    // pickup any dropped items the player has walked over with loot magnet.
+    // Blocked while mounted — no attraction, no collection; drops sit inert
+    // until the player dismounts.
+    if (overworldVisible && state.mounted === null && state.droppedItems.length > 0) {
       const pickSq = Overworld.PICKUP_RADIUS * Overworld.PICKUP_RADIUS
       const attractSq = Overworld.PICKUP_ATTRACT_RADIUS * Overworld.PICKUP_ATTRACT_RADIUS
       for (let i = state.droppedItems.length - 1; i >= 0; i--) {

@@ -31,6 +31,8 @@ export const RECIPES: Recipe[] = [
   { inputs: [{ type: 'sugar', count: 1 }, { type: 'bread', count: 1 }], output: 'tart' },
   { inputs: [{ type: 'hemp', count: 1 }, { type: 'hemp', count: 1 }], output: 'twine', outputCount: 2 },
   { inputs: [{ type: 'twine', count: 1 }, { type: 'twine', count: 1 }], output: 'rope' },
+  { inputs: [{ type: 'iron_bar', count: 1 }, { type: 'wood', count: 1 }], output: 'brand' },
+  { inputs: [{ type: 'iron_bar', count: 1 }, { type: 'clay', count: 1 }], output: 'pipe' },
   { inputs: [{ type: 'wood', count: 1 }, { type: 'wood', count: 1 }], output: 'post' },
   // Level 2 (2x2 shaped): wood in all four slots -> 8 planks.
   {

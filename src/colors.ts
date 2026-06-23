@@ -33,14 +33,18 @@ export const COLORS = {
   progressBg: 0x333333,     // dark track
   progressFill: 0xDAA520,   // gold fill
 
+  // tooltip tool stat line (mining, etc.)
+  statText: 0x4E43E9,
+
   // menu — disabled (unaffordable) row text
   menuDisabled: 0xD8D2C0,   // cool light gray-cream
 
   // slot hover color
   slotHover: 0xFFFFE8,
 
-  // interior panel tint — applied to 9-slice backgrounds inside buildings
-  interiorPanel: 0x8A8690,
+  // menu slot + container panel tint — neutral mid gray, light enough for items
+  // to contrast against it without the warm cream cast
+  interiorPanel: 0x9E9E9E,
 
   // generic
   black: 0x000000,          // bars, shades, overlays

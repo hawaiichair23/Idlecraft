@@ -37,7 +37,7 @@ export function makeSlotImage(scene: Phaser.Scene, opts: SlotImageOptions): Phas
     .setTint(opts.tint ?? COLORS.interiorPanel)
     .setInteractive()
   attachSlotHover(scene, slotImg, opts.x, opts.y)
-  if (opts.peek) attachSlotTooltip(scene, slotImg, opts.x, opts.y, opts.peek, opts.tooltipOffsetY)
+  if (opts.peek) attachSlotTooltip(slotImg, opts.peek)
   return slotImg
 }
 

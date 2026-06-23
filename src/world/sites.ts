@@ -46,6 +46,10 @@ export interface SiteTemplate {
   // produces water and is walk-up enterable; a dry well is decor + collision.
   wells?: { dx: number; dy: number; dry?: boolean }[]
   posts?: { dx: number; dy: number; species: 'post' | 'cedar_post' | 'iron_post' }[]
+  // Buyable building plots placed relative to the site origin. Each becomes a
+  // real plot (same as the starter farm) the player can build on. Pure data —
+  // instantiation creates them via the shared createPlotAt path.
+  plots?: { dx: number; dy: number }[]
   path?: { startDy: number; endDy: number; width: number }
   tintTypes?: WorldStructureType[]
   // Forces which side of the trail this site sits on. Omitted = random side.
@@ -84,10 +88,10 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
     tintTypes: ['abandoned_house', 'long_house'],
     buildings: [
       { type: 'house_roof',      dx: 150, dy: -10, walkable: false, loot: [] },
-      { type: 'abandoned_house', dx: -55, dy: -50, walkable: true, loot: [] },
-      { type: 'abandoned_house', dx:  55, dy: -50, walkable: true, loot: [] },
-      { type: 'long_house',      dx: -55, dy:  48, walkable: true, loot: [] },
-      { type: 'long_house',      dx:  48, dy:  48, walkable: true, flipX: true, loot: [] },
+      { type: 'abandoned_house', dx: -102, dy: -95, walkable: true, loot: [] },
+      { type: 'abandoned_house', dx:  72, dy: -65, walkable: true, loot: [] },
+      { type: 'long_house',      dx: -72, dy:  63, walkable: true, loot: [] },
+      { type: 'long_house',      dx:  63, dy:  63, walkable: true, flipX: true, loot: [] },
       { type: 'church_bell_back', dx:   0, dy: 200, walkable: true, loot: [] },
     ],
     // Small graveyard behind (south of) the church at dy 200. A 5x3 grid of
@@ -116,13 +120,13 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
     wells: [{ dx: -120, dy: -164, dry: true }],
     path: { startDy: -60, endDy: 195, width: 14 },
     posts: [
-      { dx: -90, dy: -54, species: 'post' },
-      { dx: -100, dy: -54, species: 'post' },
-      { dx: -110, dy: -54, species: 'post' },
-      { dx: -110, dy: -44, species: 'post' },
-      { dx: -110, dy: -34, species: 'post' },
-      { dx: -100, dy: -34, species: 'post' },
-      { dx: -90, dy: -34, species: 'post' },
+      { dx: -127, dy: -105, species: 'post' },
+      { dx: -147, dy: -105, species: 'post' },
+      { dx: -137, dy: -105, species: 'post' },
+      { dx: -147, dy: -95, species: 'post' },
+      { dx: -147, dy: -85, species: 'post' },
+      { dx: -137, dy: -85, species: 'post' },
+      { dx: -127, dy: -85, species: 'post' },
       { dx: 40, dy: 226, species: 'iron_post' },
       { dx: 50, dy: 226, species: 'iron_post' },
       { dx: 60, dy: 226, species: 'iron_post' },
@@ -142,6 +146,7 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
     ],
     scatterTrees: { count: 3, radius: 180, minDist: 10 },
     scatterGrass: { count: 12, radius: 230, dy: 30 },
+    plots: [{ dx: -160, dy: 60 }],
   },
   settlement_small_north: {
     id: 'settlement_small_north',
@@ -150,10 +155,10 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
     buildings: [
       { type: 'church_bell', dx:   0, dy: -200, walkable: true, loot: [] },
       { type: 'house_roof',      dx: 150, dy:  10, walkable: false, loot: [] },
-      { type: 'long_house',      dx: -55, dy:  -48, walkable: true, loot: [] },
-      { type: 'long_house',      dx:  48, dy:  -48, walkable: true, flipX: true, loot: [] },
-      { type: 'abandoned_house', dx: -55, dy:   55, walkable: true, loot: [] },
-      { type: 'house_roof', dx:  57, dy:   55, walkable: false, loot: [] },
+      { type: 'long_house',      dx: -72, dy:  -63, walkable: true, loot: [] },
+      { type: 'long_house',      dx:  63, dy:  -63, walkable: true, flipX: true, loot: [] },
+      { type: 'abandoned_house', dx: -72, dy:   70, walkable: true, loot: [] },
+      { type: 'house_roof', dx:  72, dy:   70, walkable: false, loot: [] },
     ],
     decor: [],
     side: 'north',
@@ -162,13 +167,13 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
     wells: [{ dx: -120, dy: -160 }],
     path: { startDy: -195, endDy: 60, width: 14 },
     posts: [
-      { dx: -90, dy: 74, species: 'post' },
-      { dx: -100, dy: 74, species: 'post' },
+      { dx: -90, dy: 84, species: 'post' },
+      { dx: -100, dy: 84, species: 'post' },
+      { dx: -110, dy: 84, species: 'post' },
       { dx: -110, dy: 74, species: 'post' },
       { dx: -110, dy: 64, species: 'post' },
-      { dx: -110, dy: 54, species: 'post' },
-      { dx: -100, dy: 54, species: 'post' },
-      { dx: -90, dy: 54, species: 'post' },
+      { dx: -100, dy: 64, species: 'post' },
+      { dx: -90, dy: 64, species: 'post' },
       { dx: 40, dy: -166, species: 'iron_post' },
       { dx: 50, dy: -166, species: 'iron_post' },
       { dx: 60, dy: -166, species: 'iron_post' },
@@ -188,6 +193,7 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
     ],
     scatterTrees: { count: 3, radius: 180, minDist: 10 },
     scatterGrass: { count: 12, radius: 230, dy: -20 },
+    plots: [{ dx: -165, dy: -10 }],
   },
 }
 
@@ -241,12 +247,15 @@ export function scatterSites(
   templateIds: string[],
   avoidXs: number[] = [],
   required = false,
+  minSiteX?: number,
 ): PlacedSite[] {
   const rng = makeRng(seed)
   const startX = waypoints[0].x
   const endX = waypoints[waypoints.length - 1].x
-  const loX = Math.min(startX, endX) + SITE_X_MARGIN
+  let loX = Math.min(startX, endX) + SITE_X_MARGIN
   const hiX = Math.max(startX, endX) - SITE_X_MARGIN
+  // Keep sites east of the western grass/fort zone if a floor is given.
+  if (minSiteX !== undefined && loX < minSiteX) loX = minSiteX
   const span = hiX - loX
   if (span <= 0 || templateIds.length === 0) return []
 

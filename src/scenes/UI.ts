@@ -1,11 +1,11 @@
 import Phaser from 'phaser'
 import { COLORS, FONT } from '../colors'
-import { BUILDINGS, BUILDING_LIST, INVENTORY_SIZE, HOTBAR_SIZE, isBag, state, type BuiltType } from '../game/state'
-import { ITEMS, type ItemStack, type ItemType } from '../items/types'
+import { BUILDINGS, BUILDING_LIST, INVENTORY_SIZE, HOTBAR_SIZE, MAX_HEALTH, isBag, state, type BuiltType } from '../game/state'
+import { ITEMS, type ItemStack, type ItemType, type ItemDef } from '../items/types'
 import { DragController } from '../ui/DragController'
 import { CursorController } from '../ui/CursorController'
 import type { SlotBinding } from '../ui/SlotBinding'
-import { attachSlotHover, attachSlotTooltip } from '../ui/hover'
+import { attachSlotHover, attachSlotTooltip, slotTooltips } from '../ui/hover'
 import { makeStorageBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
 import type { Interior } from './Interior'
 
@@ -23,6 +23,26 @@ const PICKUP_TOAST_RIGHT_PAD = 16
 const PICKUP_TOAST_BOTTOM_PAD = 100
 const PICKUP_TOAST_ICON_GAP = 10
 const PICKUP_TOAST_DEPTH = 300
+
+// Maps a heart's fill (0–1) to its sprite key. Shared by the health bar and the
+// inspect tooltip's heal indicator so both read identically.
+function heartSpriteForFill(fill: number): string {
+  return fill >= 1 ? 'heart_full'
+    : fill >= 0.75 ? 'heart_3q'
+    : fill >= 0.5 ? 'heart_half'
+    : fill >= 0.25 ? 'heart_1q'
+    : 'heart_empty'
+}
+
+// Builds the inspect tooltip's stat lines from an item def. Each tool stat that
+// is present becomes one "Label N" line; new stats slot in here as data.
+function statLinesFor(def: ItemDef): string[] {
+  const lines: string[] = []
+  if (def.mining != null) lines.push(`Mining ${def.mining}`)
+  if (def.chopping != null) lines.push(`Chopping ${def.chopping}`)
+  if (def.combat != null) lines.push(`Combat ${def.combat}`)
+  return lines
+}
 
 export class UI extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.BitmapText
@@ -58,7 +78,10 @@ export class UI extends Phaser.Scene {
   private inspectBg!: Phaser.GameObjects.Rectangle
   private inspectBorder!: Phaser.GameObjects.Rectangle
   private inspectName!: Phaser.GameObjects.BitmapText
+  private inspectAttr!: Phaser.GameObjects.BitmapText
   private inspectDesc!: Phaser.GameObjects.BitmapText
+  private inspectStats: Phaser.GameObjects.BitmapText[] = []
+  private inspectHearts: Phaser.GameObjects.Sprite[] = []
   private inspectHoveredType: string | null = null
   // top bar + menu shade kept as refs so resize can re-stretch them.
   private topBar!: Phaser.GameObjects.Rectangle
@@ -68,6 +91,9 @@ export class UI extends Phaser.Scene {
   // fades out after a moment. Reused across selections.
   private selectionLabel!: Phaser.GameObjects.BitmapText
   private selectionLabelBg!: Phaser.GameObjects.Rectangle
+  // Height of a single line of the selection label, measured once at creation.
+  // Used to keep the label's bottom edge fixed so multi-line names grow upward.
+  private selectionLabelLineH = 0
   private selectionLabelTween: Phaser.Tweens.Tween | null = null
 
   // bag panels — one per bag in inventory, sized to its bag's dimensions.
@@ -144,6 +170,10 @@ export class UI extends Phaser.Scene {
   // doesn't immediately reopen it.
   isCrateOpen(): boolean {
     return this.openCrateContents !== null
+  }
+
+  isBuildMenuOpen(): boolean {
+    return this.menuContainer.visible
   }
 
   // True if the screen-space point is over inventory UI (the bottom bar strip
@@ -250,8 +280,25 @@ export class UI extends Phaser.Scene {
       .setOrigin(0, 0).setDepth(INSPECT_DEPTH + 1).setVisible(false)
     this.inspectName = this.add.bitmapText(0, 0, 'main', '', FONT.name)
       .setTint(COLORS.uiText).setDepth(INSPECT_DEPTH + 2).setVisible(false)
+    // Trait label to the right of the name, smaller and dimmer (e.g. "Lucky")
+    this.inspectAttr = this.add.bitmapText(0, 0, 'main', '', FONT.desc)
+      .setTint(0x6E6E6E).setDepth(INSPECT_DEPTH + 2).setVisible(false)
     this.inspectDesc = this.add.bitmapText(0, 0, 'main', '', FONT.desc)
       .setTint(0x999999).setDepth(INSPECT_DEPTH + 2).setVisible(false)
+    // Pool of stat lines (Mining, Combat, …). Sized to the max stats any item
+    // can show; statLinesFor() decides how many are populated per item.
+    for (let i = 0; i < 2; i++) {
+      this.inspectStats.push(
+        this.add.bitmapText(0, 0, 'main', '', FONT.desc)
+          .setTint(COLORS.statText).setDepth(INSPECT_DEPTH + 2).setVisible(false),
+      )
+    }
+    for (let i = 0; i < MAX_HEALTH; i++) {
+      this.inspectHearts.push(
+        this.add.sprite(0, 0, 'heart_full')
+          .setOrigin(0, 0.5).setScale(2).setDepth(INSPECT_DEPTH + 2).setVisible(false),
+      )
+    }
 
     // any code path that changed inventory en-masse fires this — redraw all
     this.registry.events.on('inventory-changed', () => {
@@ -301,9 +348,7 @@ export class UI extends Phaser.Scene {
       else if (this.openCrateContents) this.closeCrate()
       else if (this.upperInvOpen) this.closeUpperInventory()
     })
-    this.input.keyboard!.on('keydown-E', () => {
-      if (this.menuContainer.visible) this.closeMenu()
-    })
+
 
     this.menuContainer = this.add.container(w / 2, h / 2).setVisible(false)
     // Menu contents are built each time the menu opens (in rebuildBuildMenu),
@@ -415,9 +460,12 @@ export class UI extends Phaser.Scene {
     const MENU_W = ROW_W + MENU_PAD_X * 2
     const MENU_H = TITLE_BAND + rowStackH + MENU_PAD_Y * 2
 
-    this.menuContainer.add(
-      this.add.nineslice(0, 0, 'menu-bg', undefined, MENU_W, MENU_H, 16, 16, 16, 16),
-    )
+    const bg = this.add.nineslice(0, 0, 'menu-bg', undefined, MENU_W, MENU_H, 16, 16, 16, 16)
+      .setInteractive()
+    bg.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation()
+    })
+    this.menuContainer.add(bg)
 
     // Title above the row list
     const topRowY = -((rowCount - 1) / 2) * (ROW_H + ROW_GAP)
@@ -484,13 +532,7 @@ export class UI extends Phaser.Scene {
     const health = (this.registry.get('playerHealth') as number | undefined) ?? this.hearts.length
     for (let i = 0; i < this.hearts.length; i++) {
       const fill = Math.max(0, Math.min(1, health - i))
-      const key =
-        fill >= 1 ? 'heart_full' :
-        fill >= 0.75 ? 'heart_3q' :
-        fill >= 0.5 ? 'heart_half' :
-        fill >= 0.25 ? 'heart_1q' :
-        'heart_empty'
-      this.hearts[i].setTexture(key)
+      this.hearts[i].setTexture(heartSpriteForFill(fill))
     }
   }
 
@@ -503,7 +545,7 @@ export class UI extends Phaser.Scene {
     }
   }
 
-  private closeMenu() {
+  closeMenu() {
     this.menuPlotIndex = -1
     this.menuShade.setVisible(false)
     this.menuContainer.setVisible(false)
@@ -539,7 +581,7 @@ export class UI extends Phaser.Scene {
       const x = startX + i * (SLOT + GAP)
       const slotImg = this.add.image(x, barY, 'menu-slot').setInteractive().setDepth(200)
       const hoverObj = attachSlotHover(this, slotImg, x, barY)
-      attachSlotTooltip(this, slotImg, x, barY, () => state.inventory[slotIndex])
+      attachSlotTooltip(slotImg, () => state.inventory[slotIndex])
       this.hotbarObjects.push(slotImg, hoverObj)
 
       this.invIcons[slotIndex] = null
@@ -591,6 +633,7 @@ export class UI extends Phaser.Scene {
           this.shiftSendFromInventory(slotIndex, binding)
           return
         }
+        if (this.tryEatSlotOnRightClick(slotIndex, p, x, barY)) return
         this.dragController.handleSlotClick(binding, p)
       })
 
@@ -609,6 +652,7 @@ export class UI extends Phaser.Scene {
     // Minecraft-style item name label — shown briefly when selection changes.
     // Matches the slot tooltip style for visual consistency.
     this.selectionLabelBg = this.add.rectangle(first.x, first.y - 48, 10, 10, COLORS.black, 0.75)
+      .setOrigin(0.5, 0.5)
       .setDepth(10000)
       .setVisible(false)
     this.selectionLabel = this.add.bitmapText(first.x, first.y - 48, 'main', '', FONT.desc)
@@ -616,6 +660,16 @@ export class UI extends Phaser.Scene {
       .setTint(COLORS.white)
       .setDepth(10001)
       .setVisible(false)
+    // Wrap long item names (e.g. "Damascus Steel Pick") so the centered label and
+    // its background box don't run off-screen on edge slots. The bg sizes from the
+    // label's measured width/height, so it follows the wrapped text automatically.
+    this.selectionLabel.setMaxWidth(110)
+    this.selectionLabel.setCenterAlign()
+    // Measure one line's height now so showSelectionLabel can keep the bottom
+    // edge fixed (multi-line names grow up, not down into the hotbar).
+    this.selectionLabel.setText('X')
+    this.selectionLabelLineH = this.selectionLabel.height
+    this.selectionLabel.setText('')
 
     this.hotbarObjects.push(this.selectionIndicator, this.selectionLabelBg, this.selectionLabel)
   }
@@ -690,10 +744,15 @@ export class UI extends Phaser.Scene {
 
     const name = ITEMS[stack.type].name
     this.selectionLabel.setText(name)
-    this.selectionLabel.setPosition(pos.x, pos.y - 48)
+    // Keep the label's BOTTOM edge fixed (just above the hotbar) so wrapped
+    // multi-line names grow UPWARD, away from the bar. A single line sits exactly
+    // where it always did; extra lines shift the center up by half their height.
+    const grewBy = this.selectionLabel.height - this.selectionLabelLineH
+    const labelY = pos.y - 48 - grewBy / 2
+    this.selectionLabel.setPosition(pos.x, labelY)
     this.selectionLabel.setAlpha(1).setVisible(true)
     this.selectionLabelBg.setSize(this.selectionLabel.width + 12, this.selectionLabel.height + 6)
-    this.selectionLabelBg.setPosition(pos.x, pos.y - 48)
+    this.selectionLabelBg.setPosition(pos.x, labelY)
     this.selectionLabelBg.setAlpha(1).setVisible(true)
 
     this.selectionLabelTween = this.tweens.add({
@@ -878,15 +937,13 @@ export class UI extends Phaser.Scene {
     const pointer = this.input.activePointer
     const px = pointer.x
     const py = pointer.y
-    const SLOT_HALF = 24  // half of 48px slot
 
-    // Check all inventory slots (hotbar + upper) for a hit
     let foundType: ItemType | null = null
-    for (let i = 0; i < this.invSlotPos.length; i++) {
-      const p = this.invSlotPos[i]
-      if (!p) continue
-      if (Math.abs(px - p.x) <= SLOT_HALF && Math.abs(py - p.y) <= SLOT_HALF) {
-        const stack = state.inventory[i]
+    for (const entry of slotTooltips) {
+      if (!entry.frame.visible) continue
+      const b = entry.frame.getBounds()
+      if (px >= b.left && px <= b.right && py >= b.top && py <= b.bottom) {
+        const stack = entry.peek()
         if (stack) foundType = stack.type
         break
       }
@@ -902,21 +959,45 @@ export class UI extends Phaser.Scene {
     const BORDER = 2
     const CURSOR_OFFSET_X = 14
     const CURSOR_OFFSET_Y = 14
+    const HEART_SIZE = 16
+    const HEART_GAP = 2
+    const NAME_HEART_GAP = 8
 
     // Update text only when the hovered item changes
     if (foundType !== this.inspectHoveredType) {
       this.inspectHoveredType = foundType
       this.inspectName.setText(def.name)
+      this.inspectAttr.setText(def.attribute ?? '')
       this.inspectDesc.setText(def.desc ?? '')
+      const lines = statLinesFor(def)
+      for (let i = 0; i < this.inspectStats.length; i++) {
+        this.inspectStats[i].setText(i < lines.length ? lines[i] : '')
+      }
     }
 
+    const healAmount = def.healFull ? MAX_HEALTH : (def.healHearts ?? 0)
+    const heartCount = healAmount > 0 ? Math.ceil(healAmount) : 0
+    const heartsW = heartCount > 0
+      ? NAME_HEART_GAP + heartCount * HEART_SIZE + (heartCount - 1) * HEART_GAP
+      : 0
+
     const hasDesc = !!def.desc
+    const statCount = statLinesFor(def).length
     const nameW = this.inspectName.width
     const nameH = this.inspectName.height
     const descW = hasDesc ? this.inspectDesc.width : 0
     const descH = hasDesc ? this.inspectDesc.height : 0
-    const contentW = Math.max(nameW, descW)
-    const contentH = nameH + (hasDesc ? 6 + descH : 0)
+    let statsW = 0
+    let statsH = 0
+    for (let i = 0; i < statCount; i++) {
+      statsW = Math.max(statsW, this.inspectStats[i].width)
+      statsH += this.inspectStats[i].height + (i > 0 ? 4 : 0)
+    }
+    const hasAttr = !!def.attribute
+    const ATTR_GAP = 20
+    const attrW = hasAttr ? ATTR_GAP + this.inspectAttr.width : 0
+    const contentW = Math.max(nameW + attrW + heartsW, descW, statsW)
+    const contentH = nameH + (hasDesc ? 6 + descH : 0) + (statCount > 0 ? 6 + statsH : 0)
     const panelW = contentW + PAD * 2
     const panelH = contentH + PAD * 2
 
@@ -934,11 +1015,46 @@ export class UI extends Phaser.Scene {
       .setVisible(true)
     this.inspectName.setPosition(tx + BORDER + PAD, ty + BORDER + PAD)
       .setVisible(true)
+    if (hasAttr) {
+      // right-aligned against the panel's right padding; vertically centered on
+      // the taller name line
+      const attrY = ty + BORDER + PAD + (nameH - this.inspectAttr.height) / 2
+      const attrX = tx + BORDER + panelW - PAD - this.inspectAttr.width
+      this.inspectAttr.setPosition(attrX, attrY).setVisible(true)
+    } else {
+      this.inspectAttr.setVisible(false)
+    }
+
+    for (let i = 0; i < this.inspectHearts.length; i++) {
+      const heart = this.inspectHearts[i]
+      if (i < heartCount) {
+        const fill = Math.max(0, Math.min(1, healAmount - i))
+        const hx = tx + BORDER + PAD + nameW + NAME_HEART_GAP + i * (HEART_SIZE + HEART_GAP)
+        const hy = ty + BORDER + PAD + nameH / 2 - 2
+        heart.setTexture(heartSpriteForFill(fill)).setPosition(hx, hy).setVisible(true)
+      } else {
+        heart.setVisible(false)
+      }
+    }
+
+    let cursorY = ty + BORDER + PAD + nameH
     if (hasDesc) {
-      this.inspectDesc.setPosition(tx + BORDER + PAD, ty + BORDER + PAD + nameH + 6)
+      cursorY += 6
+      this.inspectDesc.setPosition(tx + BORDER + PAD, cursorY)
         .setVisible(true)
+      cursorY += descH
     } else {
       this.inspectDesc.setVisible(false)
+    }
+    for (let i = 0; i < this.inspectStats.length; i++) {
+      const line = this.inspectStats[i]
+      if (i < statCount) {
+        cursorY += i === 0 ? 6 : 4
+        line.setPosition(tx + BORDER + PAD, cursorY).setVisible(true)
+        cursorY += line.height
+      } else {
+        line.setVisible(false)
+      }
     }
   }
 
@@ -948,7 +1064,10 @@ export class UI extends Phaser.Scene {
     this.inspectBg.setVisible(false)
     this.inspectBorder.setVisible(false)
     this.inspectName.setVisible(false)
+    this.inspectAttr.setVisible(false)
     this.inspectDesc.setVisible(false)
+    for (const line of this.inspectStats) line.setVisible(false)
+    for (const heart of this.inspectHearts) heart.setVisible(false)
   }
 
   // === E-inventory (upper row) ================================================
@@ -987,7 +1106,7 @@ export class UI extends Phaser.Scene {
       .setDepth(9002)
     const hoverObj = attachSlotHover(this, slotImg, x, y)
     hoverObj.setDepth(9003)
-    attachSlotTooltip(this, slotImg, x, y, () => state.inventory[slotIndex], -44)
+    attachSlotTooltip(slotImg, () => state.inventory[slotIndex])
     objects.push(slotImg, hoverObj)
 
     this.invSlotPos[slotIndex] = { x, y }
@@ -1035,6 +1154,7 @@ export class UI extends Phaser.Scene {
         this.shiftSendFromInventory(slotIndex, binding)
         return
       }
+      if (this.tryEatSlotOnRightClick(slotIndex, p, x, y)) return
       this.dragController.handleSlotClick(binding, p)
     })
 
@@ -1088,7 +1208,7 @@ export class UI extends Phaser.Scene {
     const titleY = panelY - panelH / 2 + PAD_Y + TITLE_H / 2
     const title = this.add.bitmapText(panelX, titleY, 'main', 'Inventory', FONT.title)
       .setOrigin(0.5, 0.5)
-      .setTint(COLORS.uiText)
+      .setTint(0xFFFFFF)
       .setDepth(9002)
     this.dockedInvObjects.push(title)
 
@@ -1169,7 +1289,7 @@ export class UI extends Phaser.Scene {
     const titleY = panelY - panelH / 2 + PANEL_PAD + 16
     const title = this.add.bitmapText(panelX, titleY, 'main', 'Inventory', FONT.title)
       .setOrigin(0.5, 0.5)
-      .setTint(COLORS.uiText)
+      .setTint(0xFFFFFF)
       .setDepth(9002)
     this.upperInvObjects.push(title)
 
@@ -1203,6 +1323,19 @@ export class UI extends Phaser.Scene {
       this.invCounts[i] = null
       delete this.invSlotPos[i]
     }
+  }
+
+  // Right-click an inventory slot to eat an edible from it. Returns true if it
+  // was eaten (caller should then stop processing the click). Works in any
+  // scene since the hotbar/inventory are always live — this is how food gets
+  // eaten inside interiors. Effects + consumption live in state.
+  private tryEatSlotOnRightClick(slotIndex: number, p: Phaser.Input.Pointer, x: number, y: number): boolean {
+    if (!p.rightButtonDown()) return false
+    const stack = state.inventory[slotIndex]
+    if (!stack || !ITEMS[stack.type].edible) return false
+    state.eatFromSlot(slotIndex, this.registry)
+    this.redrawInventorySlot(slotIndex, x, y)
+    return true
   }
 
   private redrawInventorySlot(i: number, x: number, y: number) {
@@ -1467,7 +1600,7 @@ export class UI extends Phaser.Scene {
           .setDepth(9002)
         const hoverObj = attachSlotHover(this, slotImg, x, y)
         hoverObj.setDepth(9003)
-        attachSlotTooltip(this, slotImg, x, y, getStack, -44)
+        attachSlotTooltip(slotImg, getStack)
         this.crateObjects.push(slotImg, hoverObj)
 
         const binding = makeStorageBinding({ x, y }, getStack, setStack, {
@@ -1619,6 +1752,10 @@ export class UI extends Phaser.Scene {
       const interior = this.scene.get('Interior') as unknown as Interior
       interior.placeFromInventory(stack)
       if (stack.count > 0) state.inventoryAddAnywhere(stack)
+    } else if (this.upperInvOpen) {
+      bag.contents[slotIndex] = null
+      distributeIntoBindings(stack, this.upperInvBindings)
+      if (stack.count > 0) state.inventoryAddAnywhere(stack)
     } else {
       return
     }
@@ -1713,7 +1850,7 @@ class BagPanel {
 
         const slotImg = scene.add.image(x, y, 'menu-slot').setInteractive().setDepth(200)
         const hoverObj = attachSlotHover(scene, slotImg, x, y)
-        attachSlotTooltip(scene, slotImg, x, y, () => this.peekSlot(i))
+        attachSlotTooltip(slotImg, () => this.peekSlot(i))
         this.objects.push(slotImg, hoverObj)
 
         const binding: SlotBinding = {

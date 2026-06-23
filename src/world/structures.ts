@@ -38,7 +38,7 @@ export interface WorldStructure {
   type: WorldStructureType
   x: number
   y: number
-  townId: string | null
+  townId?: string
   flipX?: boolean
   tint?: number
   loot?: { x: number; y: number; type: string; count?: number }[]
@@ -56,8 +56,5 @@ export interface Town {
   radius: number   // discovery radius
 }
 
-// Catalog of towns. For now: one in the north containing the shop. The
-// church will land in this same town later.
 export const TOWNS: Town[] = [
-  { id: 'northern_town', name: 'Northern Town', x: 2400, y: 504, radius: 240 },
 ]

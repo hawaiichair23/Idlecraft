@@ -10,6 +10,7 @@
 // is hand-placed or teleported.
 
 import Phaser from 'phaser'
+import { CAT_WATER } from './ropeController'
 
 // Forces (per frame). Matter forces are tiny — scaled by body mass.
 // The wind FLUCTUATES: its eastward push rises and falls over time (gusts),
@@ -99,7 +100,7 @@ export function spawnTumbleweed(scene: Phaser.Scene, atX?: number, atY?: number,
     restitution: RESTITUTION,
     friction: 0.01,
     label: 'tumbleweed',
-    collisionFilter: { category: CAT_TUMBLEWEED, mask: CAT_WORLD | CAT_TUMBLEWEED },
+    collisionFilter: { category: CAT_TUMBLEWEED, mask: CAT_WORLD | CAT_TUMBLEWEED | CAT_WATER },
   })
 
   // A real STATIC floor body just below the spawn point, spanning the eastward

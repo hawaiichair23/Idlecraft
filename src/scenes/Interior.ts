@@ -12,6 +12,7 @@ import type { SlotVisual } from './InteriorTypes'
 import { registerGrabbable } from '../ui/hover'
 import { makeSlotImage, makeStorageBinding, makeProducerOutputBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
 import { buildProducerInterior } from './ProducerInterior'
+import { buildSmithyInterior } from './SmithyInterior'
 import { buildWorkshopInterior } from './WorkshopInterior'
 import { buildShopInterior } from './ShopInterior'
 import { buildGeneralStoreInterior } from './GeneralStoreInterior'
@@ -334,9 +335,8 @@ export class Interior extends Phaser.Scene {
         ...INTERIOR_PALETTES.abandonedHouse,
         wallHeightFraction: 0.45,
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
-        // TODO: lower crateSpawnChance to its real low-empty value once tested.
         crateSeed: state.worldSeed + this.interiorData.structureIndex,
-        crateSpawnChance: 0.9,
+        crateSpawnChance: 1,
         // Seeded loot-table roll for the chest contents. Offset the seed from the
         // spawn-chance seed so "does a chest exist" and "what's inside" are
         // independent rolls, still deterministic per house + world.
@@ -354,7 +354,7 @@ export class Interior extends Phaser.Scene {
         openSide: this.interiorData.flipX ? 'left' : 'right',
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
         crateSeed: state.worldSeed + this.interiorData.structureIndex,
-        crateSpawnChance: 0.9,
+        crateSpawnChance: 1,
         crateContents: rollAbandonedHouseChest(state.worldSeed + this.interiorData.structureIndex * 31 + 7),
         cratePos: { x: 0.5, y: 0.3 },
       }, () => this.exit())
@@ -413,13 +413,15 @@ export class Interior extends Phaser.Scene {
       const slotCount = getStorageSlotCount(plot.level)
       const rows = Math.ceil(slotCount / STORAGE_COLS)
       CONTENT_H = rows * SLOT + (rows - 1) * SLOT_GAP + 24
+    } else if (buildingType === 'smithy') {
+      CONTENT_H = 220
     }
     const panelH = PANEL_PAD + TITLE_H + TAB_BAR_H + CONTENT_H + PANEL_PAD
 
     const playAreaTop = UI_BAR_HEIGHT
     const playAreaH = h - UI_BAR_HEIGHT - UI_INVENTORY_BAR_HEIGHT
     const panelX = w / 2
-    const panelY = playAreaTop + playAreaH / 2 - 50
+    const panelY = playAreaTop + playAreaH / 2 - 70
 
     // ---- panel background ----
     // Interactive so clicks on the panel body are absorbed here instead of
@@ -543,6 +545,11 @@ export class Interior extends Phaser.Scene {
           dc.handleSlotClick(binding, p)
         })
       }
+    } else if (buildingType === 'smithy') {
+      const handle = buildSmithyInterior(this, plotIndex, panelX, contentY, onSlotShiftClick, productionContainer)
+      this.bindings.push(...handle.bindings)
+      this.slotVisuals.push(...handle.slotVisuals)
+      this.moduleUpdates.push(handle.update)
     }
 
     // -- UPGRADES tab (1) -- built for all building types

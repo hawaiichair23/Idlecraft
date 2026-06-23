@@ -21,8 +21,9 @@ const game = new Phaser.Game({
   physics: {
     default: 'matter',
     matter: {
-      gravity: { x: 0, y: 0 },   // top-down: no falling
+      gravity: { x: 0, y: 0 },
       enableSleeping: true,
+      constraintIterations: 1,
     },
   },
   scene: [Overworld, UI, Interior],
@@ -89,6 +90,15 @@ window.playerSpeed = (n?: number) => {
   state.playerSpeedOverride = (n === undefined || n === null) ? null : n
   return `playerSpeedOverride: ${state.playerSpeedOverride}`
 }
+
+// Dev: arrow up/down bump player speed by 200. Not shipped.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+  const cur = state.playerSpeedOverride ?? 135
+  const next = e.key === 'ArrowUp' ? cur + 200 : Math.max(100, cur - 200)
+  state.playerSpeedOverride = next
+  console.log(`playerSpeed: ${next}`)
+})
 
 // Give the player items. getItem("rope") gives 1; getItem("post", 12) gives 12.
 // Valid names are the keys of ITEMS — if the name is unknown, the valid names

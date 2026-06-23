@@ -34,8 +34,8 @@ export interface InteriorBackdropBounds {
 // Edit these two CSS hex strings to recolor the abandoned house interior.
 // Paste any '#RRGGBB' value (e.g. from a color picker). They're converted to
 // the numeric form Phaser needs just below.
-const abandonedHouseFloor = '#4b3125'   // floor (dark muted red)
-const abandonedHouseWall = '#422721'    // walls (dark purple-black)
+const abandonedHouseFloor = '#6c5e58'   // floor 
+const abandonedHouseWall = '#2e201d'    // walls 
 
 export const ABANDONED_HOUSE_FLOOR_COLOR = parseInt(abandonedHouseFloor.slice(1), 16)
 export const ABANDONED_HOUSE_WALL_COLOR = parseInt(abandonedHouseWall.slice(1), 16)
@@ -49,7 +49,7 @@ export const INTERIOR_PALETTES = {
   toolShop:       { floorColor: 0x8B6240, wallColor: 0x2E2014 },
   landOffice:     { floorColor: 0xB07A45, wallColor: 0x4A2D14 },
   nursery:        { floorColor: 0x8E8550, wallColor: 0x3A3220 },
-  abandonedHouse: { floorColor: ABANDONED_HOUSE_FLOOR_COLOR, wallColor: ABANDONED_HOUSE_WALL_COLOR, floorTexture: 'floor_wood', floorTextureScale: 6 },
+  abandonedHouse: { floorColor: ABANDONED_HOUSE_FLOOR_COLOR, wallColor: ABANDONED_HOUSE_WALL_COLOR },
   longHouse:      { floorColor: 0x5A5A5A, wallColor: 0x2A2A2A },
   generalStore:   { floorColor: 0x6E7A4A, wallColor: 0x2A2E1A },
   church:         { floorColor: 0x2A2A2E, wallColor: 0x0E0E12, skyColor: 0xFF707F },

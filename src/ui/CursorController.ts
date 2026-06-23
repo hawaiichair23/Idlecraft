@@ -1,11 +1,8 @@
 import Phaser from 'phaser'
 import { state, WOOD_TILE, Terrain } from '../game/state'
 import { grabbableSlots, grabHover, rejectHover } from './hover'
-import { ACTION_CURSOR, type OverworldAction } from '../scenes/Overworld'
+import { ACTION_CURSOR, resolveAction, type ItemAction, type WorldContext, TOOL_RANGE } from '../game/ItemActionController'
 
-// Must match the TOOL_RANGE in Overworld.ts — max distance from the player
-// at which tool cursors are shown and tool actions are allowed.
-const TOOL_RANGE = 150
 
 // Gold tint for the white arrow/grab cursor art (matches the old baked-in gold,
 // #D4A017). Cleared to leave the cursor white over grass.
@@ -107,13 +104,42 @@ export class CursorController {
     const ui = this.scene as any
     const uiPanelOpen = !!(ui.openCrateContents || ui.upperInvOpen || ui.menuContainer?.visible)
     if (!interiorActive && !uiPanelOpen) {
+      const p = this.scene.input.activePointer
+      let overGrabbable = grabHover.active
+      if (!overGrabbable) {
+        for (const s of this.scene.scene.manager.getScenes(true)) {
+          if (overGrabbable) break
+          const targets = s.input.hitTestPointer(p)
+          if (targets.some(t => grabbableSlots.has(t))) { overGrabbable = true; break }
+        }
+      }
       const overworld = this.scene.scene.manager.getScene('Overworld') as any
       const playerObj = overworld?.player as Phaser.GameObjects.Sprite | undefined
       const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
+
+      // Resolve the overworld action once, up front, so a held tool's action can
+      // take precedence over the generic grab cursor. A built plot is a
+      // registered grabbable, so without this an axe/pickaxe hover over it would
+      // show the grab cursor and never the destroy (red-X) cursor.
+      let action: ItemAction | null = null
       if (overworld?.resolveOverworldAction && playerObj && cam) {
-        const p = this.scene.input.activePointer
         const world = cam.getWorldPoint(p.x, p.y)
-        const action: OverworldAction | null = overworld.resolveOverworldAction(world.x, world.y)
+        action = overworld.resolveOverworldAction(world.x, world.y)
+      }
+
+      // The grab cursor yields ONLY to a destroy action (the red-X kinds) —
+      // otherwise a grabbable world object (e.g. a built plot) would mask its
+      // own destroy cursor when an axe/pickaxe is held over it. Every other
+      // action still defers to the grab hand, as before.
+      const destroyEntry = action ? ACTION_CURSOR[action.kind] : null
+      const isDestroyAction = !!destroyEntry && destroyEntry !== 'tool' && destroyEntry.texture === 'cursor_x'
+      if (overGrabbable && !isDestroyAction) {
+        this.setTexture('cursor_grab', 2)
+        this.applyArrowTerrainTint()
+        return
+      }
+
+      if (cam) {
         if (action) {
           const entry = ACTION_CURSOR[action.kind]
           if (entry === 'tool') {
@@ -132,7 +158,8 @@ export class CursorController {
               // match spawnPostSprite: iron post art draws 2px up so its base
               // lines up with wood posts. Preview must mirror that nudge.
               const nudgeY = a.sprite === 'item_iron_post' ? -2 : 0
-              const snapped = this.snapCursorToWorldGrid(10, undefined, undefined, nudgeY)
+              const isWall = state.inventory[state.selectedInventorySlot]?.type === 'wood_wall'
+              const snapped = this.snapCursorToWorldGrid(isWall ? 24 : 10, undefined, undefined, nudgeY)
               // swap ghost to the vertical world sprite when a vertical neighbor
               // is detected, so the preview matches what actually gets planted.
               if (snapped) {
@@ -144,13 +171,17 @@ export class CursorController {
               this.cursor.setAlpha(0.65)
               this.snapCursorToWorldGrid(WOOD_TILE, state.worldBounds.minX, state.worldBounds.minY)
             }
+            if (action.kind === 'place-water') {
+              this.cursor.setAlpha(0.65)
+              this.snapCursorToWorldGrid(WOOD_TILE, state.worldBounds.minX, state.worldBounds.minY)
+            }
             if (action.kind === 'place-gate') {
               this.cursor.setAlpha(0.65)
               this.snapCursorToWorldGrid(10)
             }
-            // mount cursor wears the hovered honse's coat color (null = special
+            // mount/dismount cursor wears the honse's coat color (null = special
             // untinted coat, leave the sprite's native colors)
-            if (action.kind === 'mount' && action.tint !== null) {
+            if ((action.kind === 'mount' || action.kind === 'dismount') && action.tint !== null) {
               this.cursor.setTint(action.tint)
             }
             if (action.kind === 'quirt') {
@@ -174,16 +205,46 @@ export class CursorController {
             }
           } else {
             this.setTexture(entry.texture, entry.scale)
+            // The grab-cursor sprite is white art designed to be tinted by the
+            // grass/non-grass rule (clearTint over grass, gold otherwise). Other
+            // entry textures (cursor_x, etc.) have native colors — skip tinting.
+            if (entry.texture === 'cursor_grab') this.applyArrowTerrainTint()
           }
           return
         }
       }
     } else {
-      // Interior — tool cursor if a tool is active in this context
+      const interiorScene = this.scene.scene.manager.getScene('Interior') as any
+      const interiorData = interiorScene?.getInteriorData?.()
+      const walkableCtx: WorldContext | null = interiorScene?.walkableCtx ?? null
+
+      if (walkableCtx && !uiPanelOpen) {
+        const p = this.scene.input.activePointer
+        const drag = (this.scene as any).getDragController?.()
+        const action = resolveAction(walkableCtx, p.x, p.y, drag?.isHolding() ?? false)
+        if (action) {
+          const entry = ACTION_CURSOR[action.kind]
+          if (entry === 'tool') {
+            const a = action as { sprite: string; scale: number }
+            this.setTexture(a.sprite, a.scale)
+            const wantRot = this.axeSwinging ? -Math.PI / 2 : 0
+            if (this.cursor.rotation !== wantRot) this.cursor.setRotation(wantRot)
+            if (action.kind === 'aim' && (action as any).bullets) {
+              this.bulletStrip.setTexture((action as any).bullets)
+                .setScale(a.scale)
+                .setPosition(this.cursor.x, this.cursor.y + this.cursor.displayHeight / 2 + a.scale)
+                .setVisible(true)
+            }
+          } else {
+            this.setTexture(entry.texture, entry.scale)
+            if (entry.texture === 'cursor_grab') this.applyArrowTerrainTint()
+          }
+          return
+        }
+      }
+
       const tool = state.getSelectedTool()
       if (tool) {
-        const interiorScene = this.scene.scene.manager.getScene('Interior') as any
-        const interiorData = interiorScene?.getInteriorData?.()
         const inField = !!(interiorData && interiorData.source === 'plot' && interiorData.buildingType === 'field')
         const contexts = tool.cursorContexts ?? ['overworld']
         if (inField && contexts.includes('field')) {
@@ -199,15 +260,19 @@ export class CursorController {
       this.setTexture('cursor_x', 2)
       return
     }
+    // When a UI panel is open (build menu, crate, inventory), only the UI
+    // scene's own slots may show the grab cursor — world objects (plots,
+    // crates) sit behind the panel and must not be hit-tested through it.
     let overSlot = grabHover.active
-    for (const s of this.scene.scene.manager.getScenes(true)) {
+    const scenes = uiPanelOpen ? [this.scene] : this.scene.scene.manager.getScenes(true)
+    for (const s of scenes) {
       if (overSlot) break
       const targets = s.input.hitTestPointer(p)
       if (targets.some(t => grabbableSlots.has(t))) { overSlot = true; break }
     }
     if (overSlot) {
       this.setTexture('cursor_grab', 2)
-      this.cursor.setTint(Overworld_CURSOR_GOLD)
+      this.applyArrowTerrainTint()
     } else {
       this.setTexture('cursor', 2)
       this.applyArrowTerrainTint()
@@ -218,6 +283,11 @@ export class CursorController {
   // most ground (reads on the cream sand), left white over grass (reads on
   // green). One terrain lookup per frame; tint only changes on a class flip.
   private applyArrowTerrainTint() {
+    // The terrain tint is an overworld concept — it samples the overworld grid
+    // through the overworld camera. Inside an interior that sample is the world
+    // terrain under the building (e.g. grass beneath a long house), which would
+    // wrongly whiten the cursor. Interiors always use the plain gold arrow.
+    if (this.scene.scene.manager.isActive('Interior')) { this.cursor.setTint(Overworld_CURSOR_GOLD); return }
     const overworld = this.scene.scene.manager.getScene('Overworld') as any
     const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
     if (!cam) { this.cursor.setTint(Overworld_CURSOR_GOLD); return }
