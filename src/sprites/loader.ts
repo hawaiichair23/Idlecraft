@@ -27,3 +27,4 @@ export function loadSprites(scene: Phaser.Scene) {
     spriteToTexture(scene, key, sprite)
   }
 }
+

@@ -47,7 +47,9 @@ export const ABANDONED_HOUSE_WALL_COLOR = parseInt(abandonedHouseWall.slice(1), 
 // Tool Shop, etc).
 export const INTERIOR_PALETTES = {
   toolShop:       { floorColor: 0x8B6240, wallColor: 0x2E2014 },
-  landOffice:     { floorColor: 0xB07A45, wallColor: 0x4A2D14 },
+  charterOffice:  { floorColor: 0xB07A45, wallColor: 0x4A2D14 },
+  landOffice:     { floorColor: 0xA8753E, wallColor: 0x453016 },
+  saloon:         { floorColor: 0x7A4E2A, wallColor: 0x2E1C0E },
   nursery:        { floorColor: 0x8E8550, wallColor: 0x3A3220 },
   abandonedHouse: { floorColor: ABANDONED_HOUSE_FLOOR_COLOR, wallColor: ABANDONED_HOUSE_WALL_COLOR },
   longHouse:      { floorColor: 0x5A5A5A, wallColor: 0x2A2A2A },

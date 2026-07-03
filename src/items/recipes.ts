@@ -33,6 +33,15 @@ export const RECIPES: Recipe[] = [
   { inputs: [{ type: 'twine', count: 1 }, { type: 'twine', count: 1 }], output: 'rope' },
   { inputs: [{ type: 'iron_bar', count: 1 }, { type: 'wood', count: 1 }], output: 'brand' },
   { inputs: [{ type: 'iron_bar', count: 1 }, { type: 'clay', count: 1 }], output: 'pipe' },
+  { inputs: [{ type: 'iron_bar', count: 1 }, { type: 'post', count: 1 }], output: 'iron_post' },
+  {
+    inputs: [{ type: 'iron_bar', count: 4 }],
+    pattern: ['iron_bar', 'iron_bar', 'iron_bar', 'iron_bar'],
+    output: 'manacles',
+  },
+  { inputs: [{ type: 'steel', count: 1 }, { type: 'pickaxe', count: 1 }], output: 'tempered_pick' },
+  { inputs: [{ type: 'steel', count: 1 }, { type: 'axe', count: 1 }], output: 'tempered_axe' },
+  { inputs: [{ type: 'steel', count: 1 }, { type: 'shovel', count: 1 }], output: 'tempered_shovel' },
   { inputs: [{ type: 'wood', count: 1 }, { type: 'wood', count: 1 }], output: 'post' },
   // Level 2 (2x2 shaped): wood in all four slots -> 8 planks.
   {

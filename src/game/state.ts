@@ -3,23 +3,28 @@
 
 import Phaser from 'phaser'
 import type { ItemStack, ItemType, ItemDef } from '../items/types'
-import { ITEMS } from '../items/types'
+import { ITEMS, cloneStack, SMELT_RECIPES, SMELT_OUTPUTS, FUEL_BURN_MS } from '../items/types'
+import type { SmeltingState, SmeltingConfig } from './smelting'
 import type { WorldStructure } from '../world/structures'
+import type { DecorType } from '../world/decor'
 import type { Honse } from '../world/honse'
 import type { Coyote } from '../world/coyote'
 import type { Bandit } from '../world/bandit'
+import type { TroughKind } from '../world/troughs'
+import { TROUGH_PER_TILE_CAP, TROUGH_FILL_LEVELS } from '../world/troughs'
+import { PLACES } from '../world/places'
 
-export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage' | 'smithy'
+export type BuildingType = 'empty' | 'mill' | 'workshop' | 'well' | 'field' | 'storage' | 'smelter' | 'blast_furnace'
 export type BuiltType = Exclude<BuildingType, 'empty'>
 
 export const MAX_GOLD = 999_999
-export const MAX_HEALTH = 3
+export const BASE_MAX_HEALTH = 3
 
 // Terrain grid. One byte per TERRAIN_TILE-square cell covering the world, the
 // ground-truth map every system reads and writes: gen seeds it, the renderer
 // draws from it, planting reads it, fertilizing writes it. Salt=0 so a zeroed
 // array is an all-salt basin by default; other terrains are written in.
-export const Terrain = { Salt: 0, Grass: 1, Water: 2, CrackedDirt: 3, PathDirt: 4 } as const
+export const Terrain = { Salt: 0, Grass: 1, Water: 2, CrackedDirt: 3, PathDirt: 4, TilledDirt: 5 } as const
 export type Terrain = (typeof Terrain)[keyof typeof Terrain]
 export const TERRAIN_TILE = 16
 export const WOOD_TILE = 24
@@ -28,7 +33,7 @@ export const WOOD_TILE = 24
 // resizes them at runtime.
 const INITIAL_WORLD_PX = 576 * 8
 
-export const PLAYER_BASE_SPEED = 12235
+export const PLAYER_BASE_SPEED = 11135
 
 export interface WorldBounds {
   minX: number
@@ -106,12 +111,9 @@ export interface PlotState {
   // storage-only: item grid contents. undefined for non-storage plots;
   // initialized when a storage building is built. Size grows with level.
   storageContents?: (ItemStack | null)[]
-  smithyFuel?: ItemStack | null
-  smithyOre?: ItemStack | null
-  smithyOutput?: ItemStack | null
-  smithyBurnEndAt?: number
-  smithyBurnDuration?: number
-  smithySmeltEndAt?: number
+  // Smelter-class plots (smelter, blast furnace, future smelters). Lazy-init
+  // on first tick. Shape is identical regardless of which smelter type.
+  smelt?: SmeltingState
 }
 
 export interface BuildingDef {
@@ -122,6 +124,34 @@ export interface BuildingDef {
   goldPerTick: number
   producesItem?: ItemType    // mill: 'flour', well: 'water', workshop: undefined
   itemTickMs?: number        // how often it produces 1 of producesItem
+  // Smelter-class plots fill this in. Anywhere the engine asks "is this a
+  // smelter and how does it behave?" it reads this single field.
+  smelting?: SmeltingConfig
+}
+
+// Recipe table for the blast furnace. Iron bar -> steel, coal -> coke. Coke
+// is the only accepted fuel.
+const BLAST_RECIPES: Record<string, ItemType> = {
+  iron_bar: 'steel',
+  coal: 'coke',
+}
+const BLAST_OUTPUTS: Set<ItemType> = new Set(Object.values(BLAST_RECIPES))
+const COKE_BURN_MS = 30000
+
+const SMELTER_SMELTING: SmeltingConfig = {
+  recipes: SMELT_RECIPES,
+  outputs: SMELT_OUTPUTS,
+  burnMs: (type: string) => FUEL_BURN_MS[type],
+  isFuel: (type: string) => type in FUEL_BURN_MS,
+  cycleDurationMs: 5000,
+}
+
+const BLAST_SMELTING: SmeltingConfig = {
+  recipes: BLAST_RECIPES,
+  outputs: BLAST_OUTPUTS,
+  burnMs: (type: string) => (type === 'coke' ? COKE_BURN_MS : undefined),
+  isFuel: (type: string) => type === 'coke',
+  cycleDurationMs: 8000,
 }
 
 export const BUILDINGS: Record<BuiltType, BuildingDef> = {
@@ -130,13 +160,15 @@ export const BUILDINGS: Record<BuiltType, BuildingDef> = {
   workshop: { name: 'Workshop', description: 'Crafts materials into products.', cost: 50, tickMs: 6000, goldPerTick: 0 },
   field:   { name: 'Field',   description: 'Plant and harvest crops.', cost: 100, tickMs: 0, goldPerTick: 0 },
   storage: { name: 'Storage', description: 'Stores items.', cost: 100, tickMs: 0, goldPerTick: 0 },
-  smithy:  { name: 'Smithy',  description: 'Smelts ores into bars.', cost: 100, tickMs: 0, goldPerTick: 0 },
+  smelter: { name: 'Smelter', description: 'Smelts ores into bars.', cost: 100, tickMs: 0, goldPerTick: 0, smelting: SMELTER_SMELTING },
+  blast_furnace: { name: 'Blast Furnace', description: 'Refines iron into steel using coke.', cost: 250, tickMs: 0, goldPerTick: 0, smelting: BLAST_SMELTING },
 }
 
-export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field', 'storage', 'smithy']
+export const BUILDING_LIST: BuiltType[] = ['mill', 'well', 'workshop', 'field', 'storage', 'smelter', 'blast_furnace']
 
 // Upgrade cost: 25, 50, 100, 200, …
-export function getUpgradeCost(level: number): number {
+export function getUpgradeCost(level: number, buildingType?: BuildingType): number {
+  if (buildingType === 'workshop') return 500
   return 25 * Math.pow(2, level - 1)
 }
 
@@ -153,9 +185,15 @@ export function getStorageCap(level: number): number {
   return 16 * Math.pow(2, level - 1)
 }
 
-// Storage building slot count by level: 24, 30, 36, 42, …  (+6 per level = one extra row)
+// Per-slot cap for an output slot on an upgradable plot. Stack-limit-1 items
+// (tools, axes) still respect their own maxStack so they can't be stacked.
+export function getPlotSlotCap(plot: PlotState, itemType: ItemType): number {
+  return Math.min(getStorageCap(plot.level), ITEMS[itemType].maxStack)
+}
+
+// Storage building slot count by level: 12, 24, 36, 48, …  (+12 per level = two extra rows)
 export function getStorageSlotCount(level: number): number {
-  return STORAGE_BASE_SLOTS + (level - 1) * STORAGE_COLS
+  return 12 * level
 }
 
 export const INVENTORY_SIZE = 15
@@ -193,10 +231,19 @@ export function createContainerContents(item: ItemType): (ItemStack | null)[] {
 
 class GameState {
   gold = 20
-  health = MAX_HEALTH
+  maxHealth = BASE_MAX_HEALTH
+  health = BASE_MAX_HEALTH
   plots: PlotState[] = []
   // Fixed world buildings (shop, church, etc.) — not owned, not bought, no ticks.
   worldStructures: WorldStructure[] = []
+  // Fixed authored solid decor (barrels, etc.) — sprite/scale/hitbox resolve from
+  // the DECOR/ITEMS catalogs; placed with collision via placeNonEnterable. The
+  // spawn-area sibling of a site template's solidDecor.
+  worldSolidDecor: { type: DecorType; x: number; y: number }[] = []
+  // Fixed authored visual decor (grave crosses, etc.) — drawn with no collision,
+  // low depth so the player walks in front. The authored-world sibling of a site
+  // template's visual `decor` array.
+  worldDecor: { sprite: string; x: number; y: number; scale: number; depth?: number }[] = []
   discoveredTowns: Set<string> = new Set()
   // Plot building types the player can build. Defaults to the starter set;
   // others (field, etc.) are unlocked by purchasing at the Land Office.
@@ -248,19 +295,24 @@ class GameState {
   // overworld grows it to mature once enough time has elapsed. Only saplings
   // carry it — mature/stump and hand-placed trees leave it undefined.
   plantedTrees: { x: number; y: number; kind: 'cottonwood'; stage: 'sapling' | 'mature' | 'stump' | 'dead'; plantedAt?: number }[] = []
+  // Scattered grass bushes (seeded worldgen). Visual-only, no collision; ride the
+  // same camera-cull lifecycle as trees. Data persists here; sprites are transient.
+  scatteredBushes: { x: number; y: number }[] = []
   // Hitching posts placed by the player. Each entry is a sprite in the world
   // and an obstacle in collision. `species` chooses which sprite to render —
   // 'post' (weathered cottonwood gray) or 'cedar_post' (warm cedar brown).
   // Mechanically identical otherwise.
   placedPosts: { x: number; y: number; species?: 'post' | 'cedar_post' | 'iron_post' | 'wood_wall' }[] = []
-  // Water troughs placed by the player. Position-only; grid-snapped, no collision.
-  placedWaters: { x: number; y: number }[] = []
+  // Troughs placed by the player (water and future palette-swapped kinds).
+  // Position + kind; grid-snapped. Kind is the held item's type at place time.
+  placedTroughs: { x: number; y: number; kind: TroughKind; fill: number; displayLevel: number }[] = []
   placedGates: { x: number; y: number; vertical: boolean; open: boolean; swingX: number; swingY: number }[] = []
   // Containers placed by the player (crates and chests). Each is a sprite +
   // obstacle in the world (like a post) plus its own storage grid in `contents`.
   // `item` is the container's item type ('crate' or 'chest'), driving its sprite,
   // footprint, and slot count. Contents persist for the play session.
   placedCrates: { x: number; y: number; item: ItemType; contents: (ItemStack | null)[]; unlocked?: boolean; interior?: string }[] = []
+  lockboxRollSeq = 0
   // Standalone world wells (e.g. the one in the north town). Each produces
   // water up to WORLD_WELL_CAP, then idles until the player takes some. Unlike
   // plot wells these have no level/upgrades — a fixed-rate water bucket you
@@ -273,6 +325,7 @@ class GameState {
   // Honses in the world. Position is the visual center; sprite/collision/rope
   // hitboxes derive from this. Stationary for now — movement comes later.
   honses: Honse[] = []
+  nextHerdId: number = 1
   coyotes: Coyote[] = []
   bandits: Bandit[] = []
   // Dead coyotes left lying in the world as carcasses. Inert (no AI, no damage,
@@ -281,8 +334,11 @@ class GameState {
   // Dead bandits left in the world. Distinct from coyote carcasses because these
   // are meant to be looted/carried for bounty later — each needs a stable id and a
   // carried flag so a specific body can be picked up, hauled, and turned in.
-  banditBodies: { id: number; x: number; y: number; carried: boolean; contents: (ItemStack | null)[] }[] = []
+  banditBodies: { id: number; x: number; y: number; carried: boolean; contents: (ItemStack | null)[]; name: string; bounty: number }[] = []
   nextBanditBodyId = 1
+  carriedBandit: { name: string; bounty: number; contents: (ItemStack | null)[] } | null = null
+  honseBanditRiders: Map<number, { name: string; bounty: number; contents: (ItemStack | null)[] }> = new Map()
+  npcs: { x: number; y: number; name: string; lines: { text: string; speaker?: string; options?: { label: string; act: () => void }[] }[] }[] = []
   // Index into `honses` of the honse the player is currently riding, or null.
   // While set, the honse's AI is suppressed and player input moves the honse;
   // the player sprite is locked to the honse position each frame.
@@ -325,9 +381,19 @@ class GameState {
 
 
 
-  // General store sell-grid contents — items dragged in here are sold on click.
-  // Persists across closing the menu so the player can leave/return mid-trade.
-  generalStoreSlots: (ItemStack | null)[] = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
+  // General store sell-grid contents, keyed per store instance (by world
+  // structure index) so each town's store keeps its own counter. Persists
+  // across closing the menu so the player can leave/return mid-trade.
+  generalStoreSlots = new Map<number, (ItemStack | null)[]>()
+
+  getGeneralStoreSlots(key: number): (ItemStack | null)[] {
+    let slots = this.generalStoreSlots.get(key)
+    if (!slots) {
+      slots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
+      this.generalStoreSlots.set(key, slots)
+    }
+    return slots
+  }
 
 
   // ---- pausable game clock ----
@@ -377,7 +443,7 @@ class GameState {
   // opening the build menu) so a shovel-click only triggers digging.
   isShovelSelected(): boolean {
     const s = this.inventory[this.selectedInventorySlot]
-    return s !== null && s.type === 'shovel'
+    return s !== null && (ITEMS[s.type]?.digging ?? 0) > 0
   }
 
   // Returns the ItemDef of the scroll-selected hotbar item if it's an active
@@ -447,7 +513,8 @@ class GameState {
   // and grows as the map expands.
   init() {
     this.gold = 2000
-    this.health = MAX_HEALTH
+    this.maxHealth = BASE_MAX_HEALTH
+    this.health = this.maxHealth
     // Roll this world's seed. generateWorld reads state.worldSeed, so the
     // whole layout derives from this one number. Random per new game today;
     // a future menu can set worldSeed before calling init() to replay a world.
@@ -457,15 +524,9 @@ class GameState {
     this.paused = false
     this.playerInWorld = true
     this.plots = []
-    this.worldStructures = [
-      { type: 'shop', x: 2400, y: 504 },
-      { type: 'church', x: 2330, y: 504 },
-      { type: 'general_store', x: 2700, y: 2304 },
-      { type: 'land_office', x: 3030, y: 204 },
-      { type: 'nursery', x: 3100, y: 204 },
-      { type: 'tanner', x: 3235, y: 355 },
-      { type: 'gunsmith', x: 3170, y: 204 },
-    ]
+    this.worldStructures = []
+    this.worldSolidDecor = []
+    this.worldDecor = []
     this.discoveredTowns = new Set()
     this.unlockedBuildings = new Set(['mill', 'well', 'workshop'])
     this.dugSpots = []
@@ -479,6 +540,7 @@ class GameState {
     this.revealedItems = []
     this.droppedItems = []
     this.plantedTrees = []
+    this.scatteredBushes = []
     this.worldBounds = { minX: 0, minY: 0, width: INITIAL_WORLD_PX, height: INITIAL_WORLD_PX }
     this.terrainCols = INITIAL_WORLD_PX / TERRAIN_TILE
     this.terrainRows = INITIAL_WORLD_PX / TERRAIN_TILE
@@ -487,19 +549,36 @@ class GameState {
     this.woodRows = Math.ceil(INITIAL_WORLD_PX / WOOD_TILE)
     this.wood = new Uint8Array(this.woodCols * this.woodRows)
     this.placedPosts = []
-    this.placedWaters = []
+    this.placedTroughs = []
     this.placedGates = []
     this.placedCrates = []
+    this.lockboxRollSeq = 0
     this.worldWells = []
     this.pipes = []
+    this.buildAuthoredPlaces()
     // honses spawn dynamically when twine is first crafted — start empty
     this.honses = []
+    this.nextHerdId = 1
     this.mounted = null
-    this.generalStoreSlots = Array.from({ length: GENERAL_STORE_SLOTS }, () => null)
-    this.inventory[0] = { type: 'copper_bar', count: 1 }
-    this.inventory[1] = { type: 'pickaxe', count: 1 }
-    this.inventory[2] = { type: 'wood_wall', count: 64 }
-    this.inventory[3] = { type: 'post', count: 64 }
+    this.generalStoreSlots = new Map()
+    //this.inventory[0] = { type: 'bush', count: 64 }
+    this.inventory[1] = { type: 'manacles', count: 5 }
+    //this.inventory[2] = { type: 'gold_lockbox', count: 5 }
+    this.inventory[3] = { type: 'post', count: 964 }
+    this.inventory[4] = { type: 'fence_gate', count: 96 }
+  }
+
+  // Fan the state-backed authored content (structures, troughs, posts, solid +
+  // visual decor) out of the single PLACES source into their arrays. Honses and
+  // gates are scene-built in Overworld since they need scene-only helpers.
+  private buildAuthoredPlaces() {
+    for (const place of Object.values(PLACES)) {
+      for (const s of place.structures) this.worldStructures.push({ type: s.type, x: s.x, y: s.y, flipX: s.flipX, sprite: s.sprite, interior: s.interior })
+      for (const t of place.troughs) this.placedTroughs.push({ x: t.x, y: t.y, kind: t.kind, fill: TROUGH_PER_TILE_CAP[t.kind], displayLevel: TROUGH_FILL_LEVELS })
+      for (const p of place.posts) this.placedPosts.push({ x: p.x, y: p.y, species: p.species })
+      for (const d of place.solidDecor) this.worldSolidDecor.push({ type: d.type, x: d.x, y: d.y })
+      for (const d of place.decor) this.worldDecor.push({ sprite: d.sprite, x: d.x, y: d.y, scale: d.scale, depth: d.depth })
+    }
   }
 
   // Try to put `stack` into a specific inventory slot. Does NOT mutate `stack`.
@@ -511,15 +590,16 @@ class GameState {
     const cap = ITEMS[stack.type].maxStack
     if (!existing) {
       const moved = Math.min(cap, stack.count)
-      const placed: ItemStack = { type: stack.type, count: moved }
-      if (isBag(stack.type)) {
-        placed.contents = stack.contents ?? createBagContents(stack.type)
+      const placed = cloneStack(stack as ItemStack, moved)
+      if (isBag(stack.type) && !placed.contents) {
+        placed.contents = createBagContents(stack.type)
       }
       this.inventory[slotIndex] = placed
       return moved
     }
     if (existing.type !== stack.type) return 0
-    if (isBag(stack.type)) return 0   // bags don't stack
+    if (existing.rarity !== stack.rarity) return 0
+    if (isBag(stack.type)) return 0
     const room = cap - existing.count
     if (room <= 0) return 0
     const moved = Math.min(room, stack.count)
@@ -532,72 +612,60 @@ class GameState {
   // 2) place into empty hotbar slots
   // 3) place into empty bag slots
   // Returns the total amount added. Bag items can nest into other bags.
-  inventoryAddAnywhere(stack: ItemStack): number {
+  inventoryAddAnywhere(stack: ItemStack, opts: { dryRun?: boolean } = {}): number {
     const cap = ITEMS[stack.type].maxStack
+    const dryRun = opts.dryRun === true
     let added = 0
 
-    // PHASE 1 — top up matching hotbar stacks
+    const matches = (s: ItemStack | null) =>
+      s !== null && s.type === stack.type && s.rarity === stack.rarity && s.count < cap
+
+    const mergeInto = (s: ItemStack) => {
+      const room = cap - s.count
+      const moved = Math.min(room, stack.count)
+      if (!dryRun) s.count += moved
+      stack.count -= moved
+      added += moved
+    }
+
+    const placeIntoEmpty = (write: (placed: ItemStack) => void) => {
+      const moved = Math.min(cap, stack.count)
+      if (!dryRun) {
+        const placed = cloneStack(stack, moved)
+        if (isBag(stack.type) && !placed.contents) {
+          placed.contents = createBagContents(stack.type)
+        }
+        write(placed)
+      }
+      stack.count -= moved
+      added += moved
+      return true
+    }
+
     for (const s of this.inventory) {
       if (stack.count <= 0) break
-      if (s && s.type === stack.type && s.count < cap) {
-        const room = cap - s.count
-        const moved = Math.min(room, stack.count)
-        s.count += moved
-        stack.count -= moved
-        added += moved
-      }
+      if (matches(s)) mergeInto(s!)
     }
-    // PHASE 2 — top up matching bag stacks
-    if (stack.count > 0) {
-      for (const bag of this.getBags()) {
+    for (const bag of this.getBags()) {
+      if (stack.count <= 0) break
+      for (const s of bag.contents!) {
         if (stack.count <= 0) break
-        const contents = bag.contents!
-        for (const s of contents) {
-          if (stack.count <= 0) break
-          if (s && s.type === stack.type && s.count < cap) {
-            const room = cap - s.count
-            const moved = Math.min(room, stack.count)
-            s.count += moved
-            stack.count -= moved
-            added += moved
-          }
-        }
+        if (matches(s)) mergeInto(s!)
       }
     }
-    // PHASE 3 — place into empty hotbar slots
     for (let i = 0; i < this.inventory.length; i++) {
       if (stack.count <= 0) break
       if (this.inventory[i] === null) {
-        if (isBag(stack.type) && this.bagCount() >= MAX_BAGS) break
-        const moved = Math.min(cap, stack.count)
-        const placed: ItemStack = { type: stack.type, count: moved }
-        if (isBag(stack.type)) {
-          placed.contents = stack.contents ?? createBagContents(stack.type)
-        }
-        // Lockboxes carry their own contents + unlocked state on the instance,
-        // so a picked-up box stays the same box when re-placed.
-        if (stack.type === 'silver_lockbox' || stack.type === 'gold_lockbox') {
-          if (stack.contents) placed.contents = stack.contents
-          placed.unlocked = stack.unlocked
-        }
-        this.inventory[i] = placed
-        stack.count -= moved
-        added += moved
+        if (!placeIntoEmpty(p => { this.inventory[i] = p })) break
       }
     }
-    // PHASE 4 — place into empty bag slots
-    if (stack.count > 0) {
-      for (const bag of this.getBags()) {
+    for (const bag of this.getBags()) {
+      if (stack.count <= 0) break
+      const contents = bag.contents!
+      for (let i = 0; i < contents.length; i++) {
         if (stack.count <= 0) break
-        const contents = bag.contents!
-        for (let i = 0; i < contents.length; i++) {
-          if (stack.count <= 0) break
-          if (contents[i] === null) {
-            const moved = Math.min(cap, stack.count)
-            contents[i] = { type: stack.type, count: moved }
-            stack.count -= moved
-            added += moved
-          }
+        if (contents[i] === null) {
+          if (!placeIntoEmpty(p => { contents[i] = p })) break
         }
       }
     }
@@ -610,58 +678,7 @@ class GameState {
   // answer always matches what an actual add would do. Used by the loot magnet
   // to decide whether a drop is collectable before dragging it to the player.
   roomFor(stack: Readonly<ItemStack>): number {
-    const cap = ITEMS[stack.type].maxStack
-    let remaining = stack.count
-    let room = 0
-
-    // PHASE 1 — matching hotbar stacks
-    for (const s of this.inventory) {
-      if (remaining <= 0) break
-      if (s && s.type === stack.type && s.count < cap) {
-        const moved = Math.min(cap - s.count, remaining)
-        room += moved
-        remaining -= moved
-      }
-    }
-    // PHASE 2 — matching bag stacks
-    if (remaining > 0) {
-      for (const bag of this.getBags()) {
-        if (remaining <= 0) break
-        for (const s of bag.contents!) {
-          if (remaining <= 0) break
-          if (s && s.type === stack.type && s.count < cap) {
-            const moved = Math.min(cap - s.count, remaining)
-            room += moved
-            remaining -= moved
-          }
-        }
-      }
-    }
-    // PHASE 3 — empty hotbar slots
-    for (const s of this.inventory) {
-      if (remaining <= 0) break
-      if (s === null) {
-        if (isBag(stack.type) && this.bagCount() >= MAX_BAGS) break
-        const moved = Math.min(cap, remaining)
-        room += moved
-        remaining -= moved
-      }
-    }
-    // PHASE 4 — empty bag slots
-    if (remaining > 0) {
-      for (const bag of this.getBags()) {
-        if (remaining <= 0) break
-        for (const s of bag.contents!) {
-          if (remaining <= 0) break
-          if (s === null) {
-            const moved = Math.min(cap, remaining)
-            room += moved
-            remaining -= moved
-          }
-        }
-      }
-    }
-    return room
+    return this.inventoryAddAnywhere(cloneStack(stack as ItemStack), { dryRun: true })
   }
 
   addGold(n: number, registry: Phaser.Data.DataManager) {
@@ -670,20 +687,26 @@ class GameState {
   }
 
   changeHealth(n: number, registry: Phaser.Data.DataManager) {
-    this.health = Math.max(0, Math.min(MAX_HEALTH, this.health + n))
+    this.health = Math.max(0, Math.min(this.maxHealth, this.health + n))
     registry.set('playerHealth', this.health)
     return this.health
   }
 
   healToFull(registry: Phaser.Data.DataManager) {
-    this.health = MAX_HEALTH
+    this.health = this.maxHealth
     registry.set('playerHealth', this.health)
     return this.health
   }
 
-  // Apply the gameplay effects of eating a food item: speed buff and healing.
-  // Purely state — visuals (crumbs) are the caller's responsibility.
+  increaseMaxHealth(hearts: number, registry: Phaser.Data.DataManager) {
+    this.maxHealth += hearts
+    registry.set('playerMaxHealth', this.maxHealth)
+    this.changeHealth(hearts, registry)
+    return this.maxHealth
+  }
+
   applyFoodEffects(def: ItemDef, registry: Phaser.Data.DataManager) {
+    if (def.maxHeartsBonus) this.increaseMaxHealth(def.maxHeartsBonus, registry)
     if (def.healFull) this.healToFull(registry)
     else if (def.healHearts) this.changeHealth(def.healHearts, registry)
   }

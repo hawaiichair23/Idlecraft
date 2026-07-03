@@ -1,8 +1,9 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { BUILDINGS, state, getEffectiveTickMs, type BuiltType } from '../game/state'
+import { BUILDINGS, state, getEffectiveTickMs, getPlotSlotCap, type BuiltType } from '../game/state'
 import { type SlotBinding } from '../ui/SlotBinding'
 import { makeSlotImage, makeProducerOutputBinding } from '../ui/slotFactory'
+import { outlineIcon } from '../ui/iconOutline'
 import type { SlotVisual } from './InteriorTypes'
 import type { UI } from './UI'
 
@@ -41,8 +42,8 @@ export function buildProducerInterior(
   const arrowX = buildingX + SLOT / 2 + GAP + SYMBOL / 2
   const outputX = arrowX + SYMBOL / 2 + GAP + SLOT / 2
 
-  const buildingSlotBg = scene.add.image(buildingX, centerY, 'menu-slot').setTint(COLORS.interiorPanel)
-  const buildingSprite = scene.add.sprite(buildingX, centerY, buildingType).setScale(2)
+  const buildingSlotBg = scene.add.image(buildingX, centerY, 'menu-slot').setTint(COLORS.slotBg)
+  const buildingSprite = outlineIcon(scene.add.sprite(buildingX, centerY, buildingType).setScale(2))
   const producerArrow = scene.add.sprite(arrowX, centerY, 'arrow_right').setScale(2)
   container?.add([buildingSlotBg, buildingSprite, producerArrow])
 
@@ -63,6 +64,7 @@ export function buildProducerInterior(
     getStack,
     setStack,
     { onChange: () => {} },
+    (t) => getPlotSlotCap(state.plots[plotIndex], t as any),
   )
 
   const ui = scene.scene.get('UI') as UI

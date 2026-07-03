@@ -1,3 +1,5 @@
+import { ITEMS, type ItemStack } from '../items/types'
+
 export interface Bandit {
   x: number
   y: number
@@ -29,6 +31,10 @@ export interface Bandit {
   retreatX: number           // unit retreat direction, held for the retreat window
   retreatY: number
   dying: boolean
+  manacled: boolean
+  contents: (ItemStack | null)[] | null
+  name: string
+  bounty: number
 }
 
 export const BANDIT_MAX_HEALTH = 20
@@ -106,12 +112,176 @@ const DODGE_CHANCE = 0.85      // fraction of dodgeable threats he actually reac
 const MELEE_RETREAT_MS = 450    // how long he commits to backing off after a swing
 const MELEE_RETREAT_SPEED = 120 // a deliberate backpedal away from the axe
 
-
-
 // Muzzle height above the bandit's center (px). Bullets spawn here AND the lead
 // solver aims from here — one source of truth so the spawn point and the aim
 // origin can never disagree (which biased every shot by this offset before).
 export const BANDIT_MUZZLE_DY = -8
+
+export const BANDIT_MANACLE_ICON_DY = -18
+
+
+const NAME_POOLS = {
+
+  anglo: {
+    first: [
+      'Jesse', 'Frank', 'Bill', 'Clay', 'Zeke', 'Cyrus', 'Silas',
+      'Amos', 'Ezra', 'Eli', 'Ike', 'Levi', 'Jed', 'Hank', 'Nate',
+      'Wade', 'Abner', 'Reuben', 'Caleb', 'Josiah', 'Hiram', 'Asa',
+      'Micah', 'Mordecai', 'Ambrose', 'Absalom', 'Elias', 'Isaiah',
+      'Solomon',
+    ],
+    last: [
+      'McCoy', 'Grady', 'Barlow', 'Kane', 'Shaw', 'Colter', 'Vance',
+      'Everett', 'Callahan', 'Whitaker', 'Hollister', 'Lockwood',
+      'Cobb', 'Boone', 'Pickett', 'Rutledge', 'Tunstall', 'Purvis',
+      'Blackburn', 'Slaughter', 'Renfro', 'Yeager', 'Kimbrough',
+      'Wooten', 'Doss', 'Mabry', 'Threadgill', 'Suggs', 'Ivey',
+      'Beasley', 'Farris', 'Gault', 'Meacham', 'Peveler',
+    ],
+  },
+
+  scotsIrish: {
+    first: [
+      'Angus', 'Duncan', 'Lachlan', 'Malcolm', 'Ewan',
+    ],
+    last: [
+      'McTavish', 'Buchanan', 'Ferguson', 'Kincaid', 'Sinclair',
+      'MacLeod', 'Craig',
+    ],
+  },
+
+  irish: {
+    first: [
+      'Seamus', 'Paddy', 'Liam', 'Declan', 'Cormac', 'Fergus',
+      'Eamon', 'Niall', 'Ruari', 'Brendan', 'Kieran', 'Rory',
+      'Padraig', 'Mick', 'Sean', 'Owen', 'Cathal',
+    ],
+    last: [
+      "O'Connell", "O'Rourke", 'Rourke', 'Flannery', 'Delaney',
+      'Gallagher', 'Doherty', 'Reilly', 'Kavanagh', 'Mulligan',
+      'Brennan', 'Sullivan', 'Fitzgerald', 'Kearney', 'Hogan',
+      'Boyle', 'Donnelly', 'Molloy', 'Rafferty', 'McBride',
+      'McGrath', 'Larkin',
+    ],
+  },
+
+  german: {
+    first: [
+      'Klaus', 'Otto', 'Hans', 'Kurt', 'Wilhelm', 'Fritz',
+      'Heinrich', 'Dietrich', 'Ludwig', 'Friedrich', 'Ernst',
+      'Konrad', 'Rudolph', 'Gottfried', 'Reinhard', 'Jurgen',
+    ],
+    last: [
+      'Schroeder', 'Meyer', 'Kaufmann', 'Weber', 'Kruger', 'Bauer',
+      'Hoffmann', 'Bergmann', 'Wetzel', 'Zimmermann', 'Rothstein',
+      'Steinbrenner', 'Vogel', 'Muller', 'Stahl', 'Kirsch',
+      'Ehrlich', 'Dressler', 'Neumann', 'Reinhardt',
+    ],
+  },
+
+  tejano: {
+    first: [
+      'Juan', 'Jose', 'Ramon', 'Miguel', 'Antonio', 'Francisco',
+      'Diego', 'Rafael', 'Emilio', 'Esteban', 'Ignacio', 'Manuel',
+      'Salvador', 'Guadalupe', 'Vicente', 'Cipriano', 'Anselmo',
+      'Nicanor', 'Bernabe', 'Feliciano', 'Trinidad', 'Prudencio',
+      'Casimiro',
+    ],
+    last: [
+      'Cortina', 'Seguin', 'Navarro', 'De Leon', 'Menchaca', 'Ruiz',
+      'Zavala', 'Benavides', 'Salinas', 'Villareal', 'Guerra',
+      'Ramirez', 'Pena', 'Cavazos', 'Vela', 'Canales', 'Trevino',
+      'Longoria', 'Saenz', 'Vidaurri', 'Cardenas', 'Escobar',
+      'Montalvo', 'Zamora', 'Arocha', 'Delgado',
+    ],
+  },
+
+  black: {
+    first: [
+      'Moses', 'Isaac', 'Abraham', 'Peter', 'Isham', 'Titus',
+      'Cuffee', 'Sampson', 'Nelson',
+    ],
+    last: [
+      'Freeman', 'Bourne', 'Cato', 'Lincoln', 'Hayes', 'Jubilee',
+    ],
+  },
+
+  cajun: {
+    first: [
+      'Alcide', 'Etienne', 'Beauregard', 'Emile', 'Theo', 'Gaston',
+      'Sylvestre', 'Leon',
+    ],
+    last: [
+      'Boudreaux', 'Thibodeaux', 'LeBlanc', 'Fontenot', 'Doucet',
+      'Broussard', 'Guidry', 'Landry', 'Hebert', 'Roussel',
+      'Prejean', 'Comeaux',
+    ],
+  },
+
+}
+
+const ORIGIN_WEIGHTS = {
+  anglo: 35,
+  tejano: 20,
+  irish: 15,
+  scotsIrish: 10,
+  german: 10,
+  black: 5,
+  cajun: 5,
+}
+
+export const BASE_BANDIT_BOUNTY = 25
+const FAMOUS_BANDIT_CHANCE = 0.03
+
+const FAMOUS_BANDITS: { name: string; bounty: number }[] = [
+  { name: 'Wild Bill Hickok',   bounty: 5000 },
+  { name: 'Jesse James',        bounty: 5000 },
+  { name: 'Frank James',        bounty: 4000 },
+  { name: 'Butch Cassidy',      bounty: 4000 },
+  { name: 'Billy the Kid',      bounty: 4000 },
+  { name: 'John Wesley',        bounty: 3500 },
+  { name: 'Doc Holliday',       bounty: 3000 },
+  { name: 'Cole Younger',       bounty: 3000 },
+  { name: 'Black Bart',         bounty: 2500 },
+  { name: 'Sam Bass',           bounty: 2500 },
+  { name: 'Cherokee Bill',      bounty: 2500 },
+  { name: 'King Fisher',        bounty: 2000 },
+  { name: 'Johnny Ringo',       bounty: 2000 },
+  { name: 'Curly Bill',         bounty: 1500 },
+  { name: 'Kid Curry',          bounty: 1500 },
+  { name: 'Ben Thompson',       bounty: 1500 },
+]
+
+export function generateBanditName(rng: () => number): { name: string; bounty: number } {
+  if (rng() < FAMOUS_BANDIT_CHANCE) {
+    const pick = FAMOUS_BANDITS[Math.floor(rng() * FAMOUS_BANDITS.length)]
+    return { name: pick.name, bounty: pick.bounty }
+  }
+  const origins = Object.keys(ORIGIN_WEIGHTS) as NameOrigin[]
+  let total = 0
+  for (const o of origins) total += ORIGIN_WEIGHTS[o]
+  let r = rng() * total
+  let picked: NameOrigin = origins[origins.length - 1]
+  for (const o of origins) {
+    r -= ORIGIN_WEIGHTS[o]
+    if (r < 0) { picked = o; break }
+  }
+  const pool = NAME_POOLS[picked]
+  const first = pool.first[Math.floor(rng() * pool.first.length)]
+  const last = pool.last[Math.floor(rng() * pool.last.length)]
+  return { name: `${first} ${last}`, bounty: BASE_BANDIT_BOUNTY }
+}
+
+export type NameOrigin = keyof typeof NAME_POOLS
+
+export function generateBanditLoot(rng: () => number): (ItemStack | null)[] {
+  const rounds = Math.floor(rng() * 26)
+  return [
+    { type: 'derringer', count: 1 },
+    rounds > 0 ? { type: 'colt_ammo', count: rounds } : null,
+    null, null, null, null,
+  ]
+}
 
 // Where a thrown rope catches the bandit and how the leash constrains him. Mirrors
 // the coyote's rope model: a pull toward the tether once the rope goes taut, capped
@@ -150,7 +320,7 @@ export function getBanditBodyAABB(b: Bandit): { x: number; y: number; w: number;
   return { x: b.x - W / 2, y: b.y - H / 2, w: W, h: H }
 }
 
-export function createBandit(x: number, y: number): Bandit {
+export function createBandit(x: number, y: number, name: string, bounty: number): Bandit {
   return {
     x, y, vx: 0, vy: 0,
     facingRight: true, facingLockedUntil: 0,
@@ -171,6 +341,10 @@ export function createBandit(x: number, y: number): Bandit {
     dodgeUntil: 0, nextDodgeAt: 0, dodgeX: 0, dodgeY: 0,
     retreatUntil: 0, retreatX: 0, retreatY: 0,
     dying: false,
+    manacled: false,
+    contents: null,
+    name,
+    bounty,
   }
 }
 
@@ -433,11 +607,28 @@ export function updateBandits(
   threats: Threat[],
   rng: () => number,
   getTetherAnchor: (banditIndex: number) => { x: number; y: number } | null,
+  playerSafe: boolean,
 ) {
   const step = dt / 1000
   for (let i = 0; i < bandits.length; i++) {
     const b = bandits[i]
     if (b.dying) continue
+    if (b.manacled) { b.vx = 0; b.vy = 0; continue }
+    const hasGun = b.contents !== null && b.contents.some(s => s && ITEMS[s.type]?.gunSpread != null)
+    const hasAmmo = b.contents !== null && b.contents.some(s => s && (s.type === 'ammo' || s.type === 'colt_ammo'))
+    const disarmed = b.contents !== null && (!hasGun || !hasAmmo)
+    if (disarmed) {
+      const fdx = b.x - player.x
+      const fdy = b.y - player.y
+      const fdist = Math.sqrt(fdx * fdx + fdy * fdy) || 0.0001
+      const vx = (fdx / fdist) * WALK_SPEED
+      const vy = (fdy / fdist) * WALK_SPEED
+      if (vx !== 0) { const nx = b.x + vx * step; if (!collidesAt(nx, b.y)) b.x = nx }
+      if (vy !== 0) { const ny = b.y + vy * step; if (!collidesAt(b.x, ny)) b.y = ny }
+      b.vx = vx; b.vy = vy
+      updateFacing(b, gameTime, b.x + fdx)
+      continue
+    }
 
 
 
@@ -485,6 +676,18 @@ export function updateBandits(
       continue
     }
 
+    // Player in a safe zone: the bandit disengages. An active bandit heads back
+    // to spawn (the existing returningHome machinery walks him home and resets
+    // to dormant); a dormant one just holds. Either way he won't pursue or fire.
+    if (playerSafe) {
+      if (b.active) b.returningHome = true
+      else {
+        b.vx = 0; b.vy = 0
+        updateFacing(b, gameTime, player.x)
+        continue
+      }
+    }
+
     const dx = player.x - b.x
     const dy = player.y - b.y
     const dist = Math.sqrt(dx * dx + dy * dy)
@@ -515,7 +718,7 @@ export function updateBandits(
     // contact timer. Out of range past GIVE_UP_MS → he stops chasing and walks
     // back to spawn. If the player re-enters range during the walk back, he
     // aborts the return and re-engages. On reaching home he goes fully dormant.
-    if (dist <= BANDIT_RANGE) {
+    if (!playerSafe && dist <= BANDIT_RANGE) {
       b.lastInRangeAt = gameTime
       b.returningHome = false
     } else if (!b.returningHome && gameTime - b.lastInRangeAt > GIVE_UP_MS) {
@@ -643,6 +846,8 @@ export function updateBandits(
     }
 
     // ---- Fire ----
+    if (b.manacled) continue
+    if (disarmed) continue
     if (gameTime - b.lastFireAt < b.fireDelay) continue
     // only shoot if there's a clear line to the player (honses don't count as cover)
     if (hasCoverAt(b.x, b.y, player, blocksLineOfSight)) continue

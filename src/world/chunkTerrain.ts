@@ -9,6 +9,54 @@ const CHUNK_BAKE_MARGIN = CHUNK_PX
 const CHUNK_DESTROY_MARGIN = CHUNK_PX * 3
 const MAX_BAKES_PER_FRAME = 2
 
+// Cosmetic grass banding: alternating diagonal stripes of a slightly bluer,
+// darker grass, with noise-perturbed edges so the band boundaries wobble
+// organically instead of running ruler-straight. Painted from world position +
+// a seeded noise field — deterministic, continuous across chunk seams, no effect
+// on terrain type or gameplay. Tune: band thickness in tiles, the stripe
+// direction (angle; (1,1) = 45deg), how far the edges wobble, and the tint.
+const GRASS_BAND_TILES = 90
+const GRASS_BAND_DIR = { nx: 1, ny: 6 }
+const GRASS_EDGE_WOBBLE = 900         // px the band edges wander from straight
+const GRASS_WOBBLE_CELL = 1100        // scale of the big lazy edge swings
+const GRASS_ALT_TINT = 0xEEF4FF
+
+// Wildflowers baked into the grass. Sparse and clumped: candidates per chunk is
+// the upper bound, but the patch gate (noise field above threshold) is what makes
+// them sparse — most candidates are rejected, blooms cluster where noise is high.
+const FLOWERS_PER_CHUNK = 14
+const FLOWER_PATCH_CELL = 340          // size of flower patches (bigger = broader)
+const FLOWER_PATCH_THRESHOLD = 0.85    // higher = sparser (fewer, tighter patches)
+const FLOWER_FIREWHEEL_CHANCE = 0.28   // share of blooms that are the larger firewheel
+const FLOWER_BLUEBONNET_CHANCE = 0.22  // share of blooms that are bluebonnets
+function grassCellVal(cx: number, cy: number): number {
+  const seed = (state.worldSeed + 7727) >>> 0
+  let h = (Math.imul(cx | 0, 374761393) ^ Math.imul(cy | 0, 668265263) ^ seed) >>> 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
+  return (h >>> 0) / 4294967296
+}
+function grassSample(x: number, y: number, cell: number): number {
+  const fx = x / cell, fy = y / cell
+  const x0 = Math.floor(fx), y0 = Math.floor(fy)
+  const sx = fx - x0, sy = fy - y0
+  const n00 = grassCellVal(x0, y0), n10 = grassCellVal(x0 + 1, y0)
+  const n01 = grassCellVal(x0, y0 + 1), n11 = grassCellVal(x0 + 1, y0 + 1)
+  const ix0 = n00 + (n10 - n00) * sx
+  const ix1 = n01 + (n11 - n01) * sx
+  return ix0 + (ix1 - ix0) * sy
+}
+function isGrassAltBand(wx: number, wy: number): boolean {
+  // Multi-octave wobble: a big lazy swing plus finer jitter so band edges have no
+  // single regular frequency — kills the staircase look.
+  const wobble =
+    (grassSample(wx, wy, GRASS_WOBBLE_CELL) - 0.5) * 2 * GRASS_EDGE_WOBBLE
+    + (grassSample(wx + 5113, wy + 2207, GRASS_WOBBLE_CELL / 3) - 0.5) * 2 * (GRASS_EDGE_WOBBLE * 0.5)
+    + (grassSample(wx + 1289, wy + 7901, GRASS_WOBBLE_CELL / 9) - 0.5) * 2 * (GRASS_EDGE_WOBBLE * 0.22)
+  const proj = wx * GRASS_BAND_DIR.nx + wy * GRASS_BAND_DIR.ny + wobble
+  const band = Math.floor(proj / (GRASS_BAND_TILES * TERRAIN_TILE))
+  return (((band % 2) + 2) % 2) === 0
+}
+
 // Terrain sits far below every entity. Entity depths are y-based and the world
 // extends to large negative y (grown north), so a low fixed value here keeps
 // terrain under the player/buildings no matter how far north they go.
@@ -156,7 +204,9 @@ export class ChunkTerrain {
         const wx = ox + tx * T + T / 2
         const wy = oy + ty * T + T / 2
         if (state.terrainAt(wx, wy) !== Terrain.Grass) continue
-        stamp('brush_ground', tx * T + T / 2, ty * T + T / 2)
+        const lx = tx * T + T / 2, ly = ty * T + T / 2
+        if (isGrassAltBand(wx, wy)) rt.stamp('brush_ground', undefined, lx, ly, { scale: STAMP_SCALE, tint: GRASS_ALT_TINT })
+        else stamp('brush_ground', lx, ly)
       }
     }
 
@@ -185,6 +235,17 @@ export class ChunkTerrain {
       }
     }
 
+    // Pass 2.6: tilled dirt fill (moist worked soil — fields)
+    for (let ty = 0; ty < CHUNK_TILES; ty++) {
+      for (let tx = 0; tx < CHUNK_TILES; tx++) {
+        const wx = ox + tx * T + T / 2
+        const wy = oy + ty * T + T / 2
+        if (state.terrainAt(wx, wy) !== Terrain.TilledDirt) continue
+        stamp('tilled_dirt', tx * T + T / 2, ty * T + T / 2)
+      }
+    }
+
+
     // Pass 3: grass tufts at random positions across the chunk
     const tuftRng = makeRng((state.worldSeed ^ cc ^ (cr << 16)) >>> 0)
     const placed: { x: number; y: number }[] = []
@@ -203,6 +264,27 @@ export class ChunkTerrain {
       placed.push({ x: lx, y: ly })
       stamp('brush_speck', lx, ly)
     }
+
+    // Pass 4: sparse wildflowers baked into the grass. Seeded per-chunk, grass-only,
+    // and noise-gated so they cluster into occasional patches rather than evenly
+    // dotting the whole field. Two kinds: tiny orange dots (common) and the larger
+    // firewheel (rarer). Purely cosmetic — baked into the chunk RT, no live sprites.
+    const flowerRng = makeRng((state.worldSeed ^ (cc << 8) ^ (cr << 20) ^ 0x9e37) >>> 0)
+    for (let i = 0; i < FLOWERS_PER_CHUNK; i++) {
+      const lx = inset + flowerRng() * (CHUNK_PX - inset * 2)
+      const ly = inset + flowerRng() * (CHUNK_PX - inset * 2)
+      const wx = ox + lx, wy = oy + ly
+      if (state.terrainAt(wx, wy) !== Terrain.Grass) continue
+      // patch gate: only bloom where the flower-noise field is high → sparse clumps
+      const patch = grassSample(wx + 3300, wy + 9100, FLOWER_PATCH_CELL)
+      if (patch < FLOWER_PATCH_THRESHOLD) continue
+      const roll = flowerRng()
+      const key = roll < FLOWER_BLUEBONNET_CHANCE ? 'flower_bluebonnet'
+        : roll < FLOWER_BLUEBONNET_CHANCE + FLOWER_FIREWHEEL_CHANCE ? 'flower_firewheel'
+        : 'flower_dot'
+      stamp(key, lx, ly)
+    }
+
 
     const WT = WOOD_TILE
     const woodTilesX = Math.ceil(CHUNK_PX / WT)

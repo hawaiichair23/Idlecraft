@@ -2,6 +2,11 @@
   font-family: 'Minecraft';
   src: url('Minecraft.ttf') format('truetype');
 }
+@font-face {
+  font-family: 'Polaris';
+  src: url('/Polaris.woff2') format('woff2');
+  font-display: block;
+}
 
 html, body {
   margin: 0;

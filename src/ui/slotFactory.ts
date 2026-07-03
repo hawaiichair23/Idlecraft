@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { ITEMS, type ItemStack, type ItemType } from '../items/types'
+import { ITEMS, cloneStack, type ItemStack, type ItemType } from '../items/types'
 import { isBag } from '../game/state'
 import { type SlotBinding } from './SlotBinding'
 import { attachSlotHover, attachSlotTooltip } from './hover'
@@ -34,7 +34,7 @@ export interface SlotImageOptions {
 // Adds the slot frame + hover overlay + interactive flag, returns the image.
 export function makeSlotImage(scene: Phaser.Scene, opts: SlotImageOptions): Phaser.GameObjects.Image {
   const slotImg = scene.add.image(opts.x, opts.y, 'menu-slot')
-    .setTint(opts.tint ?? COLORS.interiorPanel)
+    .setTint(opts.tint ?? COLORS.slotBg)
     .setInteractive()
   attachSlotHover(scene, slotImg, opts.x, opts.y)
   if (opts.peek) attachSlotTooltip(slotImg, opts.peek)
@@ -86,10 +86,7 @@ export function makeStorageBinding(
       if (!cur) return null
       const n = Math.min(count, cur.count)
       if (n <= 0) return null
-      const taken: ItemStack = { type: cur.type, count: n }
-      // preserve bag contents on the taken stack so moving a bag never drops
-      // its items (bags are maxStack 1, so taking always moves the whole bag)
-      if (cur.contents) taken.contents = cur.contents
+      const taken = cloneStack(cur, n)
       cur.count -= n
       if (cur.count <= 0) setStack(null)
       cb.onChange()
@@ -100,14 +97,12 @@ export function makeStorageBinding(
       const cap = ITEMS[stack.type].maxStack
       if (!cur) {
         const moved = Math.min(cap, stack.count)
-        const placed: ItemStack = { type: stack.type, count: moved }
-        // carry bag contents into the destination slot
-        if (stack.contents) placed.contents = stack.contents
-        setStack(placed)
+        setStack(cloneStack(stack, moved))
         cb.onChange()
         return moved
       }
       if (cur.type !== stack.type) return 0
+      if (cur.rarity !== stack.rarity) return 0
       const room = cap - cur.count
       if (room <= 0) return 0
       const moved = Math.min(room, stack.count)
@@ -128,7 +123,10 @@ export function makeProducerOutputBinding(
   getStack: () => ItemStack | null,
   setStack: (s: ItemStack | null) => void,
   cb: SlotCallbacks,
+  capOverride?: (itemType: string) => number,
 ): SlotBinding {
+  const slotCap = (): number =>
+    capOverride ? capOverride(produces) : ITEMS[produces].maxStack
   const binding: SlotBinding = {
     getScreenPos: () => pos,
     peek: () => getStack(),
@@ -138,7 +136,7 @@ export function makeProducerOutputBinding(
       if (!cur) return null
       const n = Math.min(count, cur.count)
       if (n <= 0) return null
-      const taken: ItemStack = { type: cur.type, count: n }
+      const taken = cloneStack(cur, n)
       cur.count -= n
       if (cur.count <= 0) setStack(null)
       cb.onChange()
@@ -147,13 +145,14 @@ export function makeProducerOutputBinding(
     offer: (stack) => {
       if (stack.type !== produces) return 0
       const cur = getStack()
-      const cap = ITEMS[produces].maxStack
+      const cap = slotCap()
       if (!cur) {
         const moved = Math.min(cap, stack.count)
-        setStack({ type: produces, count: moved })
+        setStack(cloneStack(stack, moved))
         cb.onChange()
         return moved
       }
+      if (cur.rarity !== stack.rarity) return 0
       const room = cap - cur.count
       if (room <= 0) return 0
       const moved = Math.min(room, stack.count)
@@ -183,6 +182,90 @@ export function makeCrafterInputBinding(
   return binding
 }
 
+// Storage slot constrained by a type filter. The filter decides which item
+// types may enter; everything else is plain storage (stack mechanics, rarity,
+// etc. handled by makeStorageBinding).
+export function makeFilteredStorageBinding(
+  pos: { x: number; y: number },
+  getStack: () => ItemStack | null,
+  setStack: (s: ItemStack | null) => void,
+  cb: SlotCallbacks,
+  filter: (itemType: ItemType) => boolean,
+): SlotBinding {
+  const binding = makeStorageBinding(pos, getStack, setStack, cb)
+  const baseAccepts = binding.accepts
+  const baseOffer = binding.offer
+  binding.accepts = (itemType) => filter(itemType) && baseAccepts(itemType)
+  binding.offer = (stack) => filter(stack.type) ? baseOffer(stack) : 0
+  return binding
+}
+
+// Read-only slot: cannot be filled by the player. Something external writes to
+// it (e.g. a smelter writes results into its output). take/restore work so the
+// player can pull from it and bounce-back drops succeed.
+export function makeReadOnlyBinding(
+  pos: { x: number; y: number },
+  getStack: () => ItemStack | null,
+  setStack: (s: ItemStack | null) => void,
+  cb: SlotCallbacks,
+  capOverride?: (itemType: string) => number,
+): SlotBinding {
+  const slotCap = (itemType: string): number =>
+    capOverride ? capOverride(itemType) : ITEMS[itemType].maxStack
+  const binding: SlotBinding = {
+    getScreenPos: () => pos,
+    peek: () => getStack(),
+    accepts: (itemType) => {
+      const cur = getStack()
+      return cur === null || cur.type === itemType
+    },
+    take: (count) => {
+      const cur = getStack()
+      if (!cur) return null
+      const n = Math.min(count, cur.count)
+      if (n <= 0) return null
+      const taken = cloneStack(cur, n)
+      cur.count -= n
+      if (cur.count <= 0) setStack(null)
+      cb.onChange()
+      return taken
+    },
+    offer: (stack) => {
+      const cur = getStack()
+      if (!cur) {
+        const cap = slotCap(stack.type)
+        const moved = Math.min(cap, stack.count)
+        setStack(cloneStack(stack, moved))
+        cb.onChange()
+        return moved
+      }
+      if (cur.type !== stack.type) return 0
+      if (cur.rarity !== stack.rarity) return 0
+      const cap = slotCap(stack.type)
+      const room = cap - cur.count
+      if (room <= 0) return 0
+      const moved = Math.min(room, stack.count)
+      cur.count += moved
+      cb.onChange()
+      return moved
+    },
+    restore: (stack) => {
+      const cur = getStack()
+      if (!cur) {
+        setStack(cloneStack(stack, stack.count))
+        cb.onChange()
+        return stack.count
+      }
+      if (cur.type !== stack.type) return 0
+      if (cur.rarity !== stack.rarity) return 0
+      cur.count += stack.count
+      cb.onChange()
+      return stack.count
+    },
+  }
+  return binding
+}
+
 // Distribute a stack across a set of slot bindings, Minecraft-style: first
 // merge into existing stacks of the same type, then fill empty/accepting slots.
 // Mutates `stack` (subtracts what was placed). Shared by interior shift-click
@@ -192,7 +275,7 @@ export function distributeIntoBindings(stack: ItemStack, bindings: SlotBinding[]
   for (const b of bindings) {
     if (stack.count <= 0) break
     const existing = b.peek()
-    if (!existing || existing.type !== stack.type) continue
+    if (!existing || existing.type !== stack.type || existing.rarity !== stack.rarity) continue
     stack.count -= b.offer(stack)
   }
   // Pass 2: place into empty/accepting slots

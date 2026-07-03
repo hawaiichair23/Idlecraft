@@ -269,6 +269,7 @@ export function buildWalkableInterior(
       return null
     },
     canToggleGate: () => null,
+    canTalkToNpc: () => null,
     findPlantableDirtSpot: () => false,
     isNearTiedRope: (wx, wy) => rope.isNearTiedRope(wx, wy, player.x, player.y, TOOL_RANGE),
     isRopeAttached: () => rope.isAttached(),

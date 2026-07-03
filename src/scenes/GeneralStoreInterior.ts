@@ -1,7 +1,8 @@
 import Phaser from 'phaser'
+import { addPanelTitle } from '../panelTitle'
 import { COLORS, FONT } from '../colors'
 import { state, isBag } from '../game/state'
-import { ITEMS, type ItemStack } from '../items/types'
+import { ITEMS, getStackValue, type ItemStack } from '../items/types'
 import { type SlotBinding } from '../ui/SlotBinding'
 import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
 import type { SlotVisual } from './InteriorTypes'
@@ -35,6 +36,7 @@ const SECTION_GAP = 12
 export function buildGeneralStoreInterior(
     scene: Phaser.Scene,
     onSlotShiftClick: (binding: SlotBinding) => void,
+    slots: (ItemStack | null)[],
 ): GeneralStoreInteriorHandle {
     // ---- backdrop (wall, windows, floor, side walls) ----
     buildInteriorBackdrop(scene, INTERIOR_PALETTES.generalStore)
@@ -62,8 +64,7 @@ export function buildGeneralStoreInterior(
 
     // ---- title ----
     const titleY = panelY - panelH / 2 + PANEL_PAD + 16
-    scene.add.bitmapText(panelX, titleY, 'main', 'General Store', FONT.title)
-        .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
+    addPanelTitle(scene, panelX, titleY, 'General Store')
 
     // ---- running total ----
     const totalY = panelY - panelH / 2 + PANEL_PAD + TITLE_H + SECTION_GAP + TOTAL_H / 2
@@ -72,10 +73,9 @@ export function buildGeneralStoreInterior(
 
     const computeTotal = (): number => {
         let g = 0
-        for (const s of state.generalStoreSlots) {
+        for (const s of slots) {
             if (!s) continue
-            const price = ITEMS[s.type].sellPrice ?? 0
-            g += price * s.count
+            g += getStackValue(s)
         }
         return g
     }
@@ -97,9 +97,9 @@ export function buildGeneralStoreInterior(
             const x = gridLeft + c * (SLOT + SLOT_GAP)
             const y = gridTop + SLOT / 2 + r * (SLOT + SLOT_GAP)
 
-            const getStack = () => state.generalStoreSlots[i]
+            const getStack = () => slots[i]
             const slotImg = makeSlotImage(scene, { x, y, peek: getStack, tooltipOffsetY: -44 })
-            const setStack = (s: ItemStack | null) => { state.generalStoreSlots[i] = s }
+            const setStack = (s: ItemStack | null) => { slots[i] = s }
             slotVisuals.push({ x, y, getStack, icon: null, count: null, lastType: null, lastCount: 0 })
 
             const binding = makeStorageBinding({ x, y }, getStack, setStack, { onChange: refreshTotal })
@@ -139,27 +139,27 @@ export function buildGeneralStoreInterior(
     const btnY = gridTop + gridH + SECTION_GAP + SELL_BTN_H / 2
     const btn = scene.add.rectangle(panelX, btnY, 200, SELL_BTN_H, COLORS.uiBarBg).setInteractive()
     registerGrabbable(btn)
-    scene.add.bitmapText(panelX, btnY, 'mainSmall', 'SELL ALL', FONT.title)
+    scene.add.bitmapText(panelX, btnY - 3, 'everyday', 'SELL ALL', 14)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiGold)
 
     btn.on('pointerdown', () => {
         const total = computeTotal()
         if (total <= 0) return
         state.addGold(total, scene.registry)
-        for (let i = 0; i < state.generalStoreSlots.length; i++) {
-            state.generalStoreSlots[i] = null
+        for (let i = 0; i < slots.length; i++) {
+            slots[i] = null
         }
         refreshTotal()
     })
 
     // ---- cleanup: dump remaining items back into inventory on exit ----
     const onCleanup = () => {
-        for (let i = 0; i < state.generalStoreSlots.length; i++) {
-            const s = state.generalStoreSlots[i]
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i]
             if (!s) continue
             state.inventoryAddAnywhere(s)
             // if anything didn't fit, leave it in the slot for next visit
-            if (s.count <= 0) state.generalStoreSlots[i] = null
+            if (s.count <= 0) slots[i] = null
         }
         scene.registry.events.emit('inventory-changed')
     }

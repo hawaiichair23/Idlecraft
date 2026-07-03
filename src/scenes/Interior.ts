@@ -1,7 +1,9 @@
 import Phaser from 'phaser'
+import { addPanelTitle } from '../panelTitle'
 import { COLORS, FONT } from '../colors'
 import { BUILDINGS, state, getUpgradeCost, getEffectiveTickMs, getStorageCap, getStorageSlotCount, STORAGE_COLS, WORLD_WELL_CAP, FIELD_COLS, FIELD_ROWS, makeEmptyFieldCells, type BuiltType } from '../game/state'
 import { ITEMS, type ItemStack, type ItemType } from '../items/types'
+import { ensureSmelt } from '../game/smelting'
 import { consumeCraft, previewCraft } from '../items/recipes'
 import { rollAbandonedHouseChest } from '../items/lootTables'
 import { type WorldStructureType } from '../world/structures'
@@ -10,18 +12,24 @@ import type { UI } from './UI'
 import type { SlotBinding } from '../ui/SlotBinding'
 import type { SlotVisual } from './InteriorTypes'
 import { registerGrabbable } from '../ui/hover'
+import { outlineIcon } from '../ui/iconOutline'
 import { makeSlotImage, makeStorageBinding, makeProducerOutputBinding, distributeIntoBindings, makeCountLabel } from '../ui/slotFactory'
 import { buildProducerInterior } from './ProducerInterior'
-import { buildSmithyInterior } from './SmithyInterior'
+import { buildSmelterInterior } from './SmelterInterior'
+import { buildBlastFurnaceInterior } from './BlastFurnaceInterior'
 import { buildWorkshopInterior } from './WorkshopInterior'
 import { buildShopInterior } from './ShopInterior'
 import { buildGeneralStoreInterior } from './GeneralStoreInterior'
 import { buildWalkableInterior } from './WalkableInterior'
+import { buildCharterOfficeInterior, FW_UNLOCK_ENTRIES } from './CharterOfficeInterior'
 import { buildLandOfficeInterior } from './LandOfficeInterior'
+import { buildSaloonInterior } from './SaloonInterior'
 import { buildChurchInterior } from './ChurchInterior'
 import { buildNurseryInterior } from './NurseryInterior'
 import { buildTannerInterior } from './TannerInterior'
 import { buildGunsmithInterior } from './GunsmithInterior'
+import { buildMercantileInterior } from './MercantileInterior'
+import { buildLiveryInterior } from './LiveryInterior'
 import { INTERIOR_PALETTES } from './InteriorBackdrop'
 
 export type InteriorData =
@@ -47,8 +55,18 @@ export class Interior extends Phaser.Scene {
   }
 
   private bindings: SlotBinding[] = []
-  // Set when a workshop interior is built; rebuilds its Production tab in place.
-  private rebuildWorkshopProduction: (() => void) | null = null
+  // Set when a plot interior is built; rebuilds its Production/Storage tab
+  // in place after an upgrade changes the slot count, layout, or output
+  // shape. Each per-plot branch installs its own closure.
+  private rebuildProduction: (() => void) | null = null
+  // Rebuilds the entire plot panel (used when CONTENT_H changes — e.g.
+  // storage levelling adds rows and the panel itself needs to grow). Set by
+  // buildPlotPanel; called by the upgrade button when an in-place panel
+  // resize is needed.
+  private rebuildPanel: (() => void) | null = null
+  // Game objects spawned by buildPlotPanel — captured so an in-place rebuild
+  // can destroy exactly what the previous build created, no more, no less.
+  private panelObjects: Phaser.GameObjects.GameObject[] = []
   private slotVisuals: SlotVisual[] = []
   private moduleUpdates: (() => void)[] = []
   private moduleCleanups: (() => void)[] = []
@@ -194,7 +212,7 @@ export class Interior extends Phaser.Scene {
 
             // shovel — dig up a planted cell, return one seed to inventory
             // OR harvest a mature cell, return one hemp
-            if (stack.type === 'shovel') {
+            if (state.isShovelSelected()) {
               if (cell.state === 'empty') return
               if (cell.state === 'mature') {
                 const hempStack: ItemStack = { type: 'hemp', count: 1 }
@@ -311,7 +329,8 @@ export class Interior extends Phaser.Scene {
       // Same gated reveal as plot wells: vanish first, popup follows.
       this.enterAt = state.gameTime
     } else if (this.interiorData.buildingType === 'general_store') {
-      const handle = buildGeneralStoreInterior(this, onSlotShiftClick)
+      const storeSlots = state.getGeneralStoreSlots(this.interiorData.structureIndex)
+      const handle = buildGeneralStoreInterior(this, onSlotShiftClick, storeSlots)
       this.bindings.push(...handle.bindings)
       this.slotVisuals.push(...handle.slotVisuals)
       this.moduleCleanups.push(handle.onCleanup)
@@ -360,10 +379,19 @@ export class Interior extends Phaser.Scene {
       }, () => this.exit())
       this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
       this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'charter_office') {
+      const handle = buildCharterOfficeInterior(this)
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'fw_charter_office') {
+      const handle = buildCharterOfficeInterior(this, FW_UNLOCK_ENTRIES)
+      this.moduleCleanups.push(handle.onCleanup)
     } else if (this.interiorData.buildingType === 'land_office') {
       const handle = buildLandOfficeInterior(this)
       this.moduleCleanups.push(handle.onCleanup)
-    } else if (this.interiorData.buildingType === 'church') {
+    } else if (this.interiorData.buildingType === 'saloon') {
+      const handle = buildSaloonInterior(this)
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'church' || this.interiorData.buildingType === 'church_bell' || this.interiorData.buildingType === 'church_bell_back') {
       const handle = buildChurchInterior(this)
       this.moduleCleanups.push(handle.onCleanup)
     } else if (this.interiorData.buildingType === 'nursery') {
@@ -374,6 +402,12 @@ export class Interior extends Phaser.Scene {
       this.moduleCleanups.push(handle.onCleanup)
     } else if (this.interiorData.buildingType === 'gunsmith') {
       const handle = buildGunsmithInterior(this)
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'mercantile') {
+      const handle = buildMercantileInterior(this)
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'livery') {
+      const handle = buildLiveryInterior(this)
       this.moduleCleanups.push(handle.onCleanup)
     }
 
@@ -387,8 +421,8 @@ export class Interior extends Phaser.Scene {
       (this.interiorData.source === 'plot' && this.interiorData.buildingType !== 'field') ||
       this.interiorData.source === 'worldWell'
     const isField = this.interiorData.source === 'plot' && this.interiorData.buildingType === 'field'
-    // Land office runs its own panel and shouldn't dock the player inventory.
-    const noInventory = this.interiorData.source === 'world' && this.interiorData.buildingType === 'land_office'
+    // Charter office runs its own panel and shouldn't dock the player inventory.
+    const noInventory = this.interiorData.source === 'world' && this.interiorData.buildingType === 'charter_office'
     if (!gated && !isWalkable && !isField && !noInventory) {
       this.registry.events.emit('interior-panel-ready')
     }
@@ -398,7 +432,12 @@ export class Interior extends Phaser.Scene {
     w: number, h: number,
     onSlotShiftClick: (b: SlotBinding) => void,
     onCraftAllShiftClick: () => void,
+    activeTabIndex: number = 0,
   ) {
+    // Snapshot the scene's display list before we add anything for the panel.
+    // The rebuildPanel closure uses this to destroy only what this build
+    // created — without disturbing the backdrop, player, etc.
+    const beforeCount = this.children.list.length
     const plotIndex = this.interiorData.source === 'plot' ? this.interiorData.plotIndex : 0
     const buildingType = this.interiorData.source === 'plot' ? this.interiorData.buildingType : 'mill'
     const plot = state.plots[plotIndex]
@@ -413,7 +452,7 @@ export class Interior extends Phaser.Scene {
       const slotCount = getStorageSlotCount(plot.level)
       const rows = Math.ceil(slotCount / STORAGE_COLS)
       CONTENT_H = rows * SLOT + (rows - 1) * SLOT_GAP + 24
-    } else if (buildingType === 'smithy') {
+    } else if (buildingType === 'smelter' || buildingType === 'blast_furnace') {
       CONTENT_H = 220
     }
     const panelH = PANEL_PAD + TITLE_H + TAB_BAR_H + CONTENT_H + PANEL_PAD
@@ -432,8 +471,7 @@ export class Interior extends Phaser.Scene {
 
     // ---- title ----
     const titleY = panelY - panelH / 2 + PANEL_PAD + 14
-    this.add.bitmapText(panelX, titleY, 'main', def.name, FONT.title)
-      .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
+    addPanelTitle(this, panelX, titleY, def.name, COLORS.worldBg)
     const titleLevelText = this.add.bitmapText(panelX, titleY + 22, 'mainSmall', `Level ${plot.level}`, FONT.desc)
       .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
 
@@ -488,7 +526,7 @@ export class Interior extends Phaser.Scene {
       // Tears down the old handle's bindings/visuals/update/cleanup cleanly.
       const ui = this.scene.get('UI') as UI
       const dc = ui.getDragController()
-      this.rebuildWorkshopProduction = () => {
+      this.rebuildProduction = () => {
         for (const b of handle.bindings) {
           dc.unregister(b)
           const i = this.bindings.indexOf(b); if (i >= 0) this.bindings.splice(i, 1)
@@ -513,43 +551,86 @@ export class Interior extends Phaser.Scene {
       this.moduleUpdates.push(handle.update)
     } else if (buildingType === 'storage') {
       // Storage tab: crate-like grid of slots
-      const slotCount = getStorageSlotCount(plot.level)
-      const cols = STORAGE_COLS
-      const rows = Math.ceil(slotCount / cols)
-      const gridW = cols * SLOT + (cols - 1) * SLOT_GAP
-      const gridH = rows * SLOT + (rows - 1) * SLOT_GAP
-      const gridStartX = panelX - gridW / 2 + SLOT / 2
-      const gridStartY = contentY - gridH / 2 + SLOT / 2
-
       const ui = this.scene.get('UI') as UI
       const dc = ui.getDragController()
 
-      for (let i = 0; i < slotCount; i++) {
-        const col = i % cols
-        const row = Math.floor(i / cols)
-        const slotX = gridStartX + col * (SLOT + SLOT_GAP)
-        const slotY = gridStartY + row * (SLOT + SLOT_GAP)
-        const getStack = () => plot.storageContents![i] ?? null
-        const slotImg = makeSlotImage(this, { x: slotX, y: slotY, peek: getStack, tooltipOffsetY: -44 })
-        const setStack = (s: ItemStack | null) => { plot.storageContents![i] = s }
-        this.slotVisuals.push({ x: slotX, y: slotY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container: productionContainer })
+      // Track this build's bindings/visuals so we can splice them out on rebuild.
+      let ownedBindings: SlotBinding[] = []
+      let ownedVisuals: SlotVisual[] = []
 
-        const binding = makeStorageBinding({ x: slotX, y: slotY }, getStack, setStack, { onChange: () => {} })
-        this.bindings.push(binding)
-        dc.register(binding)
+      const buildStorageGrid = () => {
+        const slotCount = getStorageSlotCount(plot.level)
+        const cols = STORAGE_COLS
+        const rows = Math.ceil(slotCount / cols)
+        const gridW = cols * SLOT + (cols - 1) * SLOT_GAP
+        const gridH = rows * SLOT + (rows - 1) * SLOT_GAP
+        const gridStartX = panelX - gridW / 2 + SLOT / 2
+        const gridStartY = contentY - gridH / 2 + SLOT / 2
 
-        productionContainer.add(slotImg)
+        for (let i = 0; i < slotCount; i++) {
+          const col = i % cols
+          const row = Math.floor(i / cols)
+          const slotX = gridStartX + col * (SLOT + SLOT_GAP)
+          const slotY = gridStartY + row * (SLOT + SLOT_GAP)
+          const getStack = () => plot.storageContents![i] ?? null
+          const slotImg = makeSlotImage(this, { x: slotX, y: slotY, peek: getStack, tooltipOffsetY: -44 })
+          const setStack = (s: ItemStack | null) => { plot.storageContents![i] = s }
+          const sv: SlotVisual = { x: slotX, y: slotY, getStack, icon: null, count: null, lastType: null, lastCount: 0, container: productionContainer }
+          this.slotVisuals.push(sv)
+          ownedVisuals.push(sv)
 
-        slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
-          if ((p.event as MouseEvent).shiftKey) { onSlotShiftClick(binding); return }
-          dc.handleSlotClick(binding, p)
-        })
+          const binding = makeStorageBinding({ x: slotX, y: slotY }, getStack, setStack, { onChange: () => {} })
+          this.bindings.push(binding)
+          ownedBindings.push(binding)
+          dc.register(binding)
+
+          productionContainer.add(slotImg)
+
+          slotImg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+            if ((p.event as MouseEvent).shiftKey) { onSlotShiftClick(binding); return }
+            dc.handleSlotClick(binding, p)
+          })
+        }
       }
-    } else if (buildingType === 'smithy') {
-      const handle = buildSmithyInterior(this, plotIndex, panelX, contentY, onSlotShiftClick, productionContainer)
+
+      buildStorageGrid()
+
+      this.rebuildProduction = () => {
+        for (const b of ownedBindings) {
+          dc.unregister(b)
+          const i = this.bindings.indexOf(b); if (i >= 0) this.bindings.splice(i, 1)
+        }
+        for (const sv of ownedVisuals) {
+          const i = this.slotVisuals.indexOf(sv); if (i >= 0) this.slotVisuals.splice(i, 1)
+        }
+        ownedBindings = []
+        ownedVisuals = []
+        productionContainer.removeAll(true)
+        buildStorageGrid()
+      }
+    } else if (BUILDINGS[buildingType].smelting) {
+      const ui = this.scene.get('UI') as UI
+      const dc = ui.getDragController()
+      const build = buildingType === 'blast_furnace' ? buildBlastFurnaceInterior : buildSmelterInterior
+      let handle = build(this, plotIndex, panelX, contentY, onSlotShiftClick, productionContainer)
       this.bindings.push(...handle.bindings)
       this.slotVisuals.push(...handle.slotVisuals)
       this.moduleUpdates.push(handle.update)
+      this.rebuildProduction = () => {
+        for (const b of handle.bindings) {
+          dc.unregister(b)
+          const i = this.bindings.indexOf(b); if (i >= 0) this.bindings.splice(i, 1)
+        }
+        for (const sv of handle.slotVisuals) {
+          const i = this.slotVisuals.indexOf(sv); if (i >= 0) this.slotVisuals.splice(i, 1)
+        }
+        const ui2 = this.moduleUpdates.indexOf(handle.update); if (ui2 >= 0) this.moduleUpdates.splice(ui2, 1)
+        productionContainer.removeAll(true)
+        handle = build(this, plotIndex, panelX, contentY, onSlotShiftClick, productionContainer)
+        this.bindings.push(...handle.bindings)
+        this.slotVisuals.push(...handle.slotVisuals)
+        this.moduleUpdates.push(handle.update)
+      }
     }
 
     // -- UPGRADES tab (1) -- built for all building types
@@ -579,9 +660,9 @@ export class Interior extends Phaser.Scene {
       const btnY = startY + lineH * 3 + 32
       const btn = this.add.rectangle(panelX, btnY, 200, 36, COLORS.uiBarBg).setInteractive().setDepth(0)
       registerGrabbable(btn)
-      const btnLabel = this.add.bitmapText(panelX, btnY, 'mainSmall', 'UPGRADE', FONT.name)
+      const btnLabel = this.add.bitmapText(panelX, btnY - 3, 'everyday', 'UPGRADE', 14)
         .setOrigin(0.5, 0.5).setTint(COLORS.uiGold).setDepth(1)
-      const costText = this.add.bitmapText(panelX, btnY, 'mainSmall', '', FONT.name)
+      const costText = this.add.bitmapText(panelX, btnY - 3, 'everyday', '', 14)
         .setOrigin(0, 0.5).setTint(COLORS.uiGold).setDepth(1)
       const coinSprite = this.add.sprite(panelX, btnY - 3, 'gold_coin').setScale(2).setDepth(1)
 
@@ -589,14 +670,100 @@ export class Interior extends Phaser.Scene {
       const speedArrow = this.add.sprite(panelX, startY + lineH + 5, 'arrow_small').setScale(2).setTint(COLORS.upgradeGreen)
       const storageArrow = this.add.sprite(panelX, startY + lineH * 2 + 5, 'arrow_small').setScale(2).setTint(COLORS.upgradeGreen)
 
+      // Per-building bonus line under the storage row — describes a unique
+      // upgrade effect that isn't speed or storage (e.g. blast furnace L2
+      // unlocks a second output slot).
+      const bonusText = this.add.bitmapText(panelX, startY + lineH * 3 + 5, 'mainSmall', '', FONT.desc)
+        .setOrigin(0.5, 0.5).setTint(COLORS.uiText).setVisible(false)
+
       upgradesContainer.add([
         levelText, levelArrow, levelNextText, speedStatText, speedArrow, speedNextText,
-        storageStatText, storageArrow, storageNextText, btn, btnLabel, costText, coinSprite,
+        storageStatText, storageArrow, storageNextText, bonusText, btn, btnLabel, costText, coinSprite,
       ])
+
+      // Buildings without a speed upgrade — hide the speed row and shift
+      // storage + bonus up one slot so everything sits tightly packed.
+      if (buildingType === 'blast_furnace' || buildingType === 'storage') {
+        speedStatText.setVisible(false)
+        speedArrow.setVisible(false)
+        speedNextText.setVisible(false)
+        const shiftY = -(lineH + 5)
+        storageStatText.y += shiftY
+        storageArrow.y += shiftY
+        storageNextText.y += shiftY
+        bonusText.y += shiftY
+        // Storage has no bonus line either — close that gap too so the
+        // upgrade button doesn't float in dead space.
+        if (buildingType === 'storage') {
+          btn.y += shiftY
+          btnLabel.y += shiftY
+          costText.y += shiftY
+          coinSprite.y += shiftY
+        }
+      }
 
       const refreshUpgradeText = () => {
         const lvl = plot.level
         const next = lvl + 1
+
+        if (buildingType === 'workshop' && lvl >= 2) {
+          levelText.setText(`Level ${lvl}`).setOrigin(0.5, 0.5).setX(panelX)
+          levelNextText.setText('')
+          levelArrow.setVisible(false)
+          speedStatText.setText('All upgrades owned').setOrigin(0.5, 0.5).setX(panelX)
+          speedNextText.setText('')
+          speedArrow.setVisible(false)
+          storageStatText.setText('')
+          storageNextText.setText('')
+          storageArrow.setVisible(false)
+          bonusText.setVisible(false)
+          btnLabel.setText('Unlocked').setOrigin(0.5, 0.5).setX(panelX)
+          costText.setText('')
+          coinSprite.setVisible(false)
+          return
+        }
+
+        if (buildingType === 'smelter') {
+          // Smelter has no speed upgrade. Storage takes the speed row's slot;
+          // the description of what leveling unlocks goes where storage was.
+          levelText.setText(`Level ${lvl}  `)
+          levelNextText.setText(`  ${next}`)
+          const levelTotalW = levelText.width + 10 + levelNextText.width
+          const sx = panelX - levelTotalW / 2
+          levelText.setOrigin(0, 0.5).setX(sx)
+          levelArrow.setX(sx + levelText.width + 5)
+          levelNextText.setOrigin(0, 0.5).setX(sx + levelText.width + 10)
+
+          // Row 2 (was Speed) -> Storage upgrade with arrow
+          const curCap = getStorageCap(lvl)
+          const nextCap = getStorageCap(next)
+          speedArrow.setVisible(true)
+          speedStatText.setOrigin(0, 0.5).setText(`Storage: ${curCap}  `)
+          speedNextText.setOrigin(0, 0.5).setText(`  ${nextCap}`)
+          const storageTotalW = speedStatText.width + 10 + speedNextText.width
+          const storageSx = panelX - storageTotalW / 2
+          speedStatText.setX(storageSx)
+          speedArrow.setX(storageSx + speedStatText.width + 5)
+          speedNextText.setX(storageSx + speedStatText.width + 10)
+
+          // Row 3 (was Storage) -> description of what the upgrade unlocks
+          storageArrow.setVisible(false)
+          storageStatText.setText('Adds a second output slot').setOrigin(0.5, 0.5).setX(panelX)
+          storageNextText.setText('')
+
+          bonusText.setVisible(false)
+
+          const cost = getUpgradeCost(lvl, buildingType)
+          costText.setText(`${cost}`)
+          const gap = 8
+          const coinW = 16
+          const totalW = btnLabel.width + gap + costText.width + 4 + coinW
+          const startX = panelX - totalW / 2
+          btnLabel.setOrigin(0, 0.5).setX(startX)
+          costText.setX(startX + btnLabel.width + gap)
+          coinSprite.setX(startX + btnLabel.width + gap + costText.width + 4 + coinW / 2)
+          return
+        }
 
         levelText.setText(`Level ${lvl}  `)
         levelNextText.setText(`  ${next}`)
@@ -609,7 +776,7 @@ export class Interior extends Phaser.Scene {
         const baseTickMs = def.itemTickMs ?? def.tickMs
         const curSpeed = (getEffectiveTickMs(baseTickMs, lvl) / 1000).toFixed(1)
         const nextSpeed = (getEffectiveTickMs(baseTickMs, next) / 1000).toFixed(1)
-        speedStatText.setText(`Speed: ${curSpeed}s  `)
+        speedStatText.setText(`${buildingType === 'workshop' ? 'Auto Craft Speed' : 'Speed'}: ${curSpeed}s  `)
         speedNextText.setText(`  ${nextSpeed}s`)
         const speedTotalW = speedStatText.width + 10 + speedNextText.width
         const speedSx = panelX - speedTotalW / 2
@@ -617,8 +784,8 @@ export class Interior extends Phaser.Scene {
         speedArrow.setX(speedSx + speedStatText.width + 5)
         speedNextText.setOrigin(0, 0.5).setX(speedSx + speedStatText.width + 10)
 
-        const curCap = getStorageCap(lvl)
-        const nextCap = getStorageCap(next)
+        const curCap = buildingType === 'storage' ? getStorageSlotCount(lvl) : getStorageCap(lvl)
+        const nextCap = buildingType === 'storage' ? getStorageSlotCount(next) : getStorageCap(next)
         if (buildingType === 'workshop') {
           storageStatText.setText('Unlocks 2x2 crafting').setOrigin(0.5, 0.5).setX(panelX)
           storageNextText.setText('')
@@ -634,7 +801,14 @@ export class Interior extends Phaser.Scene {
           storageNextText.setX(storageSx + storageStatText.width + 10)
         }
 
-        const cost = getUpgradeCost(lvl)
+        if (buildingType === 'blast_furnace' && lvl === 1) {
+          bonusText.setText('Unlocks two output slots').setVisible(true)
+        } else {
+          bonusText.setVisible(false)
+        }
+
+
+        const cost = getUpgradeCost(lvl, buildingType)
         costText.setText(`${cost}`)
         // Layout: UPGRADE <gap> cost coin — all centered in the button
         const gap = 8
@@ -649,17 +823,20 @@ export class Interior extends Phaser.Scene {
       refreshUpgradeText()
 
       btn.on('pointerdown', () => {
-        const cost = getUpgradeCost(plot.level)
+        if (buildingType === 'workshop' && plot.level >= 2) return
+        const cost = getUpgradeCost(plot.level, buildingType)
         if (state.trySpend(cost, this.registry)) {
           plot.level++
           // Workshop reaching level 2 grows its 2 craft slots into a 2x2 grid.
-          // Existing contents stay in the first two slots; two empty slots append.
           if (buildingType === 'workshop' && plot.level === 2 && plot.craftInputs && plot.craftInputs.length < 4) {
             while (plot.craftInputs.length < 4) plot.craftInputs.push(null)
-            this.rebuildWorkshopProduction?.()
           }
-          titleLevelText.setText(`Level ${plot.level}`)
-          refreshUpgradeText()
+          // Smelters reaching level 2 grow from 1 output slot to 2.
+          if (plot.built !== 'empty' && BUILDINGS[plot.built].smelting && plot.level === 2) {
+            const smelt = ensureSmelt(plot)
+            while (smelt.outputs.length < 2) smelt.outputs.push(null)
+          }
+          this.rebuildPanel?.()
         }
       })
     }
@@ -693,19 +870,23 @@ export class Interior extends Phaser.Scene {
         })
       }
 
-      const storageCount = () => plot.output?.count ?? 0
-      const storageCap = () => getStorageCap(plot.level)
-      const storageText = this.add.bitmapText(panelX, descY + lineH * 2, 'mainSmall',
-        `Storage: ${storageCount()}/${storageCap()}`, FONT.desc)
-        .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
-      infoContainer.add(storageText)
-      this.moduleUpdates.push(() => {
-        storageText.setText(`Storage: ${storageCount()}/${storageCap()}`)
-      })
+      if (buildingType !== 'storage') {
+        const storageCount = () => (buildingType === 'workshop' ? plot.craftOutput?.count : plot.output?.count) ?? 0
+        const storageCap = () => getStorageCap(plot.level)
+        const storageText = this.add.bitmapText(panelX, descY + lineH * 2, 'mainSmall',
+          `Storage: ${storageCount()}/${storageCap()}`, FONT.desc)
+          .setOrigin(0.5, 0.5).setTint(COLORS.uiText)
+        infoContainer.add(storageText)
+        this.moduleUpdates.push(() => {
+          storageText.setText(`Storage: ${storageCount()}/${storageCap()}`)
+        })
+      }
     }
 
     // ---- tab switching ----
+    let currentTabIdx = activeTabIndex
     const setActiveTab = (idx: number) => {
+      currentTabIdx = idx
       for (let i = 0; i < tabNames.length; i++) {
         tabContainers[i].setVisible(i === idx)
         tabUnderlines[i].setVisible(i === idx)
@@ -715,7 +896,29 @@ export class Interior extends Phaser.Scene {
     for (let i = 0; i < tabNames.length; i++) {
       tabHitZones[i].on('pointerdown', () => setActiveTab(i))
     }
-    setActiveTab(0)
+    setActiveTab(activeTabIndex)
+
+    // Snapshot the objects this build added so rebuildPanel can destroy
+    // exactly them — and only them — when the panel needs to grow.
+    this.panelObjects = this.children.list.slice(beforeCount)
+    this.rebuildPanel = () => {
+      // Capture state we want to survive the rebuild.
+      const tabToRestore = currentTabIdx
+      // Tear down what this build created.
+      const ui = this.scene.get('UI') as UI
+      const dc = ui.getDragController()
+      for (const b of this.bindings) dc.unregister(b)
+      this.bindings = []
+      this.slotVisuals = []
+      for (const fn of this.moduleCleanups) fn()
+      this.moduleCleanups = []
+      this.moduleUpdates = []
+      for (const obj of this.panelObjects) obj.destroy()
+      this.panelObjects = []
+      this.rebuildProduction = null
+      // Build it back, restoring the active tab.
+      this.buildPlotPanel(w, h, onSlotShiftClick, onCraftAllShiftClick, tabToRestore)
+    }
   }
 
   // Standalone world well: well sprite -> filling arrow -> water output slot,
@@ -861,6 +1064,7 @@ export class Interior extends Phaser.Scene {
 
       if (!stack) continue
       v.icon = this.add.sprite(v.x, v.y, ITEMS[stack.type].sprite).setScale(ITEMS[stack.type].scale)
+      outlineIcon(v.icon)
       v.container?.add(v.icon)
       if (stack.count > 1) {
         v.count = makeCountLabel(this, v.x, v.y, stack.count)

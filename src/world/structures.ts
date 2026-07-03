@@ -7,7 +7,7 @@
 // Same split: this file is the catalog (types + metadata); state holds the
 // instances (where they're placed in the world).
 
-export type WorldStructureType = 'shop' | 'church' | 'church_bell' | 'church_bell_back' | 'general_store' | 'abandoned_house' | 'house_roof' | 'long_house' | 'land_office' | 'nursery' | 'tanner' | 'gunsmith'   // future: 'npc_house', ...
+export type WorldStructureType = 'shop' | 'church' | 'church_bell' | 'church_bell_back' | 'general_store' | 'abandoned_house' | 'house_roof' | 'house_roof_double' | 'long_house' | 'charter_office' | 'fw_charter_office' | 'land_office' | 'saloon' | 'nursery' | 'tanner' | 'gunsmith' | 'mercantile' | 'livery' | 'mercantile'   // future: 'npc_house', ...
 
 export interface WorldStructureDef {
   name: string
@@ -26,11 +26,17 @@ export const WORLD_STRUCTURES: Record<WorldStructureType, WorldStructureDef> = {
   general_store: { name: 'General Store', sprite: 'shop', scale: 3, tint: 0xA6BC78 },
   abandoned_house: { name: 'Abandoned House', sprite: 'abandoned_house', scale: 3, hitbox: { w: 36, h: 45 } },
   house_roof: { name: 'House', sprite: 'house_roof', scale: 3 },
+  house_roof_double: { name: 'House', sprite: 'house_roof_double', scale: 3 },
   long_house: { name: 'Long House', sprite: 'long_house', scale: 3, hitbox: { w: 39, h: 81 } },
-  land_office: { name: 'Land Office', sprite: 'shop', scale: 3, tint: 0xC8A86A },
+  charter_office: { name: 'Charter Office', sprite: 'shop', scale: 3, tint: 0xC8A86A },
+  fw_charter_office: { name: 'Charter Office', sprite: 'shop', scale: 3, tint: 0xC8A86A },
+  land_office: { name: 'Land Office', sprite: 'shop', scale: 3, tint: 0xCBB089 },
+  saloon: { name: 'Saloon', sprite: 'shop', scale: 3, tint: 0x9C6B43 },
   nursery: { name: 'Nursery', sprite: 'shop', scale: 3, tint: 0x9CB592 },
   tanner: { name: 'Tanner', sprite: 'shop', scale: 3, tint: 0x9C6B43 },
   gunsmith: { name: 'Gunsmith', sprite: 'house_roof_open', scale: 3, tint: 0x7A7A8A },
+  mercantile: { name: 'Mercantile', sprite: 'shop', scale: 3, tint: 0xB89060 },
+  livery: { name: 'Livery', sprite: 'shop', scale: 3, tint: 0x8B6F47 },
 }
 
 // A single placed instance in the world.
@@ -41,6 +47,8 @@ export interface WorldStructure {
   townId?: string
   flipX?: boolean
   tint?: number
+  sprite?: string
+  interior?: WorldStructureType
   loot?: { x: number; y: number; type: string; count?: number }[]
 }
 

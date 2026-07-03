@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { ITEMS, type ItemStack, type ItemDef } from '../items/types'
+import { ITEMS, cloneStack, type ItemStack, type ItemDef } from '../items/types'
 import { COLORS } from '../colors'
 import type { SlotBinding } from './SlotBinding'
 
@@ -41,6 +41,23 @@ export class DragController {
   }
 
   isHolding(): boolean { return this.held !== null }
+
+  tryAddToHeld(stack: ItemStack): number {
+    if (!this.held) {
+      this.held = { stack: { type: stack.type, count: stack.count }, source: null }
+      this.renderHeld()
+      return stack.count
+    }
+    if (this.held.stack.type !== stack.type) return 0
+    const cap = ITEMS[stack.type].maxStack
+    const room = cap - this.held.stack.count
+    if (room <= 0) return 0
+    const added = Math.min(room, stack.count)
+    this.held.stack.count += added
+    this.renderHeld()
+    return added
+  }
+
 
   // Take the held stack and clear the held state. Returns null if not holding.
   // Used when dropping the held stack outside the slot system (e.g. into the
@@ -125,16 +142,19 @@ export class DragController {
     // same-type merge (or empty slot accepting)
     if (slot.accepts(stack.type)) {
       const accepted = slot.offer(stack)
-      stack.count -= accepted
-      if (stack.count <= 0) this.clearHeld()
-      else this.renderHeld()
-      return
+      if (accepted > 0) {
+        stack.count -= accepted
+        if (stack.count <= 0) this.clearHeld()
+        else this.renderHeld()
+        return
+      }
+      // offer rejected (e.g. rarity mismatch) — fall through to swap
     }
 
     // read-only output slot (e.g. crafter preview): if it has the same type
     // we're already holding, take from it and merge into the held stack.
     const existing = slot.peek()
-    if (existing && existing.type === stack.type) {
+    if (existing && existing.type === stack.type && existing.rarity === stack.rarity) {
       const cap = ITEMS[stack.type].maxStack
       const room = cap - stack.count
       if (room <= 0) return
@@ -145,14 +165,13 @@ export class DragController {
       return
     }
 
-    // different type — swap, but only if the slot has something to lift
+    // different type or rarity — swap, but only if the slot has something to lift
     // AND can accept everything we're holding (no item loss)
     if (!existing) return
     const lifted = slot.take(existing.count)
     if (!lifted) return
     const accepted = slot.offer(stack)
     if (accepted < stack.count) {
-      // swap would lose items — undo and bail
       slot.restore(lifted)
       return
     }
@@ -165,7 +184,7 @@ export class DragController {
     if (!this.held) return
     const stack = this.held.stack
     if (!slot.accepts(stack.type)) return
-    const one: ItemStack = { type: stack.type, count: 1 }
+    const one = cloneStack(stack, 1)
     const accepted = slot.offer(one)
     if (accepted <= 0) return
     stack.count -= accepted

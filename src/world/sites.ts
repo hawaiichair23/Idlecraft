@@ -21,6 +21,7 @@
 
 import type { WorldStructureType } from './structures'
 import type { ItemType } from '../items/types'
+import type { DecorType } from './decor'
 
 // One building within a template, positioned relative to the site origin.
 // `sprite` and `walkable` are INDEPENDENT: any sprite can be an enterable
@@ -42,6 +43,11 @@ export interface SiteTemplate {
   name: string
   buildings: SiteBuilding[]
   decor?: { dx: number; dy: number; sprite: string; scale: number; depth?: number }[]
+  // Solid decor placed relative to the site origin. Unlike `decor` (pure visual,
+  // walk-through), each entry gets a collider from its DECOR catalog hitbox via
+  // the shared placeNonEnterable path. Sprite/scale/hitbox resolve from DECOR and
+  // ITEMS, so an entry only names a type and position.
+  solidDecor?: { dx: number; dy: number; type: DecorType }[]
   // Wells placed relative to the site origin. A working well (dry omitted/false)
   // produces water and is walk-up enterable; a dry well is decor + collision.
   wells?: { dx: number; dy: number; dry?: boolean }[]
@@ -113,6 +119,9 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
       { dx:   0, dy: 290, sprite: 'grave_cross', scale: 2, depth: 1 },
       { dx:  24, dy: 290, sprite: 'grave_cross', scale: 2, depth: 1 },
       { dx:  48, dy: 290, sprite: 'grave_cross', scale: 2, depth: 1 },
+      { dx: -68, dy: 204, sprite: 'bush', scale: 2 },
+      { dx:  86, dy: -120, sprite: 'bush', scale: 2 },
+      { dx: -54, dy: -168, sprite: 'bush', scale: 2 },
     ],
     side: 'south',
     offsetMin: 250,
@@ -160,7 +169,20 @@ export const SITE_TEMPLATES: Record<string, SiteTemplate> = {
       { type: 'abandoned_house', dx: -72, dy:   70, walkable: true, loot: [] },
       { type: 'house_roof', dx:  72, dy:   70, walkable: false, loot: [] },
     ],
-    decor: [],
+    decor: [
+      { dx: -73, dy: -151, sprite: 'bush', scale: 2 },
+      { dx: -59, dy: -151, sprite: 'bush', scale: 2 },
+      { dx:  71, dy: -151, sprite: 'bush', scale: 2 },
+      { dx:  56, dy: -151, sprite: 'bush', scale: 2 },
+      { dx: -101, dy: -2, sprite: 'bush', scale: 2 },
+      { dx: -84, dy: 17, sprite: 'bush', scale: 2 },
+      { dx: -78, dy: -1, sprite: 'bush', scale: 2 },
+      { dx: -61, dy: 159, sprite: 'bush', scale: 2 },
+      { dx: 164, dy: -96, sprite: 'bush', scale: 2 },
+    ],
+    solidDecor: [
+      { dx: 121, dy: 16, type: 'barrel' },
+    ],
     side: 'north',
     offsetMin: 250,
     offsetMax: 250,

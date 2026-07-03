@@ -37,14 +37,18 @@ export const COLORS = {
   statText: 0x4E43E9,
 
   // menu — disabled (unaffordable) row text
-  menuDisabled: 0xD8D2C0,   // cool light gray-cream
+  menuDisabled: 0x8A8270,   // muted dark gray-cream — clearly "off" vs uiText (dark interior panels)
+  buildMenuDisabled: 0xD8D2C0,   // light gray-cream — build menu's lighter panel
 
   // slot hover color
   slotHover: 0xFFFFE8,
 
   // menu slot + container panel tint — neutral mid gray, light enough for items
   // to contrast against it without the warm cream cast
-  interiorPanel: 0x9E9E9E,
+  interiorPanel: 0x6B7388,
+
+  // slot background — darker than the panel for contrast within the panel
+  slotBg: 0x5E6577,
 
   // generic
   black: 0x000000,          // bars, shades, overlays

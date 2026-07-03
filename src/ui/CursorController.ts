@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { state, WOOD_TILE, Terrain } from '../game/state'
 import { grabbableSlots, grabHover, rejectHover } from './hover'
+import { outlineIcon, spriteGetsOutline } from './iconOutline'
 import { ACTION_CURSOR, resolveAction, type ItemAction, type WorldContext, TOOL_RANGE } from '../game/ItemActionController'
 
 
@@ -30,6 +31,9 @@ export class CursorController {
   private quirtExtras: Phaser.GameObjects.Sprite[] = []
   private bulletStrip: Phaser.GameObjects.Sprite
   private axeSwinging = false
+  // Whether the held-tool cursor currently has its grass outline applied. Tracked
+  // so the filter is only added/cleared when the grass state flips, not per frame.
+  private cursorOutlined = false
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene
@@ -147,6 +151,10 @@ export class CursorController {
             const a = action as { sprite: string; scale: number }
             const zoomedScale = a.scale * (cam?.zoom ?? 1)
             this.setTexture(a.sprite, zoomedScale)
+            // Picks and axes get a white outline over grass terrain; clear it for
+            // any other tool. Interiors are excluded (isOverGrass returns false).
+            if (spriteGetsOutline(a.sprite)) this.updateToolOutline()
+            else this.clearToolOutline()
             // The swing rotation only applies to the actual tool sprite, never the
             // plain pointer — so an out-of-range click can't tilt the arrow.
             const wantRot = this.axeSwinging ? -Math.PI / 2 : 0
@@ -171,7 +179,7 @@ export class CursorController {
               this.cursor.setAlpha(0.65)
               this.snapCursorToWorldGrid(WOOD_TILE, state.worldBounds.minX, state.worldBounds.minY)
             }
-            if (action.kind === 'place-water') {
+            if (action.kind === 'place-trough') {
               this.cursor.setAlpha(0.65)
               this.snapCursorToWorldGrid(WOOD_TILE, state.worldBounds.minX, state.worldBounds.minY)
             }
@@ -282,18 +290,43 @@ export class CursorController {
   // The arrow/grab cursor art is white so it can be tinted per terrain: gold on
   // most ground (reads on the cream sand), left white over grass (reads on
   // green). One terrain lookup per frame; tint only changes on a class flip.
-  private applyArrowTerrainTint() {
-    // The terrain tint is an overworld concept — it samples the overworld grid
-    // through the overworld camera. Inside an interior that sample is the world
-    // terrain under the building (e.g. grass beneath a long house), which would
-    // wrongly whiten the cursor. Interiors always use the plain gold arrow.
-    if (this.scene.scene.manager.isActive('Interior')) { this.cursor.setTint(Overworld_CURSOR_GOLD); return }
+  // Force-clear the tool outline (e.g. when the held tool isn't the pickaxe).
+  private clearToolOutline() {
+    if (!this.cursorOutlined) return
+    this.cursorOutlined = false
+    this.cursor.enableFilters()
+    this.cursor.filters!.internal.clear()
+  }
+
+  // Apply or clear the held-tool cursor's white outline based on terrain. Called
+  // each frame from the overworld tool branch; only touches the filter when the
+  // over-grass state actually flips, so it isn't re-added every frame.
+  private updateToolOutline() {
+    const want = this.isOverGrass()
+    if (want === this.cursorOutlined) return
+    this.cursorOutlined = want
+    this.cursor.enableFilters()
+    this.cursor.filters!.internal.clear()
+    if (want) outlineIcon(this.cursor)
+  }
+
+  // True when the pointer is over grass terrain in the overworld. Returns false
+  // inside interiors (the terrain sample there is the world under the building,
+  // not the floor) and when no overworld camera is available.
+  private isOverGrass(): boolean {
+    if (this.scene.scene.manager.isActive('Interior')) return false
     const overworld = this.scene.scene.manager.getScene('Overworld') as any
     const cam = overworld?.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined
-    if (!cam) { this.cursor.setTint(Overworld_CURSOR_GOLD); return }
+    if (!cam) return false
     const p = this.scene.input.activePointer
     const w = cam.getWorldPoint(p.x, p.y)
-    if (state.terrainAt(w.x, w.y) === Terrain.Grass) this.cursor.clearTint()
+    return state.terrainAt(w.x, w.y) === Terrain.Grass
+  }
+
+  private applyArrowTerrainTint() {
+    // Arrow/grab states never carry the tool outline — clear it if it was left on.
+    this.clearToolOutline()
+    if (this.isOverGrass()) this.cursor.clearTint()
     else this.cursor.setTint(Overworld_CURSOR_GOLD)
   }
 

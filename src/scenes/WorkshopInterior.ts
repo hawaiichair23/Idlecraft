@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { COLORS } from '../colors'
-import { state, isBag, BUILDINGS, getEffectiveTickMs } from '../game/state'
-import { type ItemStack } from '../items/types'
+import { state, isBag, BUILDINGS, getEffectiveTickMs, getPlotSlotCap } from '../game/state'
+import { cloneStack, type ItemStack } from '../items/types'
 import { consumeCraft, previewCraft } from '../items/recipes'
 import { type SlotBinding } from '../ui/SlotBinding'
 import { makeSlotImage, makeStorageBinding } from '../ui/slotFactory'
@@ -127,7 +127,10 @@ export function buildWorkshopInterior(
     const outputBinding: SlotBinding = {
       getScreenPos: () => ({ x, y: centerY }),
       peek: () => getStack(),
-      accepts: () => false,
+      accepts: (itemType) => {
+        const cur = state.plots[plotIndex].craftOutput
+        return !cur || cur.type === itemType
+      },
       take: () => {
         const plot = state.plots[plotIndex]
         if (plot.craftOutput) {
@@ -138,8 +141,33 @@ export function buildWorkshopInterior(
         const result = consumeCraft(plotIndex)
         return result
       },
-      offer: () => 0,
-      restore: () => 0,
+      offer: (stack) => {
+        const plot = state.plots[plotIndex]
+        const cap = getPlotSlotCap(plot, stack.type)
+        if (!plot.craftOutput) {
+          const moved = Math.min(cap, stack.count)
+          plot.craftOutput = cloneStack(stack, moved)
+          return moved
+        }
+        if (plot.craftOutput.type !== stack.type) return 0
+        if (plot.craftOutput.rarity !== stack.rarity) return 0
+        const room = cap - plot.craftOutput.count
+        if (room <= 0) return 0
+        const moved = Math.min(room, stack.count)
+        plot.craftOutput.count += moved
+        return moved
+      },
+      restore: (stack) => {
+        const plot = state.plots[plotIndex]
+        if (plot.craftOutput) {
+          if (plot.craftOutput.type !== stack.type) return 0
+          if (plot.craftOutput.rarity !== stack.rarity) return 0
+          plot.craftOutput.count += stack.count
+          return stack.count
+        }
+        plot.craftOutput = cloneStack(stack, stack.count)
+        return stack.count
+      },
     }
     bindings.push(outputBinding)
     dc.register(outputBinding)

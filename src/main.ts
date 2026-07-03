@@ -1,4 +1,5 @@
 import Phaser from 'phaser'
+import OutlineFilterPlugin from 'phaser4-rex-plugins/plugins/outlinefilter-plugin.js'
 import './style.css'
 import { Overworld } from './scenes/Overworld'
 import { UI } from './scenes/UI'
@@ -7,6 +8,11 @@ import { state } from './game/state'
 import { ITEMS, type ItemType } from './items/types'
 
 import { spawnTumbleweed } from './world/tumbleweed'
+
+// Kick off the Polaris web font load up front so it's ready before any
+// dialogue text renders (avoids a fallback-font flash on first use).
+document.fonts.load('16px Polaris')
+
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -27,6 +33,13 @@ const game = new Phaser.Game({
     },
   },
   scene: [Overworld, UI, Interior],
+  plugins: {
+    global: [{
+      key: 'rexOutlineFilter',
+      plugin: OutlineFilterPlugin,
+      start: true,
+    }],
+  },
 })
 // right-click is used to pick up half a stack — suppress the browser menu
 game.input.mouse?.disableContextMenu()
@@ -70,8 +83,6 @@ window.gold = (n: number) => {
   return `gold: ${state.gold}`
 }
 
-// Change player health by n (negative to damage). Clamped 0..MAX_HEALTH.
-// health(-0.75) for a coyote bite, health(3) to full-heal.
 window.health = (n: number) => {
   state.changeHealth(n, game.registry)
   return `health: ${state.health}`
@@ -184,5 +195,20 @@ window.fps = () => {
   const fps = game.loop.actualFps.toFixed(1)
   if (!overworld) return `${fps} fps (Overworld scene not active)`
   const objects = overworld.children.length
-  return `${fps} fps · ${objects} objects`
+  const counts: Record<string, number> = {}
+  overworld.children.each((child: any) => {
+    let key = child.texture?.key ?? child.type ?? child.constructor?.name ?? 'unknown'
+    if (key === 'Container') {
+      const n = child.list?.length ?? 0
+      const firstChild = child.list?.[0]
+      const childTex = firstChild?.texture?.key ?? firstChild?.type ?? '?'
+      key = `Container(${n}x ${childTex})`
+    }
+    counts[key] = (counts[key] || 0) + 1
+  })
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1])
+  const top = sorted.slice(0, 20).map(([k, v]) => `  ${v} ${k}`).join('\n')
+  const result = `${fps} fps · ${objects} objects\n${top}`
+  console.log(result)
+  return result
 }

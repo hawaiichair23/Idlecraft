@@ -1,11 +1,13 @@
 import { state, WOOD_TILE } from './state'
 import { ITEMS } from '../items/types'
+import type { TroughKind } from '../world/troughs'
 
 export const TOOL_RANGE = 150
 export const CRATE_RANGE = 80
 
 export type ActionKind =
   | 'untie-rope'
+  | 'place-deed'
   | 'destroy-post'
   | 'destroy-crate'
   | 'destroy-plot'
@@ -19,7 +21,7 @@ export type ActionKind =
   | 'place-post'
   | 'place-crate'
   | 'place-plank'
-  | 'place-water'
+  | 'place-trough'
   | 'place-gate'
   | 'throw-rope'
   | 'tool-generic'
@@ -30,9 +32,11 @@ export type ActionKind =
   | 'dismount'
   | 'open-crate'
   | 'toggle-gate'
+  | 'talk-npc'
 
 export type ItemAction =
   | { kind: 'untie-rope' }
+  | { kind: 'place-deed'; sprite: string; scale: number }
   | { kind: 'destroy-post' }
   | { kind: 'destroy-crate' }
   | { kind: 'destroy-plot' }
@@ -46,7 +50,7 @@ export type ItemAction =
   | { kind: 'place-post'; sprite: string; scale: number }
   | { kind: 'place-crate'; sprite: string; scale: number }
   | { kind: 'place-plank'; sprite: string; scale: number }
-  | { kind: 'place-water'; sprite: string; scale: number }
+  | { kind: 'place-trough'; troughKind: TroughKind; sprite: string; scale: number }
   | { kind: 'place-gate'; sprite: string; scale: number }
   | { kind: 'throw-rope'; sprite: string; scale: number }
   | { kind: 'tool-generic'; sprite: string; scale: number }
@@ -57,9 +61,11 @@ export type ItemAction =
   | { kind: 'dismount'; sprite: string; scale: number; tint: number | null }
   | { kind: 'open-crate' }
   | { kind: 'toggle-gate' }
+  | { kind: 'talk-npc' }
 
 export const ACTION_CURSOR: Record<ActionKind, { texture: string; scale: number } | 'tool'> = {
   'untie-rope':    { texture: 'cursor_x', scale: 2 },
+  'place-deed':    'tool',
   'destroy-post':  { texture: 'cursor_x', scale: 2 },
   'destroy-crate': { texture: 'cursor_x', scale: 2 },
   'destroy-plot':  { texture: 'cursor_x', scale: 2 },
@@ -73,7 +79,7 @@ export const ACTION_CURSOR: Record<ActionKind, { texture: string; scale: number 
   'place-post':    'tool',
   'place-crate':   'tool',
   'place-plank':   'tool',
-  'place-water':   'tool',
+  'place-trough':  'tool',
   'place-gate':    'tool',
   'throw-rope':    'tool',
   'tool-generic':  'tool',
@@ -84,6 +90,7 @@ export const ACTION_CURSOR: Record<ActionKind, { texture: string; scale: number 
   'dismount':      'tool',
   'open-crate':    { texture: 'cursor_grab', scale: 2 },
   'toggle-gate':   { texture: 'item_fence_gate', scale: 2 },
+  'talk-npc':      { texture: 'cursor_grab', scale: 2 },
 }
 
 export interface WorldContext {
@@ -102,6 +109,7 @@ export interface WorldContext {
   canDismount(wx: number, wy: number): number | null
   canOpenCrate(wx: number, wy: number): number | null
   canToggleGate(wx: number, wy: number): number | null
+  canTalkToNpc(wx: number, wy: number): number | null
   findPlantableDirtSpot(wx: number, wy: number): boolean
   isNearTiedRope(wx: number, wy: number): boolean
   isRopeAttached(): boolean
@@ -146,17 +154,17 @@ export function dispatchClick(
 
   const sel = state.inventory[state.selectedInventorySlot]
   const heldType = sel?.type ?? null
+  const heldDef = heldType ? ITEMS[heldType] : null
 
-  if (heldType !== null && ITEMS[heldType].edible) {
+  if (heldDef?.edible) {
     if (handlers.eatFromSlot()) {
-      const def = ITEMS[heldType]
-      if (def.crumbColor != null) handlers.spawnCrumbs(ctx.playerX(), ctx.playerY(), def.crumbColor)
+      if (heldDef.crumbColor != null) handlers.spawnCrumbs(ctx.playerX(), ctx.playerY(), heldDef.crumbColor)
       return true
     }
     return false
   }
 
-  if (heldType === 'axe') {
+  if (heldDef?.chopping != null) {
     handlers.setAxeSwung(true)
     if (handlers.tryAxeEnemy(clickX, clickY)) return true
     if (handlers.tryChop(clickX, clickY)) return true
@@ -169,7 +177,7 @@ export function dispatchClick(
     return false
   }
 
-  if (heldType === 'pickaxe') {
+  if (heldDef?.mining != null) {
     handlers.setAxeSwung(true)
     if (handlers.tryMine(clickX, clickY)) return true
     if (handlers.tryDestroyPost(clickX, clickY)) return true
@@ -213,7 +221,7 @@ export function resolveAction(
   const sel = state.inventory[state.selectedInventorySlot]
   const heldType = sel?.type ?? null
   const tool = state.getSelectedTool()
-  const isDestroyTool = heldType === 'axe' || heldType === 'pickaxe'
+  const isDestroyTool = tool?.chopping != null || tool?.mining != null
 
   if (ctx.isNearTiedRope(worldX, worldY)) {
     return { kind: 'untie-rope' }
@@ -230,11 +238,11 @@ export function resolveAction(
     if (ctx.canDestroyPlot(worldX, worldY) !== null) return { kind: 'destroy-plot' }
     if (ctx.canDestroyPipe(worldX, worldY) !== null) return { kind: 'destroy-pipe' }
     if (ctx.canDestroyWood(worldX, worldY)) return { kind: 'destroy-wood' }
-    if (heldType === 'axe' && ctx.canChopTree(worldX, worldY)) return { kind: 'chop-tree', sprite: tool!.sprite, scale: tool!.scale }
+    if (tool?.chopping != null && ctx.canChopTree(worldX, worldY)) return { kind: 'chop-tree', sprite: tool.sprite, scale: tool.scale }
   }
 
-  if (heldType === 'pickaxe' && ctx.canMineRock(worldX, worldY)) {
-    return { kind: 'mine-rock', sprite: tool!.sprite, scale: tool!.scale }
+  if (tool?.mining != null && ctx.canMineRock(worldX, worldY)) {
+    return { kind: 'mine-rock', sprite: tool.sprite, scale: tool.scale }
   }
 
   if (tool) {
@@ -243,6 +251,9 @@ export function resolveAction(
     const reach = (heldType === 'crate' || heldType === 'chest' || heldType === 'silver_lockbox' || heldType === 'gold_lockbox') ? ctx.crateReach() : TOOL_RANGE
     const inRange = dx * dx + dy * dy <= reach * reach
 
+    if (heldType === 'mallet') {
+      return { kind: 'tool-generic', sprite: tool.sprite, scale: tool.scale }
+    }
     if (heldType === 'shovel' && inRange) {
       return { kind: 'dig', sprite: tool.sprite, scale: tool.scale }
     }
@@ -251,6 +262,9 @@ export function resolveAction(
         return { kind: 'plant-sapling', sprite: tool.sprite, scale: tool.scale }
       }
       return null
+    }
+    if (heldType !== null && ITEMS[heldType].deedRows != null && inRange) {
+      return { kind: 'place-deed', sprite: tool.sprite, scale: tool.scale }
     }
     if ((heldType === 'post' || heldType === 'cedar_post' || heldType === 'iron_post' || heldType === 'wood_wall') && inRange) {
       return { kind: 'place-post', sprite: tool.sprite, scale: tool.scale }
@@ -261,13 +275,17 @@ export function resolveAction(
     if ((heldType === 'plank' || heldType === 'flagstone' || heldType === 'sandstone') && inRange) {
       return { kind: 'place-plank', sprite: tool.sprite, scale: tool.scale }
     }
-    if (heldType === 'water' && inRange) {
+    const troughKind: TroughKind | null =
+      heldType === 'water' ? 'water' :
+      heldType === 'hay' ? 'hay' :
+      null
+    if (troughKind && inRange) {
       const T = WOOD_TILE
       const wb = state.worldBounds
       const cx = Math.floor((worldX - wb.minX) / T) * T + wb.minX + T / 2
       const cy = Math.floor((worldY - wb.minY) / T) * T + wb.minY + T / 2
-      if (!state.placedWaters.some(w => w.x === cx && w.y === cy)) {
-        return { kind: 'place-water', sprite: tool.sprite, scale: tool.scale }
+      if (!state.placedTroughs.some(t => t.x === cx && t.y === cy)) {
+        return { kind: 'place-trough', troughKind, sprite: tool.sprite, scale: tool.scale }
       }
     }
     if (heldType === 'fence_gate' && inRange) {
@@ -301,6 +319,8 @@ export function resolveAction(
     return null
   }
 
+  if (ctx.canToggleGate(worldX, worldY) !== null) return { kind: 'toggle-gate' }
+
   if (state.mounted !== null) {
     const di = ctx.canDismount(worldX, worldY)
     if (di !== null) {
@@ -309,17 +329,17 @@ export function resolveAction(
     }
   }
 
+  if (state.mounted === null) {
+    if (ctx.canOpenCrate(worldX, worldY) !== null) return { kind: 'open-crate' }
+    if (ctx.canTalkToNpc(worldX, worldY) !== null) return { kind: 'talk-npc' }
+  }
+
   if (state.mounted === null && !ctx.isRopeAttached()) {
     const mi = ctx.canMount()
     if (mi !== null) {
       const h = state.honses[mi]
       return { kind: 'mount', sprite: h.sprite, scale: 1, tint: h.tinted ? h.tint : null }
     }
-  }
-
-  if (state.mounted === null) {
-    if (ctx.canOpenCrate(worldX, worldY) !== null) return { kind: 'open-crate' }
-    if (ctx.canToggleGate(worldX, worldY) !== null) return { kind: 'toggle-gate' }
   }
 
   return null
