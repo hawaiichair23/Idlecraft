@@ -24,7 +24,6 @@ import { buildWalkableInterior } from './WalkableInterior'
 import { buildCharterOfficeInterior, FW_UNLOCK_ENTRIES } from './CharterOfficeInterior'
 import { buildLandOfficeInterior } from './LandOfficeInterior'
 import { buildSaloonInterior } from './SaloonInterior'
-import { buildChurchInterior } from './ChurchInterior'
 import { buildNurseryInterior } from './NurseryInterior'
 import { buildTannerInterior } from './TannerInterior'
 import { buildGunsmithInterior } from './GunsmithInterior'
@@ -299,7 +298,7 @@ export class Interior extends Phaser.Scene {
     // ---- back button + keyboard exits ----
     // Walkable interiors (abandoned house, future barns) require the player
     // to physically walk out — no back button, no ESC/E exits.
-    const isWalkable = this.interiorData.source === 'world' && (this.interiorData.buildingType === 'abandoned_house' || this.interiorData.buildingType === 'long_house')
+    const isWalkable = this.interiorData.source === 'world' && (this.interiorData.buildingType === 'abandoned_house' || this.interiorData.buildingType === 'long_house' || this.interiorData.buildingType === 'church' || this.interiorData.buildingType === 'church_bell' || this.interiorData.buildingType === 'church_bell_back')
     if (!isWalkable) {
       // Plot + world-well popups close by clicking the shade or ESC/E, so they
       // get no on-screen Back button. Other interiors keep it.
@@ -352,7 +351,9 @@ export class Interior extends Phaser.Scene {
       const handle = buildWalkableInterior(this, {
         stateKey: `abandoned_house:${this.interiorData.structureIndex}`,
         ...INTERIOR_PALETTES.abandonedHouse,
-        wallHeightFraction: 0.45,
+        wallColor: 0xc1af9d,
+        floorTexture: 'floor_wood',
+        floorTextureScale: 4,
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
         crateSeed: state.worldSeed + this.interiorData.structureIndex,
         crateSpawnChance: 1,
@@ -369,8 +370,10 @@ export class Interior extends Phaser.Scene {
       const handle = buildWalkableInterior(this, {
         stateKey: `long_house:${this.interiorData.structureIndex}`,
         ...INTERIOR_PALETTES.longHouse,
-        wallHeightFraction: 0.45,
-        openSide: this.interiorData.flipX ? 'left' : 'right',
+        wallColor: 0xc1af9d,
+        floorTexture: 'floor_wood',
+        floorTextureScale: 4,
+        doorSide: this.interiorData.flipX ? 'left' : 'right',
         initialItems: loot as { x: number; y: number; type: ItemType; count?: number }[],
         crateSeed: state.worldSeed + this.interiorData.structureIndex,
         crateSpawnChance: 1,
@@ -391,8 +394,34 @@ export class Interior extends Phaser.Scene {
     } else if (this.interiorData.buildingType === 'saloon') {
       const handle = buildSaloonInterior(this)
       this.moduleCleanups.push(handle.onCleanup)
-    } else if (this.interiorData.buildingType === 'church' || this.interiorData.buildingType === 'church_bell' || this.interiorData.buildingType === 'church_bell_back') {
-      const handle = buildChurchInterior(this)
+    } else if (this.interiorData.buildingType === 'church') {
+      const handle = buildWalkableInterior(this, {
+        stateKey: `church:${this.interiorData.structureIndex}`,
+        floorColor: 0xa8482c,
+        wallColor: 0x9d8c6d,
+        floorTexture: 'floor_terracotta',
+        floorTextureScale: 3,
+        roomWidth: 0.45,
+        roomHeight: 1.6,
+        wallTrimVariant: 'mission',
+        pews: true,
+        brickTrim: true,
+        floorBorder: false,
+      }, () => this.exit())
+      this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
+      this.moduleCleanups.push(handle.onCleanup)
+    } else if (this.interiorData.buildingType === 'church_bell' || this.interiorData.buildingType === 'church_bell_back') {
+      const handle = buildWalkableInterior(this, {
+        stateKey: `church:${this.interiorData.structureIndex}`,
+        ...INTERIOR_PALETTES.church,
+        wallColor: 0xc1af9d,
+        floorTexture: 'floor_wood',
+        floorTextureScale: 4,
+        roomWidth: 0.6,
+        roomHeight: 1.4,
+        carpet: true,
+      }, () => this.exit())
+      this.moduleUpdates.push(() => handle.update(this.game.loop.delta))
       this.moduleCleanups.push(handle.onCleanup)
     } else if (this.interiorData.buildingType === 'nursery') {
       const handle = buildNurseryInterior(this)

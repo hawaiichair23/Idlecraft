@@ -562,7 +562,7 @@ class GameState {
     this.mounted = null
     this.generalStoreSlots = new Map()
     //this.inventory[0] = { type: 'bush', count: 64 }
-    this.inventory[1] = { type: 'manacles', count: 5 }
+    this.inventory[1] = { type: 'tempered_axe', count: 1 }
     //this.inventory[2] = { type: 'gold_lockbox', count: 5 }
     this.inventory[3] = { type: 'post', count: 964 }
     this.inventory[4] = { type: 'fence_gate', count: 96 }

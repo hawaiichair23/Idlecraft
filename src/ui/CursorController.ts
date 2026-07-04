@@ -147,14 +147,9 @@ export class CursorController {
         if (action) {
           const entry = ACTION_CURSOR[action.kind]
           if (entry === 'tool') {
-            // tool-sprite cursor: use the sprite/scale carried in the action
             const a = action as { sprite: string; scale: number }
             const zoomedScale = a.scale * (cam?.zoom ?? 1)
-            this.setTexture(a.sprite, zoomedScale)
-            // Picks and axes get a white outline over grass terrain; clear it for
-            // any other tool. Interiors are excluded (isOverGrass returns false).
-            if (spriteGetsOutline(a.sprite)) this.updateToolOutline()
-            else this.clearToolOutline()
+            this.applyToolCursorSprite(a.sprite, zoomedScale)
             // The swing rotation only applies to the actual tool sprite, never the
             // plain pointer — so an out-of-range click can't tilt the arrow.
             const wantRot = this.axeSwinging ? -Math.PI / 2 : 0
@@ -234,7 +229,7 @@ export class CursorController {
           const entry = ACTION_CURSOR[action.kind]
           if (entry === 'tool') {
             const a = action as { sprite: string; scale: number }
-            this.setTexture(a.sprite, a.scale)
+            this.applyToolCursorSprite(a.sprite, a.scale)
             const wantRot = this.axeSwinging ? -Math.PI / 2 : 0
             if (this.cursor.rotation !== wantRot) this.cursor.setRotation(wantRot)
             if (action.kind === 'aim' && (action as any).bullets) {
@@ -256,7 +251,7 @@ export class CursorController {
         const inField = !!(interiorData && interiorData.source === 'plot' && interiorData.buildingType === 'field')
         const contexts = tool.cursorContexts ?? ['overworld']
         if (inField && contexts.includes('field')) {
-          this.setTexture(tool.sprite, tool.scale)
+          this.applyToolCursorSprite(tool.sprite, tool.scale)
           return
         }
       }
@@ -287,10 +282,12 @@ export class CursorController {
     }
   }
 
-  // The arrow/grab cursor art is white so it can be tinted per terrain: gold on
-  // most ground (reads on the cream sand), left white over grass (reads on
-  // green). One terrain lookup per frame; tint only changes on a class flip.
-  // Force-clear the tool outline (e.g. when the held tool isn't the pickaxe).
+  private applyToolCursorSprite(sprite: string, scale: number) {
+    this.setTexture(sprite, scale)
+    if (spriteGetsOutline(sprite)) this.updateToolOutline()
+    else this.clearToolOutline()
+  }
+
   private clearToolOutline() {
     if (!this.cursorOutlined) return
     this.cursorOutlined = false
@@ -298,11 +295,9 @@ export class CursorController {
     this.cursor.filters!.internal.clear()
   }
 
-  // Apply or clear the held-tool cursor's white outline based on terrain. Called
-  // each frame from the overworld tool branch; only touches the filter when the
-  // over-grass state actually flips, so it isn't re-added every frame.
   private updateToolOutline() {
-    const want = this.isOverGrass()
+    const inInterior = this.scene.scene.manager.isActive('Interior')
+    const want = inInterior || this.isOverGrass()
     if (want === this.cursorOutlined) return
     this.cursorOutlined = want
     this.cursor.enableFilters()

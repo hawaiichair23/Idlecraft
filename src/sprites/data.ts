@@ -8,6 +8,16 @@ const hexStr = (n: number) => '#' + n.toString(16).padStart(6, '0').toUpperCase(
 
 export type Sprite = (string | null)[][]
 
+function mirrorSprite(sprite: Sprite, mirrorAt = 32): Sprite {
+  return sprite.map(row => {
+    const newRow = [...row]
+    for (let x = mirrorAt; x < row.length; x++) {
+      newRow[x] = row[mirrorAt - 1 - (x - mirrorAt)]
+    }
+    return newRow
+  })
+}
+
 const _ = null
 
 // ---- MILL ----
@@ -233,7 +243,7 @@ const HR = '#1A0F08'
 
 export const PLAYER: Sprite = [
   [_,_,HR,HR,HR,HR,_,_],
-  [_,HR,SK,SK,SK,SK,HR,_],
+  [_,HR,HR,HR,HR,HR,HR,_],
   [_,_,SK,SK,SK,SK,_,_],
   [_,_,RD,RD,RD,RD,_,_],
   [_,RD,RD,RD,RD,RD,RD,_],
@@ -1354,34 +1364,272 @@ export const PIPE_CHEVRON_FLIP: Sprite = [
 ]
 
 // ---- WOOD FLOOR TILE ----
-const wfA = '#7a5237'   // plank face A
-const wfG = '#704930'   // groove between planks / board-end seam
-const wfH = '#896246'   // top-edge highlight on each plank
+const wfA = '#734830'   // plank face A
+const wfG = '#613926'   // groove between planks / board-end seam
+const wfH = '#82563c'   // top-edge highlight on each plank
+const wfZ = '#6a3e27'   // darker
+
 export const FLOOR_WOOD: Sprite = [
-  [wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfZ,wfZ],
+  [wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA],
+  [wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA],
   [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
-  [wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA],
+  [wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ],
+  [wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA],
+  [wfG,wfH,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA],
+  [wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA],
+  [wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ],
   [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
-  [wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
-  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA],
+  [wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA],
+  [wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA],
+  [wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfZ,wfZ],
+  [wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA],
+  [wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA],
   [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
-  [wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfG,wfH,wfH,wfH,wfH,wfH,wfH],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
-  [wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfG,wfH,wfA,wfA,wfA,wfA,wfA],
+  [wfG,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH,wfH],
+  [wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ],
+  [wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA],
+  [wfG,wfH,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA],
+  [wfG,wfH,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA],
+  [wfG,wfH,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ,wfA,wfA,wfA,wfA,wfZ,wfZ],
   [wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG,wfG],
+]
+
+// ---- FLOOR BORDER TILE ----
+const fbD = '#533725'   // dark trim
+const fbM = '#7e472d'   // mid trim
+const fbL = '#a5754e'   // light trim / diamond highlight
+const fbA = '#794835'   // matches wfA so border blends into floor near edge
+const fbB = '#85513d'   // 
+
+export const FLOOR_BORDER: Sprite = [
+  [fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD],
+  [fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM],
+  [fbL,fbL,fbM,fbM,fbM,fbM,fbL,fbL,fbL,fbL,fbM,fbM,fbM,fbM,fbL,fbL],
+  [fbL,fbL,fbL,fbM,fbM,fbL,fbL,fbL,fbL,fbL,fbL,fbM,fbM,fbL,fbL,fbL],
+  [fbM,fbM,fbL,fbL,fbL,fbL,fbM,fbM,fbM,fbM,fbL,fbL,fbL,fbL,fbM,fbM],
+  [fbM,fbM,fbM,fbL,fbL,fbM,fbM,fbM,fbM,fbM,fbM,fbL,fbL,fbM,fbM,fbM],
+  [fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM,fbM],
+  [fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD],
+]
+
+export const FLOOR_CORNER: Sprite = [
+  [fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD],
+  [fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB,fbB],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD,fbD],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+  [fbD,fbA,fbA,fbA,fbA,fbB,fbB,fbD,fbD,fbA,fbA,fbA,fbA,fbA,fbA,fbA],
+]
+
+// ---- WALL TRIM ----
+const wtL = '#92704e'   // light plank base
+const wtD = '#86623c'   // subtle diagonal / groove
+const btD = '#b89868'   // highlight
+
+export const WALL_TRIM: Sprite = [
+  [wtL,wtD,wtL,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtL,wtD],
+  [wtL,wtL,wtD,wtL,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtL],
+  [wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtD,wtL,wtL,wtL],
+  [wtL,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtL,wtD,wtL,wtL,wtL,wtD,wtL,wtL],
+  [btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD],
+  [btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD],
+  [btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD,btD],
+]
+
+export const WALL_TRIM_CORNER: Sprite = [
+  [btD,btD,btD,btD,btD,btD,btD],
+  [btD,btD,btD,btD,btD,btD,btD],
+  [btD,btD,btD,btD,btD,btD,btD],
+  [btD,btD,btD,wtL,wtL,wtL,wtL],
+  [btD,btD,btD,wtL,wtL,wtL,wtL],
+  [btD,btD,btD,wtL,wtL,wtL,wtL],
+  [btD,btD,btD,wtL,wtL,wtL,wtL],
+  
+]
+
+// ---- WALL TRIM (MISSION) ----
+const mtL = '#9d8c6d'   // WALL COLOR
+const mbD = '#cdbe9f'   // HIGHLIGHT
+
+export const WALL_TRIM_MISSION: Sprite = [
+  [mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL],
+  [mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL],
+  [mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL],
+  [mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL,mtL],
+  [mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD],
+  [mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD],
+  [mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD,mbD],
+]
+
+export const WALL_TRIM_MISSION_CORNER: Sprite = [
+  [mbD,mbD,mbD,mbD,mbD,mbD,mbD],
+  [mbD,mbD,mbD,mbD,mbD,mbD,mbD],
+  [mbD,mbD,mbD,mbD,mbD,mbD,mbD],
+  [mbD,mbD,mbD,mtL,mtL,mtL,mtL],
+  [mbD,mbD,mbD,mtL,mtL,mtL,mtL],
+  [mbD,mbD,mbD,mtL,mtL,mtL,mtL],
+  [mbD,mbD,mbD,mtL,mtL,mtL,mtL],
+]
+
+// ---- DOOR ----
+const drS = '#1a0a1e'   // dark purple shadow (interior of doorway)
+
+export const DOOR: Sprite = [
+  [drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS],
+  [drS,btD,btD,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,wtL,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,wtL,wtL,btD,btD,drS],
+  [drS,btD,btD,wtL,wtL,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,drS,wtL,wtL,btD,btD,drS],
+  [drS,btD,btD,btD,wtL,drS,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wfA,drS,wtL,btD,btD,btD,drS],
+  [_,drS,btD,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,btD,drS,_],
+  [_,drS,btD,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,btD,drS,_],
+  [_,drS,btD,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,btD,drS,_],
+  [_,_,drS,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,drS,_,_],
+  [_,_,drS,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,drS,_,_],
+  [_,_,drS,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,drS,_,_],
+  [_,_,drS,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,drS,_,_],
+  [_,_,drS,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,drS,_,_],
+  [_,_,drS,btD,wtL,drS,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,wfA,drS,wtL,btD,drS,_,_],
+]
+
+// ---- CARPET ----
+const cpE = '#3a0e0e'   // dark edge
+const cpR = '#7f2a2a'   // red body
+const cpG = '#c89a3a'   // gold trim
+
+export const CARPET: Sprite = [
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+  [cpE,cpG,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpR,cpG,cpE],
+]
+
+// ---- TERRACOTTA FLOOR TILE ----
+const tcA = '#7c3925'   // tile face A
+const tcB = '#663021'   // tile face B (variation)
+const tcG = '#3a1c10'   // grout between tiles
+const tcH = '#994529'   // highlight
+
+export const FLOOR_TERRACOTTA: Sprite = [
+  [tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcG,tcH,tcH,tcH,tcH,tcH,tcH,tcH],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG],
+  [tcG,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG],
+  [tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcG,tcH,tcH,tcH,tcH,tcH,tcH,tcH],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG],
+  [tcG,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH,tcH],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcB],
+  [tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG],
+]
+
+// ---- WINDOW ----
+const wnF = '#faf0dc'   // Light
+const wnS = '#adbc3d'   // grass
+
+export const WINDOW: Sprite = [
+  [_,_,_,_,_,_,_,_,_,wnF,wnF,wnF,wnF,_,_,_,_,_],
+  [_,_,_,_,_,_,_,_,wnF,wnF,wnF,wnF,wnF,_,_,_,_,_],
+  [_,_,_,_,_,_,_,wnF,wnF,wnF,wnF,wnF,wnF,_,_,_,_,_],
+  [_,_,_,_,_,_,wnF,wnF,wnF,wnF,wnF,wnF,wnF,_,_,_,_,_],
+  [_,_,_,_,_,wnF,wnF,wnF,wnF,wnF,wnF,wnF,wnF,_,_,_,_,_],
+  [_,_,_,_,wnF,wnF,wnF,wnF,wnF,wnF,wnF,wnF,wnF,_,_,_,_,_],
+  [_,_,_,wnF,wnF,wnF,wnF,wnF,wnF,wnF,wnF,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,wnS,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,wnS,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,wnS,wnS,wnS,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,wnS,wnS,_,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnS,wnS,wnS,wnS,_,_,_,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,wnS,wnS,_,_,_,_,_,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,_,_,_,_,_,_,_,_,_,_,_,_],
+  [_,_,wnF,wnF,wnF,wnF,_,_,_,_,_,_,_,_,_,_,_,_],
+]
+
+// ---- BRICK ROW (single row of terracotta bricks) ----
+export const BRICK_ROW: Sprite = [
+  [tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG,tcG],
+  [tcH,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcH,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+  [tcA,tcA,tcA,tcA,tcA,tcA,tcA,tcG,tcB,tcB,tcB,tcB,tcB,tcB,tcB,tcG],
+]
+
+// ---- PEW ----
+const pwL = '#bc8b4f'   // light wood
+const pwM = '#a26c3a'   // wood pattern
+const pwB = '#663326'   // shadow band on seat back
+const pwC = '#53351c'   // darker shadow
+
+const PEW: Sprite = [
+  [drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS],
+  [drS,pwM,pwM,drS,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,drS,pwM,pwM,drS],
+  [drS,pwM,pwM,drS,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,drS,pwM,pwM,drS],
+  [drS,pwL,pwL,drS,pwL,pwL,pwM,pwM,pwM,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwM,pwM,pwM,pwL,pwL,drS,pwL,pwL,drS],
+  [drS,pwL,pwL,drS,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,drS,pwL,pwL,drS],
+  [drS,pwM,pwM,drS,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,drS,pwM,pwM,drS],
+  [drS,pwM,pwM,drS,pwL,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwL,drS,pwM,pwM,drS],
+  [drS,pwM,pwM,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,pwM,pwM,drS],
+  [drS,pwM,pwM,drS,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,pwM,drS,pwM,pwM,drS],
+  [drS,pwL,pwL,drS,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,drS,pwL,pwL,drS],
+  [drS,pwL,pwL,drS,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,pwL,drS,pwL,pwL,drS],
+  [drS,pwB,pwB,drS,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,drS,pwB,pwB,drS],
+  [drS,pwB,pwB,drS,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,drS,pwB,pwB,drS],
+  [drS,pwB,pwB,drS,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,drS,pwB,pwB,drS],
+  [drS,pwB,pwB,drS,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,pwB,drS,pwB,pwB,drS],
+  [drS,pwB,pwB,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,pwC,pwC,drS],
+  [drS,pwC,pwC,drS,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,pwC,drS,pwC,pwC,drS],
+  [drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS],
+  [drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS],
+  [drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS,drS],
 ]
 
 // Chest
@@ -1414,7 +1662,7 @@ export const ITEM_CRATE: Sprite = [
   [crD,crD,crD,crD,crD,crD,crD,crD],
 ]
 
-// Silver lockbox — same shape as crate, silver palette
+// Silver lockbox
 const slL = '#C0C0C0'   // light silver
 const slM = '#9A9A9A'   // mid silver
 const slD = '#4A4A4A'   // dark outline
@@ -3540,6 +3788,18 @@ export const ALL_SPRITES: Record<string, Sprite> = {
   item_gold_lockbox: ITEM_GOLD_LOCKBOX,
   item_chest: ITEM_CHEST,
   floor_wood: FLOOR_WOOD,
+  floor_border: FLOOR_BORDER,
+  floor_corner: FLOOR_CORNER,
+  wall_trim: WALL_TRIM,
+  wall_trim_corner: WALL_TRIM_CORNER,
+  wall_trim_mission: WALL_TRIM_MISSION,
+  wall_trim_mission_corner: WALL_TRIM_MISSION_CORNER,
+  door: DOOR,
+  carpet: CARPET,
+  floor_terracotta: FLOOR_TERRACOTTA,
+  brick_row: BRICK_ROW,
+  window: WINDOW,
+  pew: PEW,
   item_pipe: ITEM_PIPE,
   pipe_chevron: PIPE_CHEVRON,
   select_frame: SELECT_FRAME,

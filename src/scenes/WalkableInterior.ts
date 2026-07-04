@@ -12,10 +12,10 @@ import Phaser from 'phaser'
 import { COLORS } from '../colors'
 import { state, PLAYER_BASE_SPEED, CHEST_SLOTS, createContainerContents, type WalkableInteriorItemInstance } from '../game/state'
 import { ITEMS, CONTAINER_PHYSICS, DEFAULT_CONTAINER_PHYSICS, type ItemType, type ItemStack } from '../items/types'
-import { buildInteriorBackdrop, SIDE_WALL_INSET } from './InteriorBackdrop'
-import { UI_INVENTORY_BAR_HEIGHT, UI_BAR_HEIGHT, UI } from './UI'
+import { UI } from './UI'
 import { makeRng } from '../world/gen'
 import { grabHover } from '../ui/hover'
+import { outlineIcon } from '../ui/iconOutline'
 import { spriteColors } from '../sprites/data'
 import { type WorldContext, type ClickHandlers, TOOL_RANGE, CRATE_RANGE, dispatchClick } from '../game/ItemActionController'
 import { GunController, spawnCrumbs, spawnParticles, tryAxeEnemy, WEAPON_DAMAGE } from '../game/combat'
@@ -33,26 +33,27 @@ export interface WalkableInteriorItem {
 }
 
 export interface WalkableInteriorConfig {
-  // Unique identifier for this specific interior (e.g. "abandoned_house:3").
-  // State lookup key — items in state.walkableInteriors[stateKey] persist
-  // across visits.
   stateKey: string
   floorColor: number
   wallColor: number
-  floorTexture?: string         // optional repeating floor texture key
-  floorTextureScale?: number    // tile pixel scale; defaults to 2
-  wallHeightFraction: number   // e.g. 0.33 → top third is wall
-  // Initial item layout. Only used to seed state on the first visit.
+  floorTexture?: string
+  floorTextureScale?: number
+  roomWidth?: number
+  roomHeight?: number
+  wallThickness?: number
+  doorSide?: 'top' | 'bottom' | 'left' | 'right'
   initialItems?: WalkableInteriorItem[]
-  openSide?: 'left' | 'right'
-  // Optional lootable crate. On first visit a seeded roll decides whether the
-  // crate exists; if it does, its slots are filled from crateContents. The
-  // result persists in state.walkableInteriorCrates[stateKey].
-  crateSeed?: number          // deterministic seed for the spawn roll
-  crateSpawnChance?: number   // 0..1 probability the crate exists (default 1)
-  crateContents?: WalkableInteriorItem[]   // items placed into the crate's slots
-  cratePos?: { x: number; y: number }      // 0..1 floor-fraction position
-  crateItem?: ItemType                     // container sprite/item; defaults to 'chest'
+  crateSeed?: number
+  crateSpawnChance?: number
+  crateContents?: WalkableInteriorItem[]
+  cratePos?: { x: number; y: number }
+  crateItem?: ItemType
+  carpet?: boolean
+  wallTrim?: boolean
+  wallTrimVariant?: 'default' | 'mission'
+  pews?: boolean
+  brickTrim?: boolean
+  floorBorder?: boolean
 }
 
 export interface WalkableInteriorHandle {
@@ -75,6 +76,13 @@ const DROP_JUMP_MS = 360
 const DROP_BOB_AMP = 3
 const DROP_BOB_SPEED = 0.004
 const PICKUP_DELAY_MS = 500
+
+function darkenColor(hex: number, factor: number): number {
+  const r = (hex >> 16) & 0xff
+  const g = (hex >> 8) & 0xff
+  const b = hex & 0xff
+  return (Math.round(r * factor) << 16) | (Math.round(g * factor) << 8) | Math.round(b * factor)
+}
 
 // ---- builder ----
 
@@ -109,20 +117,236 @@ export function buildWalkableInterior(
   config: WalkableInteriorConfig,
   exitFn: () => void,
 ): WalkableInteriorHandle {
-  // ---- backdrop (wall, windows, floor, side walls) ----
-  const { floorTop, floorH, w } = buildInteriorBackdrop(scene, {
-    floorColor: config.floorColor,
-    wallColor: config.wallColor,
-    wallHeightFraction: config.wallHeightFraction,
-    openSide: config.openSide,
-    floorTexture: config.floorTexture,
-    floorTextureScale: config.floorTextureScale,
-  })
+  const screenW = scene.cameras.main.width
+  const screenH = scene.cameras.main.height
+  const roomFracW = config.roomWidth ?? 0.65
+  const roomFracH = config.roomHeight ?? 0.7
+  const wallT = config.wallThickness ?? 60
+  const doorSide = config.doorSide ?? 'bottom'
 
-  if (config.openSide) {
-    const floorBottom = floorTop + floorH
-    const bottomWallH = floorH * 0.25
-    scene.add.rectangle(w / 2, floorBottom - bottomWallH / 2, w, bottomWallH, config.wallColor).setDepth(-5)
+  const roomOuterW = Math.round(screenW * roomFracW)
+  const roomOuterH = Math.round(screenH * roomFracH)
+  const worldW = Math.max(screenW, roomOuterW + 200)
+  const worldH = Math.max(screenH, roomOuterH + 200)
+  const roomCX = Math.round(worldW / 2)
+  const roomCY = Math.round(worldH / 2)
+  scene.cameras.main.setBounds(0, 0, worldW, worldH)
+  const roomLeft = roomCX - Math.round(roomOuterW / 2)
+  const roomTop = roomCY - Math.round(roomOuterH / 2)
+  const roomRight = roomLeft + roomOuterW
+  const roomBottom = roomTop + roomOuterH
+
+  const floorLeft = roomLeft + wallT
+  const floorTop = roomTop + wallT
+  const floorRight = roomRight - wallT
+  const floorBottom = roomBottom - wallT
+  const floorW = floorRight - floorLeft
+  const floorH = floorBottom - floorTop
+  const w = screenW
+
+  scene.add.rectangle(worldW / 2, worldH / 2, worldW, worldH, 0x000000).setDepth(-50)
+
+  scene.add.rectangle(roomCX, roomCY, roomOuterW, roomOuterH, config.wallColor).setDepth(-40)
+
+  if (config.floorTexture && scene.textures.exists(config.floorTexture)) {
+    const tile = scene.add.tileSprite(floorLeft + floorW / 2, floorTop + floorH / 2, floorW, floorH, config.floorTexture).setDepth(-30)
+    const ts = config.floorTextureScale ?? 2
+    tile.setTileScale(ts, ts)
+  } else {
+    scene.add.rectangle(floorLeft + floorW / 2, floorTop + floorH / 2, floorW, floorH, config.floorColor).setDepth(-30)
+  }
+
+  if (config.brickTrim && scene.textures.exists('brick_row')) {
+    const brickPx = 10
+    const brickScale = 3
+    const brickT = brickPx * brickScale
+    scene.add.tileSprite(floorLeft + floorW / 2, floorTop + brickT / 2, floorW, brickT, 'brick_row').setTileScale(brickScale, brickScale).setDepth(-27)
+    scene.add.tileSprite(floorLeft + floorW / 2, floorBottom - brickT / 2, floorW, brickT, 'brick_row').setTileScale(brickScale, brickScale).setDepth(-27)
+    scene.add.tileSprite(floorLeft + brickT / 2, floorTop + floorH / 2, floorH, brickT, 'brick_row').setTileScale(brickScale, brickScale).setDepth(-27).setAngle(90)
+    scene.add.tileSprite(floorRight - brickT / 2, floorTop + floorH / 2, floorH, brickT, 'brick_row').setTileScale(brickScale, brickScale).setDepth(-27).setAngle(-90)
+  }
+
+  const trimKey = config.wallTrimVariant === 'mission' ? 'wall_trim_mission' : 'wall_trim'
+  const trimCornerKey = config.wallTrimVariant === 'mission' ? 'wall_trim_mission_corner' : 'wall_trim_corner'
+  if ((config.wallTrim ?? true) && scene.textures.exists(trimKey)) {
+    const trimPx = 7
+    const trimScale = 2
+    const trimT = trimPx * trimScale
+    scene.add.tileSprite(roomCX, roomTop + trimT / 2, roomOuterW, trimT, trimKey).setTileScale(trimScale, trimScale).setDepth(-38).setFlipY(true)
+    scene.add.tileSprite(roomCX, roomBottom - trimT / 2, roomOuterW, trimT, trimKey).setTileScale(trimScale, trimScale).setDepth(-38)
+    scene.add.tileSprite(roomLeft + trimT / 2, roomCY, roomOuterH, trimT, trimKey).setTileScale(trimScale, trimScale).setDepth(-38).setAngle(90)
+    scene.add.tileSprite(roomRight - trimT / 2, roomCY, roomOuterH, trimT, trimKey).setTileScale(trimScale, trimScale).setDepth(-38).setAngle(-90)
+    if (scene.textures.exists(trimCornerKey)) {
+      scene.add.image(roomLeft + trimT / 2, roomTop + trimT / 2, trimCornerKey).setScale(trimScale).setDepth(-37)
+      scene.add.image(roomRight - trimT / 2, roomTop + trimT / 2, trimCornerKey).setScale(trimScale).setDepth(-37).setAngle(90)
+      scene.add.image(roomRight - trimT / 2, roomBottom - trimT / 2, trimCornerKey).setScale(trimScale).setDepth(-37).setAngle(180)
+      scene.add.image(roomLeft + trimT / 2, roomBottom - trimT / 2, trimCornerKey).setScale(trimScale).setDepth(-37).setAngle(-90)
+    }
+  }
+
+  {
+    const seamT = 4
+    const seamOuter = seamT
+    const seamInset = 30
+    const boxLeft = floorLeft + seamInset
+    const boxTop = floorTop + seamInset
+    const boxRight = floorRight - seamInset
+    const boxBottom = floorBottom - seamInset
+    const boxW = boxRight - boxLeft
+    const boxH = boxBottom - boxTop
+    const seamG = scene.add.graphics().setDepth(-26)
+    seamG.fillStyle(0x3a1c10, 1)
+    seamG.fillRect(boxLeft, boxTop, boxW, seamOuter)
+    seamG.fillRect(boxLeft, boxBottom - seamOuter, boxW, seamOuter)
+    seamG.fillRect(boxLeft, boxTop, seamOuter, boxH)
+    seamG.fillRect(boxRight - seamOuter, boxTop, seamOuter, boxH)
+  }
+
+  if ((config.floorBorder ?? true) && scene.textures.exists('floor_border')) {
+    const borderPx = 16
+    const borderScale = 2
+    const stripT = borderPx * borderScale
+    scene.add.tileSprite(floorLeft + floorW / 2, floorTop + stripT / 2, floorW, stripT, 'floor_border').setTileScale(borderScale, borderScale).setDepth(-28)
+    scene.add.tileSprite(floorLeft + floorW / 2, floorBottom - stripT / 2, floorW, stripT, 'floor_border').setTileScale(borderScale, borderScale).setDepth(-28)
+    scene.add.tileSprite(floorLeft + stripT / 2, floorTop + floorH / 2, floorH, stripT, 'floor_border').setTileScale(borderScale, borderScale).setDepth(-28).setAngle(90)
+    scene.add.tileSprite(floorRight - stripT / 2, floorTop + floorH / 2, floorH, stripT, 'floor_border').setTileScale(borderScale, borderScale).setDepth(-28).setAngle(90)
+    if (scene.textures.exists('floor_corner')) {
+      scene.add.image(floorLeft + stripT / 2, floorTop + stripT / 2, 'floor_corner').setScale(borderScale).setDepth(-27)
+      scene.add.image(floorRight - stripT / 2, floorTop + stripT / 2, 'floor_corner').setScale(borderScale).setDepth(-27).setAngle(90)
+      scene.add.image(floorRight - stripT / 2, floorBottom - stripT / 2, 'floor_corner').setScale(borderScale).setDepth(-27).setAngle(180)
+      scene.add.image(floorLeft + stripT / 2, floorBottom - stripT / 2, 'floor_corner').setScale(borderScale).setDepth(-27).setAngle(270)
+    }
+  }
+
+  const pewObstacles: Array<{ minX: number; maxX: number; minY: number; maxY: number }> = []
+  if (config.pews && scene.textures.exists('pew')) {
+    const pewScale = 3
+    const pewSpriteW = 64
+    const pewSpriteH = 22
+    const pewW = pewSpriteW * pewScale
+    const pewH = pewSpriteH * pewScale
+    const pewCount = 8
+    const aisleGap = pewW * 0.35
+    const usableH = floorH - 120
+    const spacingY = usableH / pewCount
+    const leftCX = floorLeft + floorW / 2 - aisleGap / 2 - pewW / 2
+    const rightCX = floorLeft + floorW / 2 + aisleGap / 2 + pewW / 2
+    const startY = floorTop + 60 + spacingY / 2
+    for (let i = 2; i < pewCount; i++) {
+      const cy = startY + i * spacingY
+      const leftPew = scene.add.image(leftCX, cy, 'pew').setScale(pewScale).setDepth(cy).setTint(0xd8d8d8)
+      const rightPew = scene.add.image(rightCX, cy, 'pew').setScale(pewScale).setDepth(cy).setTint(0xd8d8d8)
+      pewObstacles.push({ minX: leftPew.x - pewW / 2, maxX: leftPew.x + pewW / 2, minY: leftPew.y - pewH / 2, maxY: leftPew.y + pewH / 2 })
+      pewObstacles.push({ minX: rightPew.x - pewW / 2, maxX: rightPew.x + pewW / 2, minY: rightPew.y - pewH / 2, maxY: rightPew.y + pewH / 2 })
+    }
+  }
+
+  if (config.pews) {
+    const shaftCount = 3
+    const shaftW = 180
+    const shaftLen = floorW * 0.35
+    const shaftSkew = 40
+    const usableH = floorH - 200
+    const spacingY = usableH / shaftCount
+    const startY = floorTop + 140 + spacingY / 2
+    for (let i = 0; i < shaftCount; i++) {
+      const cy = startY + i * spacingY
+      if (scene.textures.exists('window')) {
+        scene.add.image(roomRight - wallT / 2, cy - shaftW / 2 + 50, 'window').setScale(4).setDepth(2100)
+      }
+      const g = scene.add.graphics().setDepth(2000).setBlendMode(Phaser.BlendModes.ADD)
+      g.fillStyle(0xfff4c8, 0.35)
+      const x0 = roomRight
+      const x1 = floorRight - shaftLen
+      const yTop = cy - shaftW / 2
+      const yBot = cy + shaftW / 2
+      const topCap = shaftW * 0.3
+      g.beginPath()
+      g.moveTo(x0-14, yTop+5)              // top left
+      g.lineTo(x0-14, yTop + 65)         // top right
+      g.lineTo(x0 - 120, yBot)        // bottom right
+      g.lineTo(x1, yBot)              // bottom left light shaft on the floor
+      g.lineTo(x1, yBot - topCap)     // upper left light shaft on the floor
+      g.closePath()
+      g.fillPath()
+
+      if (!scene.textures.exists('dust_mote')) {
+        const tex = scene.textures.createCanvas('dust_mote', 2, 2)
+        if (tex) {
+          const ctx = tex.getContext()
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, 2, 2)
+          tex.refresh()
+        }
+      }
+      scene.add.particles(0, 0, 'dust_mote', {
+        x: { min: x1, max: x0 },
+        y: { min: yTop, max: yBot },
+        lifespan: 3200,
+        speedY: { min: 6, max: 14 },
+        speedX: { min: -4, max: 4 },
+        scale: { start: 1.5, end: 0.4 },
+        alpha: { start: 0.35, end: 0 },
+        frequency: 220,
+        tint: 0xfff4c8,
+        blendMode: Phaser.BlendModes.ADD,
+      }).setDepth(2001)
+    }
+  }
+
+  if (config.carpet && scene.textures.exists('carpet')) {
+    const carpetScale = 3
+    const carpetSpriteW = 19
+    const carpetW = carpetSpriteW * carpetScale
+    if (doorSide === 'top' || doorSide === 'bottom') {
+      scene.add.tileSprite(floorLeft + floorW / 2, floorTop + floorH / 2, carpetW, floorH, 'carpet').setTileScale(carpetScale, carpetScale).setDepth(-29)
+    } else {
+      scene.add.tileSprite(floorLeft + floorW / 2, floorTop + floorH / 2, floorW, carpetW, 'carpet').setTileScale(carpetScale, carpetScale).setDepth(-29).setAngle(90)
+    }
+  }
+
+  if (config.wallTrim ?? true) {
+    const cornerShade = 0x624636
+    const pxSize = 4
+    const cornerG = scene.add.graphics().setDepth(-25)
+    cornerG.fillStyle(cornerShade, 1)
+    const inset = 5
+    const cornerLen = wallT - inset
+    for (let d = 0; d < cornerLen; d += pxSize) {
+      const dx = inset + d
+      const dy = inset + d
+      cornerG.fillRect(roomLeft + dx, roomTop + dy, pxSize, pxSize)
+      cornerG.fillRect(roomRight - dx - pxSize, roomTop + dy, pxSize, pxSize)
+      cornerG.fillRect(roomLeft + dx, roomBottom - dy - pxSize, pxSize, pxSize)
+      cornerG.fillRect(roomRight - dx - pxSize, roomBottom - dy - pxSize, pxSize, pxSize)
+    }
+  }
+
+  const doorScale = 4
+  const doorSpriteW = 26
+  const doorSpriteH = 19
+  const doorHalfW = (doorSpriteW * doorScale) / 2
+  const doorHalfLen = (doorSpriteH * doorScale) / 2
+  const doorTrimOffset = 14
+  let doorCX = 0
+  let doorCY = 0
+  const doorTint = config.wallTrimVariant === 'mission' ? 0xd4c8b0 : 0xffffff
+  if (doorSide === 'bottom') {
+    doorCX = roomCX
+    doorCY = roomBottom - doorHalfLen - doorTrimOffset
+    scene.add.image(doorCX, doorCY, 'door').setScale(doorScale).setDepth(-33).setAngle(180).setTint(doorTint)
+  } else if (doorSide === 'top') {
+    doorCX = roomCX
+    doorCY = roomTop + doorHalfLen + doorTrimOffset
+    scene.add.image(doorCX, doorCY, 'door').setScale(doorScale).setDepth(-33).setTint(doorTint)
+  } else if (doorSide === 'left') {
+    doorCX = roomLeft + doorHalfLen + doorTrimOffset
+    doorCY = roomCY
+    scene.add.image(doorCX, doorCY, 'door').setScale(doorScale).setDepth(-33).setAngle(-90).setTint(doorTint)
+  } else if (doorSide === 'right') {
+    doorCX = roomRight - doorHalfLen - doorTrimOffset
+    doorCY = roomCY
+    scene.add.image(doorCX, doorCY, 'door').setScale(doorScale).setDepth(-33).setAngle(90).setTint(doorTint)
   }
 
   // ---- seed state on first visit, then read from state ----
@@ -146,7 +370,7 @@ export function buildWalkableInterior(
         if (i < CHEST_SLOTS) contents[i] = { type: it.type, count: it.count ?? 1 }
       })
       const pos = config.cratePos ?? { x: 0.5, y: 0.5 }
-      const cx = Math.round(w * pos.x)
+      const cx = Math.round(floorLeft + floorW * pos.x)
       const cy = Math.round(floorTop + floorH * pos.y)
       const crateItem = (config.crateItem ?? 'chest') as ItemType
       state.placedCrates.push({ x: cx, y: cy, item: crateItem, contents, unlocked: true, interior: config.stateKey })
@@ -180,36 +404,22 @@ export function buildWalkableInterior(
     if (state.placedCrates[i].interior === config.stateKey) spawnInteriorCrate(i)
   }
 
-  // Sloped side-wall lines as a function of world-Y. Single source of truth for
-  // where the angled walls sit at a given depth — used to clamp both the player
-  // and the crate so they share one wall definition. null = that side is open.
-  const wallX = (yPx: number): { left: number | null; right: number | null } => {
-    const yFrac = (yPx - floorTop) / floorH
-    const inset = w * SIDE_WALL_INSET * (1 - yFrac)
-    if (config.openSide === 'left') {
-      return { left: null, right: w * (1 - 0.35) - inset }
-    } else if (config.openSide === 'right') {
-      return { left: w * 0.35 + inset, right: null }
-    }
-    return { left: inset, right: w - inset }
-  }
-
-  // ---- player ----
-  const playerStartX = config.openSide === 'left' ? EXIT_ZONE_H + PLAYER_HALF + 20
-    : config.openSide === 'right' ? w - EXIT_ZONE_H - PLAYER_HALF - 20
-    : w / 2
-  const playerStartY = config.openSide
-    ? floorTop + floorH / 2
-    : floorTop + floorH - UI_INVENTORY_BAR_HEIGHT - 30
+  const spawnInset = EXIT_ZONE_H + PLAYER_HALF + 4
+  const floorCX = floorLeft + floorW / 2
+  const floorCY = floorTop + floorH / 2
+  const playerStartX = doorSide === 'left' ? floorLeft + spawnInset
+    : doorSide === 'right' ? floorRight - spawnInset
+    : floorCX
+  const playerStartY = doorSide === 'top' ? floorTop + spawnInset
+    : doorSide === 'bottom' ? floorBottom - spawnInset
+    : floorCY
   const player = scene.add.sprite(playerStartX, playerStartY, 'player')
     .setScale(PLAYER_SCALE)
     .setDepth(900)
+  outlineIcon(player, COLORS.black)
+  scene.cameras.main.startFollow(player, true, 0.15, 0.15)
 
-  // ---- interactive click surface — covers the whole play area (wall + floor)
-  // so clicks aimed at the back wall still dispatch (e.g. shooting at it). ----
-  const clickTop = UI_BAR_HEIGHT
-  const clickH = floorTop + floorH - clickTop
-  const floor = scene.add.rectangle(w / 2, clickTop + clickH / 2, w, clickH, 0x000000, 0)
+  const floor = scene.add.rectangle(floorLeft + floorW / 2, floorTop + floorH / 2, floorW, floorH, 0x000000, 0)
     .setInteractive()
     .setDepth(-10)
 
@@ -316,17 +526,17 @@ export function buildWalkableInterior(
 
       const isLockbox = crateItem === 'silver_lockbox' || crateItem === 'gold_lockbox'
       if (isLockbox) {
-        liveItems.push({ x: bx / w, y: (by - floorTop) / floorH, type: crateItem, count: 1 })
+        liveItems.push({ x: (bx - floorLeft) / floorW, y: (by - floorTop) / floorH, type: crateItem, count: 1 })
         floorSprites.push(spawnDroppedInteriorSprite(scene, bx, by, crateItem, ITEM_SCALE_MULT))
       } else {
-        liveItems.push({ x: bx / w, y: (by - floorTop) / floorH, type: crateItem, count: 1 })
+        liveItems.push({ x: (bx - floorLeft) / floorW, y: (by - floorTop) / floorH, type: crateItem, count: 1 })
         floorSprites.push(spawnDroppedInteriorSprite(scene, bx, by, crateItem, ITEM_SCALE_MULT))
         const spillRng = makeRng(Math.floor(bx * 1000 + by))
         for (const stack of crate.contents) {
           if (!stack) continue
           const landX = bx + (spillRng() - 0.5) * 48
           const landY = by + (spillRng() - 0.5) * 48
-          liveItems.push({ x: landX / w, y: (landY - floorTop) / floorH, type: stack.type, count: stack.count })
+          liveItems.push({ x: (landX - floorLeft) / floorW, y: (landY - floorTop) / floorH, type: stack.type, count: stack.count })
           floorSprites.push(spawnDroppedInteriorSprite(scene, landX, landY, stack.type, ITEM_SCALE_MULT))
         }
       }
@@ -436,7 +646,7 @@ export function buildWalkableInterior(
       if (stack) {
         const dropX = p.x
         const dropY = p.y
-        liveItems.push({ x: dropX / w, y: (dropY - floorTop) / floorH, type: stack.type, count: stack.count })
+        liveItems.push({ x: (dropX - floorLeft) / floorW, y: (dropY - floorTop) / floorH, type: stack.type, count: stack.count })
         floorSprites.push(spawnDroppedInteriorSprite(scene, dropX, dropY, stack.type, ITEM_SCALE_MULT))
       }
       return
@@ -470,7 +680,7 @@ export function buildWalkableInterior(
   // entry is picked up, we splice both arrays at the same index.
   const floorSprites: (Phaser.GameObjects.Sprite | null)[] = []
   for (const item of liveItems) {
-    const ix = Math.round(w * item.x)
+    const ix = Math.round(floorLeft + floorW * item.x)
     const iy = Math.round(floorTop + floorH * item.y)
     const def = ITEMS[item.type]
     const sprite = scene.add.sprite(ix, iy, def.sprite)
@@ -534,11 +744,10 @@ export function buildWalkableInterior(
     dx = leash.dx
     dy = leash.dy
 
-    // clamp to floor bounds
-    const minX = PLAYER_HALF
-    const maxX = w - PLAYER_HALF
+    const minX = floorLeft + PLAYER_HALF
+    const maxX = floorRight - PLAYER_HALF
     const minY = floorTop + PLAYER_HALF
-const maxY = floorTop + floorH - PLAYER_HALF
+    const maxY = floorBottom - PLAYER_HALF
     // Crate collision: player (center+half) vs crate body (center+half), both
     // axis-aligned. Uses the body's live position so a shoved crate blocks from
     // its new spot.
@@ -554,6 +763,10 @@ const maxY = floorTop + floorH - PLAYER_HALF
         const by = cb.position.y
         if (px + PLAYER_HALF > bx - hw && px - PLAYER_HALF < bx + hw
           && py + PLAYER_HALF > by - hh && py - PLAYER_HALF < by + hh) return true
+      }
+      for (const o of pewObstacles) {
+        if (px + PLAYER_HALF > o.minX && px - PLAYER_HALF < o.maxX
+          && py + PLAYER_HALF > o.minY && py - PLAYER_HALF < o.maxY) return true
       }
       return false
     }
@@ -585,21 +798,10 @@ const maxY = floorTop + floorH - PLAYER_HALF
       }
     }
 
-    // Axis-separated commit so the player slides along the crate edge instead
-    // of sticking. Each axis is rejected independently if it enters the crate.
-    const tryX = Phaser.Math.Clamp(player.x + dx * step, 0, w)
+    const tryX = Phaser.Math.Clamp(player.x + dx * step, minX, maxX)
     if (!crateBlocks(tryX, player.y)) player.x = tryX
     const tryY = Phaser.Math.Clamp(player.y + dy * step, minY, maxY)
     if (!crateBlocks(player.x, tryY)) player.y = tryY
-
-    const pWalls = wallX(player.y)
-    if (pWalls.left !== null) player.x = Math.max(player.x, pWalls.left + PLAYER_HALF)
-    if (pWalls.right !== null) player.x = Math.min(player.x, pWalls.right - PLAYER_HALF)
-
-    if (config.openSide) {
-      const bottomWallTop = floorTop + floorH - floorH * 0.25
-      player.y = Math.min(player.y, bottomWallTop - PLAYER_HALF - 10)
-    }
 
     // ---- E prompt above crate when player is in range ----
     if (ePrompt) {
@@ -626,7 +828,7 @@ const maxY = floorTop + floorH - PLAYER_HALF
 
 
     rope.update()
-    gun.tick(dt, { left: 0, right: w, top: floorTop, bottom: floorTop + floorH }, rKey, scene.registry, (b) => {
+    gun.tick(dt, { left: floorLeft, right: floorRight, top: floorTop, bottom: floorBottom }, rKey, scene.registry, (b) => {
       for (let ci = 0; ci < interiorCrateBodies.length; ci++) {
         const cb = interiorCrateBodies[ci]
         const cs = interiorCrateSprites[ci]
@@ -679,11 +881,6 @@ const maxY = floorTop + floorH - PLAYER_HALF
       }
     }
 
-    // Bound the crate to the floor and the angled side walls. The side walls are
-    // diagonal, so a violation can come from horizontal OR vertical motion (push
-    // straight up and the receding wall would otherwise slip past the crate). We
-    // remove the velocity component pointing *out* through the wall along the
-    // wall's inward normal — handling both axes. Velocity only; never repositioned.
     for (let ci = 0; ci < interiorCrateBodies.length; ci++) {
       const ccb = interiorCrateBodies[ci]
       const ccs = interiorCrateSprites[ci]
@@ -693,26 +890,12 @@ const maxY = floorTop + floorH - PLAYER_HALF
       const v = ccb.velocity
       const bx = ccb.position.x
       const by = ccb.position.y
-      const walls = wallX(by)
       let nvx = v.x
       let nvy = v.y
-      const slope = (w * SIDE_WALL_INSET) / floorH
-      if (walls.left !== null && bx - chw <= walls.left) {
-        const nx = 1, ny = slope
-        const len = Math.hypot(nx, ny)
-        const outward = -(nvx * nx + nvy * ny) / len
-        if (outward > 0) { nvx += outward * nx / len; nvy += outward * ny / len }
-      }
-      if (walls.right !== null && bx + chw >= walls.right) {
-        const nx = -1, ny = slope
-        const len = Math.hypot(nx, ny)
-        const outward = -(nvx * nx + nvy * ny) / len
-        if (outward > 0) { nvx += outward * nx / len; nvy += outward * ny / len }
-      }
-      const crateMinY = floorTop + chh
-      const crateMaxY = (config.openSide ? floorTop + floorH - floorH * 0.25 : floorTop + floorH) - chh
-      if (by <= crateMinY && nvy < 0) nvy = 0
-      if (by >= crateMaxY && nvy > 0) nvy = 0
+      if (bx - chw <= floorLeft && nvx < 0) nvx = 0
+      if (bx + chw >= floorRight && nvx > 0) nvx = 0
+      if (by - chh <= floorTop && nvy < 0) nvy = 0
+      if (by + chh >= floorBottom && nvy > 0) nvy = 0
       if (nvx !== v.x || nvy !== v.y) {
         scene.matter.body.setVelocity(ccb, { x: nvx, y: nvy })
       }
@@ -790,9 +973,10 @@ const maxY = floorTop + floorH - PLAYER_HALF
       s.y = baseY + Math.sin(bobNow * DROP_BOB_SPEED + phase) * DROP_BOB_AMP
     }
 
-    const exiting = config.openSide === 'left' ? player.x <= EXIT_ZONE_H
-      : config.openSide === 'right' ? player.x >= w - EXIT_ZONE_H
-      : player.y >= floorTop + floorH - EXIT_ZONE_H
+    const exiting = doorSide === 'bottom' ? (player.y >= floorBottom - EXIT_ZONE_H && Math.abs(player.x - doorCX) <= doorHalfW)
+      : doorSide === 'top' ? (player.y <= floorTop + EXIT_ZONE_H && Math.abs(player.x - doorCX) <= doorHalfW)
+      : doorSide === 'left' ? (player.x <= floorLeft + EXIT_ZONE_H && Math.abs(player.y - doorCY) <= doorHalfW)
+      : (player.x >= floorRight - EXIT_ZONE_H && Math.abs(player.y - doorCY) <= doorHalfW)
     if (exiting) {
       exitFn()
     }
@@ -803,6 +987,12 @@ const maxY = floorTop + floorH - PLAYER_HALF
   // They get destroyed when the scene shuts down; state.walkableInteriors
   // keeps the corresponding entries so they re-spawn next visit.
   const onCleanup = () => {
+    if (scene.cameras && scene.cameras.main) {
+      scene.cameras.main.stopFollow()
+      scene.cameras.main.setBounds(0, 0, screenW, screenH)
+      scene.cameras.main.scrollX = 0
+      scene.cameras.main.scrollY = 0
+    }
     player.destroy()
     floor.destroy()
     gun.destroyAll()
